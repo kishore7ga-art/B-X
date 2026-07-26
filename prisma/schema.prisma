@@ -1,0 +1,231 @@
+// College Website Template Platform — multi-tenant schema.
+// Mirrors Section 5 of the project spec. Table/column names are snake_case via @map
+// so the physical schema reads exactly like the spec draft.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CollegeStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// Section TYPES the platform knows how to render. Spec Section 3.
+enum SectionType {
+  HERO
+  ABOUT
+  COURSES
+  ADMISSIONS
+  FACULTY
+  FACILITIES
+  GALLERY
+  EVENTS
+  CONTACT
+  FOOTER
+  PLACEMENTS
+  TESTIMONIALS
+  DOWNLOADS
+  FEES
+  ACCREDITATION
+}
+
+model College {
+  id             String        @id @default(cuid())
+  name           String
+  subdomain      String        @unique
+  customDomain   String?       @unique @map("custom_domain")
+  templateId     String?       @map("template_id")
+  themePaletteId String?       @map("theme_palette_id")
+  themeFontId    String?       @map("theme_font_id")
+  status         CollegeStatus @default(DRAFT)
+  /// A showcase site for a template, seeded and published so the gallery has
+  /// something real to link to. Never handed to a visitor as their own site:
+  /// open-access mode skips these when adopting a college, or the first person
+  /// to arrive on a fresh install would be editing the demo.
+  isDemo         Boolean       @default(false) @map("is_demo")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  template     Template?     @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  themePalette ThemePalette? @relation(fields: [themePaletteId], references: [id], onDelete: SetNull)
+  themeFont    ThemeFont?    @relation(fields: [themeFontId], references: [id], onDelete: SetNull)
+
+  sections CollegeSection[]
+  pages    Page[]
+  users    User[]
+
+  @@map("colleges")
+}
+
+/// Login accounts. A college can have several staff accounts; each account
+/// belongs to exactly one college, which is the tenant boundary.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  collegeId    String   @map("college_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  college College @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+
+  @@index([collegeId])
+  @@map("users")
+}
+
+model Template {
+  id           String  @id @default(cuid())
+  name         String  @unique
+  description  String?
+  thumbnailUrl String? @map("thumbnail_url")
+  demoUrl      String? @map("demo_url")
+
+  sections Section[]
+  colleges College[]
+
+  @@map("templates")
+}
+
+/// Master list of section types available in a template.
+model Section {
+  id           String      @id @default(cuid())
+  templateId   String      @map("template_id")
+  sectionType  SectionType @map("section_type")
+  defaultOrder Int         @map("default_order")
+  isRequired   Boolean     @default(false) @map("is_required")
+  /// Starter copy for this section in this template's voice — the same content
+  /// its demo site shows.
+  ///
+  /// A college that has just picked a design should see the template working,
+  /// not five headings over empty space. Provisioning used a generic stub
+  /// ("About Us", "Courses"), so every new site opened looking broken while the
+  /// gallery demo beside it looked finished.
+  defaultContent Json?     @map("default_content")
+
+  template        Template         @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  variants        SectionVariant[]
+  collegeSections CollegeSection[]
+
+  @@unique([templateId, sectionType])
+  @@map("sections")
+}
+
+/// Design variants cycled through by the editor's refresh (↻) button.
+model SectionVariant {
+  id           String @id @default(cuid())
+  sectionId    String @map("section_id")
+  variantName  String @map("variant_name")
+  componentKey String @map("component_key")
+  /// Which variant a template leads with. The first in this order is the one a
+  /// new site is provisioned with and the one a template swap lands on, so it
+  /// is what gives each template its own look while every template still
+  /// offers the whole variant library to the ↻ button. Alphabetical order was
+  /// doing this job by accident, which made every template open identically.
+  sortOrder    Int    @default(0) @map("sort_order")
+
+  section         Section          @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  collegeSections CollegeSection[]
+
+  @@unique([sectionId, componentKey])
+  @@map("section_variants")
+}
+
+/// Each college's actual configured sections. `content` is validated in app code
+/// by a per-section-type Zod schema (see src/lib/sections/schemas.ts).
+model CollegeSection {
+  id           String  @id @default(cuid())
+  collegeId    String  @map("college_id")
+  sectionId    String  @map("section_id")
+  variantId    String  @map("variant_id")
+  /// Which page this section renders on. Spec Section 5 derives a page's section
+  /// list "from college_sections.display_order per page", which needs this link.
+  pageId       String? @map("page_id")
+  displayOrder Int     @map("display_order")
+  isVisible    Boolean @default(true) @map("is_visible")
+  content      Json    @default("{}")
+  /// When this section's content was last written. Drives the editor's "Saved
+  /// 14:32" line, which is what makes an autosaving form trustworthy: without a
+  /// timestamp, "Saved" is indistinguishable from a form that never saved.
+  ///
+  /// There is deliberately no `save_status` column beside it. A row cannot be
+  /// "saving" — that is one browser's in-flight state, not a fact about the
+  /// data — and it can never be "error", because the write that would record
+  /// the error is the write that just failed. Both live in the client.
+  lastSavedAt  DateTime? @map("last_saved_at")
+
+  college College        @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  section Section        @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  variant SectionVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  page    Page?          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  history CollegeSectionHistory[]
+
+  @@index([collegeId, pageId, displayOrder])
+  @@map("college_sections")
+}
+
+/// One snapshot of a section's content, written on every save that actually
+/// changed something.
+///
+/// Autosave without history is only half a safety net: it guarantees work is
+/// never lost to forgetting to save, and guarantees nothing about work lost to
+/// a bad edit. This is the other half — the timeline behind "Restore previous
+/// version".
+///
+/// Pruned to the newest RETAINED_VERSIONS rows per section on insert. A
+/// two-second debounce across every action type produces snapshots faster than
+/// anyone will ever read them, and unbounded JSONB copies of a page's content
+/// is a storage bill, not a feature.
+model CollegeSectionHistory {
+  id               String   @id @default(cuid())
+  collegeSectionId String   @map("college_section_id")
+  contentSnapshot  Json     @map("content_snapshot")
+  savedAt          DateTime @default(now()) @map("saved_at")
+  /// What caused this save: typing / drag / color / font / image / delete /
+  /// resize / section_update / restore.
+  saveTrigger      String   @map("save_trigger")
+
+  collegeSection CollegeSection @relation(fields: [collegeSectionId], references: [id], onDelete: Cascade)
+
+  @@index([collegeSectionId, savedAt])
+  @@map("college_sections_history")
+}
+
+model ThemePalette {
+  id     String @id @default(cuid())
+  name   String @unique
+  /// { primary, secondary, accent, dark, light }
+  colors Json
+
+  colleges College[]
+
+  @@map("theme_palettes")
+}
+
+model ThemeFont {
+  id          String @id @default(cuid())
+  name        String @unique
+  headingFont String @map("heading_font")
+  bodyFont    String @map("body_font")
+
+  colleges College[]
+
+  @@map("theme_fonts")
+}
+
+model Page {
+  id        String @id @default(cuid())
+  collegeId String @map("college_id")
+  slug      String
+  title     String
+  navOrder  Int    @default(0) @map("nav_order")
+
+  college  College          @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  sections CollegeSection[]
+
+  @@unique([collegeId, slug])
+  @@map("pages")
+}
