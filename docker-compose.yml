@@ -30,9 +30,12 @@ services:
       SEED_ON_START: ${SEED_ON_START:-true}
     volumes:
       - uploads:/app/public/uploads
-    # Uncomment to share Dokploy's network with a frontend deployed separately.
-    # networks:
-    #   - dokploy-network
+    networks:
+      dokploy-network:
+        # Fixed name so the frontend, a separate compose project with its own
+        # prefix, can find this container at a predictable address.
+        aliases:
+          - xite-api
 
   db:
     image: postgres:16-alpine
@@ -48,10 +51,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    networks:
+      dokploy-network:
+        # The one database. The frontend renders pages with Server Components
+        # that query Prisma directly, so it needs the database too -- what this
+        # service owns is the *schema*, not exclusive access.
+        aliases:
+          - xite-db
 
-# networks:
-#   dokploy-network:
-#     external: true
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   db_data:
