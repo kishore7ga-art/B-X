@@ -25,10 +25,24 @@ function run(command, args, env) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Build the URL from POSTGRES_PASSWORD when it arrives empty.
+ *
+ * Compose's default nests one interpolation inside another's fallback, which
+ * not every version expands. Same inputs, same URL, no interpolation.
+ */
+if (!process.env.DATABASE_URL && process.env.POSTGRES_PASSWORD) {
+  process.env.DATABASE_URL =
+    `postgresql://collegeadmin:${encodeURIComponent(process.env.POSTGRES_PASSWORD)}` +
+    "@db:5432/college_saas?schema=public";
+  console.log("[start] DATABASE_URL was empty; built it from POSTGRES_PASSWORD.");
+}
+
 if (!process.env.DATABASE_URL) {
   console.error(
-    "[start] DATABASE_URL is not set. The API will start but every request " +
-      "that touches the database will fail.",
+    "[start] Neither DATABASE_URL nor POSTGRES_PASSWORD is set, so there is " +
+      "nothing to connect to. The API will start anyway and /api/health will " +
+      "say so, which beats a 502 that says nothing.",
   );
 }
 

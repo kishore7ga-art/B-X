@@ -13,13 +13,25 @@ services:
     # network — set the port to 4000 in the Domains tab.
     expose:
       - "4000"
+    # Ordering only, deliberately not `condition: service_healthy`.
+    #
+    # Waiting for a healthy database means that if Postgres never becomes
+    # healthy, the API never starts at all -- and Traefik answers 502, which
+    # says nothing about why. scripts/start.mjs already retries migrations with
+    # backoff and serves anyway on purpose, for exactly this reason: an API
+    # that answers "database unreachable, here is the reason" is diagnosable
+    # from a browser, and a 502 is not diagnosable from anywhere.
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: ${DATABASE_URL:-postgresql://collegeadmin:${POSTGRES_PASSWORD}@db:5432/college_saas?schema=public}
+      # Nested interpolation inside a :- default is not expanded by every
+      # Compose version; when it is not, this arrives empty and the API reports
+      # a missing URL while the dashboard plainly shows a password. Passed
+      # through plainly instead, and scripts/start.mjs rebuilds it from
+      # POSTGRES_PASSWORD when it comes through empty.
+      DATABASE_URL: ${DATABASE_URL:-}
       SESSION_SECRET: ${SESSION_SECRET}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
