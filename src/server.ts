@@ -77,6 +77,32 @@ function fail(res: express.Response, error: unknown) {
   res.status(status).json({ error: message });
 }
 
+// --- Root ---------------------------------------------------------------------
+
+/**
+ * What this service is, for whoever opens the domain in a browser.
+ *
+ * The catch-all answered `{"error":"Not found"}` here, which is true and
+ * useless: it looks identical to a service that is broken, misrouted, or not
+ * the one you meant. Naming itself and listing what it serves costs one
+ * handler and answers all three.
+ */
+app.get("/", (_req, res) => {
+  res.json({
+    service: "xite-backend",
+    status: "running",
+    endpoints: {
+      health: "GET /api/health",
+      sectionHistory: "GET /api/v1/sections/:id",
+      saveSection: "PATCH /api/v1/sections/:id",
+      restoreSection: "POST /api/v1/sections/:id",
+      upload: "POST /api/uploads",
+      serveUpload: "GET /uploads/:file",
+    },
+    frontend: "https://xite.co.in",
+  });
+});
+
 // --- Health -----------------------------------------------------------------
 
 app.get("/api/health", async (_req, res) => {
