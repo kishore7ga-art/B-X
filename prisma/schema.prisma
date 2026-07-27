@@ -44,6 +44,16 @@ model College {
   themePaletteId String?       @map("theme_palette_id")
   themeFontId    String?       @map("theme_font_id")
   status         CollegeStatus @default(DRAFT)
+  /// What kind of institution this is, from onboarding — see
+  /// src/lib/college-types.ts for the values and the template each opens with.
+  ///
+  /// Nullable on purpose. Every college that exists today predates onboarding,
+  /// and backfilling a guess would be inventing an answer nobody gave. Code
+  /// reading this must treat null as "not asked yet", not as an error.
+  ///
+  /// A String rather than an enum: adding an institution type should be a seed
+  /// change, not a migration, and the set is expected to grow.
+  collegeType    String?       @map("college_type")
   /// A showcase site for a template, seeded and published so the gallery has
   /// something real to link to. Never handed to a visitor as their own site:
   /// open-access mode skips these when adopting a college, or the first person
@@ -222,6 +232,20 @@ model Page {
   slug      String
   title     String
   navOrder  Int    @default(0) @map("nav_order")
+
+  /// Per-page SEO, set from the editor's page tools.
+  ///
+  /// Separate nullable columns rather than one Json blob: these four are fixed,
+  /// typed, and rendered straight into <head>, so a shape that has to be parsed
+  /// and re-validated on every request buys nothing. All nullable — every page
+  /// that exists predates them, and null means "fall back to the page title",
+  /// not "unset and broken".
+  metaTitle       String? @map("meta_title")
+  metaDescription String? @map("meta_description")
+  ogImage         String? @map("og_image")
+  /// Overrides the URL search engines should treat as canonical. Defaults to
+  /// the page's own slug when empty.
+  canonicalSlug   String? @map("canonical_slug")
 
   college  College          @relation(fields: [collegeId], references: [id], onDelete: Cascade)
   sections CollegeSection[]
