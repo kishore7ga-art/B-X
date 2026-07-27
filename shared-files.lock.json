@@ -1,0 +1,11 @@
+{
+  "prisma/schema.prisma": "b86cfda15976de97",
+  "prisma/seed.ts": "d8b4bcff0294104f",
+  "src/lib/sections/schemas.ts": "ed70cbf22111cc0b",
+  "src/lib/sections/defaults.ts": "9f6d66490373734a",
+  "src/lib/sections/personalize.ts": "d1841d119215d7b0",
+  "src/lib/college-types.ts": "cedbaf82871115ce",
+  "src/lib/json-stable.ts": "6141a2d81b86d2fc",
+  "src/lib/db-pool.ts": "12620a9a504fdd73",
+  "src/lib/auth/demo.ts": "6880d9615ba7919a"
+}

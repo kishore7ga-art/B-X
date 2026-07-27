@@ -13,7 +13,9 @@
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate deploy",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "check:shared": "node scripts/check-shared-files.mjs",
+    "prebuild": "node scripts/check-shared-files.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.0",
