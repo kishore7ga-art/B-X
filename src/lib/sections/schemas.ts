@@ -102,10 +102,18 @@ export type SectionContentMap = {
   [SectionType.CONTACT]: ContactContent;
 };
 
+/**
+ * Takes a `string`, not a `SectionType`.
+ *
+ * Section types now arrive over HTTP as well as out of the database, and the
+ * enum type is a promise the database keeps and a JSON body does not. Narrowing
+ * from the wider type is the point of a guard; requiring the narrow one first
+ * made it unusable exactly where the value is genuinely unverified.
+ */
 export function isSupportedSectionType(
-  value: SectionType,
+  value: string,
 ): value is SupportedSectionType {
-  return (SUPPORTED_SECTION_TYPES as readonly SectionType[]).includes(value);
+  return (SUPPORTED_SECTION_TYPES as readonly string[]).includes(value);
 }
 
 /** Throws on invalid content. Use when writing to the database. */

@@ -19,6 +19,7 @@ import {
   signupSchema,
 } from "@/auth-service";
 import { prisma } from "@/db";
+import { getCollege, getEditorPage } from "@/editor-service";
 import {
   listHistory,
   NotFound,
@@ -204,6 +205,54 @@ app.post("/api/v1/auth/logout", (_req, res) => {
   const { maxAge: _drop, ...options } = cookieOptions();
   res.clearCookie(COOKIE_NAME, options);
   res.json({ ok: true });
+});
+
+// --- Editor reads -------------------------------------------------------------
+
+/**
+ * Who the caller is, as far as the guarded pages are concerned.
+ *
+ * 204 rather than 404 for a session whose college has since been deleted: the
+ * request was understood and answered, there simply is no college. A 404 here
+ * would be indistinguishable from asking for the wrong URL.
+ */
+app.get("/api/v1/me", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const college = await getCollege(session.collegeId);
+    if (!college) {
+      res.status(204).end();
+      return;
+    }
+    res.json({ college });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/editor/:subdomain", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const page =
+      typeof req.query.page === "string" ? req.query.page : undefined;
+
+    const data = await getEditorPage(req.params.subdomain, page);
+    if (!data) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    // The tenant boundary, enforced where the data is rather than trusted to
+    // the caller: a session may only read its own college's editor.
+    if (data.college.id !== session.collegeId) {
+      res.status(403).json({ error: "Not your college" });
+      return;
+    }
+
+    res.json(data);
+  } catch (error) {
+    fail(res, error);
+  }
 });
 
 // --- Sections ---------------------------------------------------------------
