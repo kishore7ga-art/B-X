@@ -1,0 +1,48 @@
+# XITE backend against a database Dokploy manages.
+#
+#   Dokploy -> Compose -> Compose Path: ./docker-compose.managed-db.yml
+#
+# No Postgres here on purpose. The database is a Dokploy PostgreSQL service,
+# created and backed up by Dokploy, and reached over the shared network by its
+# service name. That removes the part that keeps failing: a db container this
+# stack has to bring up, keep healthy, and depend on before it will start.
+#
+# DATABASE_URL is required. The host in it is the Dokploy database's Service
+# Name -- never `localhost`, which inside a container is the container itself.
+
+services:
+  api:
+    build:
+      context: .
+    restart: unless-stopped
+    # Not published to the host. Traefik reaches it over the Docker network —
+    # set the port to 4000 in the Domains tab.
+    expose:
+      - "4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: ${DATABASE_URL}
+      SESSION_SECRET: ${SESSION_SECRET}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      # Exact origins, never "*": the session cookie rides on these requests and
+      # browsers refuse a wildcard alongside credentials.
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in}
+      # This service owns the schema. The frontend runs with SKIP_MIGRATIONS.
+      SEED_ON_START: ${SEED_ON_START:-true}
+    volumes:
+      - uploads:/app/public/uploads
+    networks:
+      dokploy-network:
+        # Fixed name so the frontend, a separate compose project with its own
+        # prefix, can reach this container at a predictable address.
+        aliases:
+          - xite-api
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  uploads:
