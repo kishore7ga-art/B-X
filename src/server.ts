@@ -10,6 +10,14 @@ import express from "express";
 import multer from "multer";
 
 import { getSession } from "@/auth";
+import {
+  AuthError,
+  COOKIE_NAME,
+  cookieOptions,
+  login,
+  signup,
+  signupSchema,
+} from "@/auth-service";
 import { prisma } from "@/db";
 import {
   listHistory,
@@ -69,11 +77,13 @@ async function requireSession(req: express.Request) {
 function fail(res: express.Response, error: unknown) {
   const message = error instanceof Error ? error.message : "Request failed";
   const status =
-    error instanceof NotFound
-      ? 404
-      : error instanceof Error && error.name === "Unauthorized"
-        ? 401
-        : 400;
+    error instanceof AuthError
+      ? error.status
+      : error instanceof NotFound
+        ? 404
+        : error instanceof Error && error.name === "Unauthorized"
+          ? 401
+          : 400;
   res.status(status).json({ error: message });
 }
 
@@ -125,6 +135,75 @@ app.get("/api/health", async (_req, res) => {
       database: "unreachable",
     });
   }
+});
+
+// --- Auth ---------------------------------------------------------------------
+
+/**
+ * A crude cap on password guessing.
+ *
+ * `/api/v1/auth/login` is reachable by anyone on the internet and answers in
+ * bcrypt time, which is fast enough to be worth grinding. In-memory is the
+ * right size for one instance; a second replica needs this in the database or
+ * a shared cache, and this comment is the reminder.
+ */
+const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const MAX_ATTEMPTS = 10;
+const attempts = new Map<string, number[]>();
+
+function tooManyAttempts(key: string) {
+  const now = Date.now();
+  const recent = (attempts.get(key) ?? []).filter(
+    (at) => now - at < ATTEMPT_WINDOW_MS,
+  );
+  recent.push(now);
+  attempts.set(key, recent);
+
+  // Unbounded otherwise: one entry per IP that ever tried, kept forever.
+  if (attempts.size > 5000) {
+    for (const [ip, times] of attempts) {
+      if (!times.some((at) => now - at < ATTEMPT_WINDOW_MS)) attempts.delete(ip);
+    }
+  }
+
+  return recent.length > MAX_ATTEMPTS;
+}
+
+app.post("/api/v1/auth/signup", async (req, res) => {
+  try {
+    const input = signupSchema.parse(req.body);
+    res.status(201).json(await signup(input));
+  } catch (error) {
+    // Zod's message is the useful half of a validation failure.
+    if (error instanceof Error && error.name === "ZodError") {
+      const [issue] = JSON.parse(error.message) as { message: string }[];
+      res.status(400).json({ error: issue?.message ?? "Check your details" });
+      return;
+    }
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/auth/login", async (req, res) => {
+  try {
+    if (tooManyAttempts(req.ip ?? "unknown")) {
+      res.status(429).json({ error: "Too many attempts. Try again later." });
+      return;
+    }
+
+    const { token, subdomain, next } = await login(req.body ?? {});
+    res.cookie(COOKIE_NAME, token, cookieOptions());
+    res.json({ subdomain, next });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/auth/logout", (_req, res) => {
+  // Same attributes as when it was set, or the browser keeps the original.
+  const { maxAge: _drop, ...options } = cookieOptions();
+  res.clearCookie(COOKIE_NAME, options);
+  res.json({ ok: true });
 });
 
 // --- Sections ---------------------------------------------------------------
