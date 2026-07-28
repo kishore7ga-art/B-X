@@ -69,6 +69,35 @@ export function adminConfigured(): boolean {
 
 export type AdminSession = { adminId: string; email: string };
 
+/**
+ * Whether the panel has been set up, for the login screen to read.
+ *
+ * Unauthenticated, deliberately. It says two things — is a signing key
+ * configured, and does any account exist — and neither is worth protecting:
+ * when the answer is "no accounts", there is nothing to attack, and once one
+ * exists this stops saying anything an attacker could use. What it buys is the
+ * difference between somebody staring at "Incorrect email, password or code"
+ * and somebody being told the account was never created.
+ *
+ * Deliberately not a count, and never an email. Whether setup is finished is
+ * useful; who the admins are is not.
+ */
+export async function adminStatus() {
+  if (!adminConfigured()) {
+    return { configured: false as const, hasAccounts: false };
+  }
+  try {
+    return {
+      configured: true as const,
+      hasAccounts: (await prisma.adminUser.count()) > 0,
+    };
+  } catch {
+    // The table is missing or the database is unreachable — either way setup
+    // is not finished, which is what the caller is asking.
+    return { configured: true as const, hasAccounts: false };
+  }
+}
+
 async function mintAdminToken(payload: AdminSession) {
   return new SignJWT({ ...payload, kind: "admin" })
     .setProtectedHeader({ alg: "HS256" })

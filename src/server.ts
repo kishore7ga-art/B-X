@@ -16,6 +16,7 @@ import {
   adminLogin,
   adminOverview,
   adminSites,
+  adminStatus,
   getAdminSession,
 } from "@/admin-service";
 import { bootstrapAdmin } from "@/admin-bootstrap";
@@ -604,6 +605,14 @@ app.post("/api/v1/admin/auth/login", async (req, res) => {
     const { token, admin } = await adminLogin(req.body ?? {});
     res.cookie(ADMIN_COOKIE_NAME, token, adminCookieOptions());
     res.json({ admin });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/status", async (_req, res) => {
+  try {
+    res.json(await adminStatus());
   } catch (error) {
     fail(res, error);
   }

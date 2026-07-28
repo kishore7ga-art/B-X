@@ -583,6 +583,31 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/admin/status": {
+      get: {
+        tags: ["Admin"],
+        summary: "Whether the panel has been set up",
+        description:
+          "Unauthenticated, and deliberately so. It reports two things — is a " +
+          "signing key configured, and does any admin account exist — and " +
+          "neither is worth protecting: with no accounts there is nothing to " +
+          "attack, and once one exists this stops saying anything useful to an " +
+          "attacker.\n\nWhat it buys is the login screen being able to say " +
+          "\"no account has been created\" instead of \"incorrect email, " +
+          "password or code\", which is the difference between a setup step and " +
+          "a dead end. Never returns a count or an email.",
+        security: [],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: { configured: bool, hasAccounts: bool },
+            },
+            "Setup state.",
+          ),
+        },
+      },
+    },
     "/api/v1/admin/auth/logout": {
       post: {
         tags: ["Admin"],
