@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { credentialsSchema, signupSchema } from "@/auth-service";
+import { startWithDesignSchema } from "@/design-service";
+import { onboardingSchema } from "@/onboarding-service";
 import { restoreSchema, saveSchema } from "@/sections-service";
 
 /**
@@ -140,6 +142,7 @@ export const openApiDocument = {
     { name: "Service", description: "What this is and whether it is healthy." },
     { name: "Auth", description: "Creating an account and signing in." },
     { name: "Public", description: "Reads that need no session." },
+    { name: "Onboarding", description: "Naming a college, choosing a design, provisioning a site." },
     { name: "Editor", description: "Reads behind a session." },
     { name: "Sections", description: "Editing a section and its history." },
     { name: "Uploads", description: "Images." },
@@ -403,6 +406,144 @@ export const openApiDocument = {
           ),
           ...errors(
             [404, "No such site or page — or a draft, to anyone but its owner."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+
+    "/api/v1/onboarding": {
+      post: {
+        tags: ["Onboarding"],
+        summary: "Record the college's name and type",
+        description:
+          "Step 2 of the flow. Rewrites the subdomain from the new name only " +
+          "while nothing is built on it — once a site has sections its address " +
+          "is in the editor URL, the public URL and possibly a bookmark.\n\n" +
+          "Sections still showing the template's starter copy are re-personalised " +
+          "with the new name. A section somebody has edited keeps every word of " +
+          "it, including the old name, because they may have written it deliberately.",
+        security: SESSION_COOKIE,
+        requestBody: body(onboardingSchema),
+        responses: {
+          "200": json(
+            { type: "object", properties: { subdomain: str, next: str } },
+            "Saved; `next` is where the caller should go.",
+          ),
+          ...errors(
+            [400, "Validation failed."],
+            [401, "Not signed in."],
+            [404, "The session's college no longer exists."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+    "/api/v1/onboarding/build": {
+      post: {
+        tags: ["Onboarding"],
+        summary: "Build a site from the college's type",
+        description:
+          "Picks the template matching the type given at onboarding, takes the " +
+          "theme from that template's demo college so the site opens looking " +
+          "like the gallery advertises, and provisions the starter pages and " +
+          "sections. Deliberately not random: answering \"Medical\" twice should " +
+          "not produce two different sites.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            { type: "object", properties: { subdomain: str, next: str } },
+            "Site built; `next` is the editor.",
+          ),
+          ...errors(
+            [400, "The college has not been asked its type yet."],
+            [401, "Not signed in."],
+            [404, "The session's college no longer exists."],
+            [500, "Template not seeded, or no palettes/font packs configured."],
+          ),
+        },
+      },
+    },
+    "/api/v1/design": {
+      post: {
+        tags: ["Onboarding"],
+        summary: "Start with a chosen template and theme",
+        description:
+          "Saves the template, palette and font pack onto the college and " +
+          "provisions starter sections if it has none. Existing content is never " +
+          "touched — re-picking a theme rewrites three foreign keys and nothing else.",
+        security: SESSION_COOKIE,
+        requestBody: body(startWithDesignSchema),
+        responses: {
+          "200": json(
+            { type: "object", properties: { subdomain: str, next: str } },
+            "Applied; `next` is the editor.",
+          ),
+          ...errors(
+            [400, "Validation failed."],
+            [401, "Not signed in."],
+            [404, "College, template, palette or font pack not found."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+    "/api/v1/design/cycle": {
+      post: {
+        tags: ["Onboarding"],
+        summary: "Swap the template underneath the whole site",
+        description:
+          "Moves every section to the next template in name order, keeping the " +
+          "college's text: content is stored keyed by section type rather than " +
+          "by template, so re-pointing the ids carries the words across.\n\n" +
+          "A section type the new template lacks is hidden rather than deleted, " +
+          "so the text returns on the next cycle. A type the college never had " +
+          "is added hidden, with starter copy, rather than published empty. " +
+          "Palette and fonts are untouched — this changes layout, not colours.\n\n" +
+          "`changed: false` when there is only one template to cycle between; " +
+          "not an error, the button is disabled for the same reason.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            { type: "object", properties: { subdomain: str, changed: bool } },
+            "Cycled, or nothing to cycle to.",
+          ),
+          ...errors(
+            [401, "Not signed in."],
+            [404, "The session's college no longer exists."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+    "/api/v1/sites/{subdomain}/preview": {
+      get: {
+        tags: ["Onboarding"],
+        summary: "What a template would look like, without saving it",
+        description:
+          "Renders what \"Start with this design\" is about to create — same " +
+          "starter pages, same lead variant per section, same default copy with " +
+          "this college's name in it. Nothing is written. Section ids are prefixed " +
+          "`preview:` so one can never be mistaken for a real row and edited.\n\n" +
+          "Answers the same shape as the public site read, so one renderer draws both.",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "subdomain", in: "path", required: true, schema: str },
+          {
+            name: "template",
+            in: "query",
+            required: true,
+            schema: str,
+            description: "The template to preview.",
+          },
+        ],
+        responses: {
+          "200": json({ type: "object" }, "A site page, generated not stored."),
+          ...errors(
+            [400, "template query parameter missing."],
+            [401, "Not signed in."],
+            [403, "Not your college."],
+            [404, "No such college or template."],
             [500, "Unexpected server error."],
           ),
         },

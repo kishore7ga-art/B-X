@@ -20,7 +20,18 @@ import {
   signupSchema,
 } from "@/auth-service";
 import { prisma } from "@/db";
+import {
+  cycleTemplate,
+  getTemplatePreview,
+  startWithDesign,
+  startWithDesignSchema,
+} from "@/design-service";
 import { docsPage } from "@/docs-page";
+import {
+  buildSiteForType,
+  completeOnboarding,
+  onboardingSchema,
+} from "@/onboarding-service";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
 import {
@@ -527,6 +538,88 @@ app.get("/api/v1/editor/:subdomain", async (req, res) => {
     // the caller: a session may only read its own college's editor.
     if (data.college.id !== session.collegeId) {
       res.status(403).json({ error: "Not your college" });
+      return;
+    }
+
+    res.json(data);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+// --- Onboarding and design ----------------------------------------------------
+
+/**
+ * Every one of these is a write scoped to the caller's own college.
+ *
+ * The tenant comes from the session and never from the body — there is no
+ * collegeId parameter to tamper with, which is why none of them needs an
+ * ownership check beyond being signed in.
+ */
+app.post("/api/v1/onboarding", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const input = onboardingSchema.parse(req.body);
+    res.json(await completeOnboarding(session.collegeId, input));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/onboarding/build", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    res.json(await buildSiteForType(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/design", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const input = startWithDesignSchema.parse(req.body);
+    res.json(await startWithDesign(session.collegeId, input));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/design/cycle", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    res.json(await cycleTemplate(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * What a template would look like on this college, without writing anything.
+ *
+ * Behind a session and scoped to the caller's own college: it renders that
+ * college's name and theme into the preview, so it is their data even though
+ * nothing is saved.
+ */
+app.get("/api/v1/sites/:subdomain/preview", async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const templateId =
+      typeof req.query.template === "string" ? req.query.template : undefined;
+    if (!templateId) {
+      res.status(400).json({ error: "template query parameter is required" });
+      return;
+    }
+
+    const college = await getCollege(session.collegeId);
+    if (!college || college.subdomain !== req.params.subdomain) {
+      res.status(403).json({ error: "Not your college" });
+      return;
+    }
+
+    const data = await getTemplatePreview(req.params.subdomain, templateId);
+    if (!data) {
+      res.status(404).json({ error: "Not found" });
       return;
     }
 
