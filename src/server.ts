@@ -20,7 +20,14 @@ import {
   signupSchema,
 } from "@/auth-service";
 import { prisma } from "@/db";
+import { docsPage } from "@/docs-page";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
+import { assertFullyDocumented, openApiDocument } from "@/openapi";
+import {
+  getSitePage,
+  getTemplateDetail,
+  listTemplates,
+} from "@/site-service";
 import { getCollege, getEditorPage } from "@/editor-service";
 import {
   BadRequest,
@@ -408,6 +415,79 @@ app.post("/api/v1/auth/login", async (req, res) => {
  * it would actually do something.
  */
 
+// --- Docs ---------------------------------------------------------------------
+
+/**
+ * Public, both of them.
+ *
+ * They describe the shape of the API and expose no data: every field named here
+ * is one the endpoints already return to whoever is allowed to call them, and
+ * gating a description of a public interface protects nothing. The endpoints
+ * themselves remain exactly as guarded as before.
+ */
+app.get("/openapi.json", (_req, res) => res.json(openApiDocument));
+
+app.get("/docs", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(docsPage);
+});
+
+// --- Public reads -------------------------------------------------------------
+
+/**
+ * No session required, deliberately.
+ *
+ * These are the marketing page's gallery and the published sites themselves —
+ * the two things whose entire job is to be readable by someone who has never
+ * signed in. Templates are reference data with nothing tenant-specific in them.
+ * Draft visibility is the one access rule here, and it is enforced inside
+ * `getSitePage` against whatever session the caller happens to have.
+ */
+app.get("/api/v1/templates", async (_req, res) => {
+  try {
+    res.json({ templates: await listTemplates() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/templates/:templateId", async (req, res) => {
+  try {
+    const detail = await getTemplateDetail(req.params.templateId);
+    if (!detail) {
+      res.status(404).json({ error: "No such template" });
+      return;
+    }
+    res.json(detail);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/sites/:subdomain", async (req, res) => {
+  try {
+    // A session is optional here and only ever widens what is visible: without
+    // one you see published sites, with one you also see your own draft.
+    const session = await getSession(req.headers.cookie);
+    const page = typeof req.query.page === "string" ? req.query.page : undefined;
+
+    const data = await getSitePage(
+      req.params.subdomain,
+      page,
+      session?.collegeId ?? null,
+    );
+
+    if (!data) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    res.json(data);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 // --- Editor reads -------------------------------------------------------------
 
 /**
@@ -608,7 +688,63 @@ app.use(
   },
 );
 
+/**
+ * Every route this app has actually registered, read back off Express.
+ *
+ * Asking the router rather than keeping a list means the check below cannot be
+ * satisfied by remembering to update two places — which is the failure it
+ * exists to prevent.
+ */
+function registeredRoutes(): { method: string; path: string }[] {
+  // Express 5 exposes the router directly; the `_router` fallback is for the
+  // shape Express 4 used, so this keeps working either way.
+  const router = (app as unknown as { router?: { stack?: unknown[] } }).router;
+  const stack =
+    router?.stack ??
+    (app as unknown as { _router?: { stack?: unknown[] } })._router?.stack ??
+    [];
+
+  const routes: { method: string; path: string }[] = [];
+  for (const layer of stack as { route?: { path: unknown; methods?: Record<string, boolean> } }[]) {
+    const path = layer.route?.path;
+    if (typeof path !== "string") continue;
+    for (const [method, enabled] of Object.entries(layer.route?.methods ?? {})) {
+      if (enabled) routes.push({ method: method.toUpperCase(), path });
+    }
+  }
+  return routes;
+}
+
+/**
+ * An endpoint that is not in the docs does not start the server.
+ *
+ * This was asked for as a CI step. It is here instead, because a CI check runs
+ * once a pull request exists and a checklist is a thing people forget, whereas
+ * this fails the moment the route is added — in the terminal of whoever added
+ * it, which is the cheapest possible time to fix it.
+ *
+ * Fatal only outside production. A running deployment should not refuse to
+ * serve traffic over a documentation gap; it says so loudly and carries on.
+ */
+function verifyDocs() {
+  const undocumented = assertFullyDocumented(registeredRoutes());
+  if (!undocumented.length) return;
+
+  const message =
+    `[api] ${undocumented.length} route(s) missing from src/openapi.ts:\n` +
+    undocumented.map((route) => `        ${route}`).join("\n");
+
+  if (process.env.NODE_ENV === "production") {
+    console.error(message);
+    return;
+  }
+  console.error(message);
+  throw new Error("Undocumented routes — add them to src/openapi.ts");
+}
+
 app.listen(PORT, () => {
   console.log(`[api] xite backend listening on :${PORT}`);
   console.log(`[api] CORS origins: ${ORIGINS.length ? ORIGINS.join(", ") : "(any)"}`);
+  console.log(`[api] docs: /docs`);
+  verifyDocs();
 });
