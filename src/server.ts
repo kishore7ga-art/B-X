@@ -18,6 +18,7 @@ import {
   adminSites,
   getAdminSession,
 } from "@/admin-service";
+import { bootstrapAdmin } from "@/admin-bootstrap";
 import { getSession, readSession } from "@/auth";
 import {
   AuthError,
@@ -933,5 +934,7 @@ app.listen(PORT, () => {
   console.log(`[api] xite backend listening on :${PORT}`);
   console.log(`[api] CORS origins: ${ORIGINS.length ? ORIGINS.join(", ") : "(any)"}`);
   console.log(`[api] docs: /docs`);
+  // After listen, so a slow database cannot delay the port opening.
+  void bootstrapAdmin();
   verifyDocs();
 });

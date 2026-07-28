@@ -55,14 +55,27 @@ if (command === "list") {
 }
 
 if (command === "create") {
-  const [email, password] = args;
+  const [email, password] = args.filter((a) => a !== "--force");
   if (!email || !password) {
     console.error("\n  Usage: create <email> <password>\n");
     await done(1);
   }
-  if (password.length < 12) {
-    // Longer than the 8 a college owner gets. This account deletes things.
-    console.error("\n  Password must be at least 12 characters.\n");
+  /**
+   * Twelve, four more than a college owner gets, because this account can
+   * delete every college on the platform.
+   *
+   * `--force` exists because the operator running this has database access
+   * already and is entitled to overrule a default — but it has to be typed,
+   * so a weak admin password is a decision somebody made rather than one that
+   * happened. It says so, loudly, and the floor stays where it is for
+   * everything created without it.
+   */
+  const forced = args.includes("--force");
+  if (password.length < 12 && !forced) {
+    console.error(
+      "\n  Password must be at least 12 characters.\n" +
+        "  Add --force to override — this account can delete every college.\n",
+    );
     await done(1);
   }
 
