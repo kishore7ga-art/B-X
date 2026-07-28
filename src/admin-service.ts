@@ -164,6 +164,22 @@ export async function getAdminSession(
  * be willing to discuss.
  */
 export async function adminLogin(input: unknown) {
+  /**
+   * Configuration is checked before anything else, and that ordering is the
+   * whole point of it being here rather than further down.
+   *
+   * `mintAdminToken` reads the signing key, so an unconfigured deployment used
+   * to fail at the last line of this function — after the password had already
+   * been compared. A wrong password answered 401 and a right one answered 503,
+   * which told anybody who cared to try that they had guessed correctly. A
+   * login that cannot issue a session should not be willing to say whether the
+   * password was right; the answer is the same either way now, and no bcrypt
+   * work happens to produce it.
+   */
+  if (!adminConfigured()) {
+    throw new AuthError("Admin panel is not configured on this deployment", 503);
+  }
+
   const parsed = adminLoginSchema.safeParse(input);
   if (!parsed.success) {
     throw new AuthError(parsed.error.issues[0]?.message ?? "Check your details");
