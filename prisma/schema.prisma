@@ -44,6 +44,15 @@ model College {
   themePaletteId String?       @map("theme_palette_id")
   themeFontId    String?       @map("theme_font_id")
   status         CollegeStatus @default(DRAFT)
+  /// Whether a signup with no college may claim this one.
+  ///
+  /// signup() adopts the oldest college that has no users, which is how an
+  /// open-access install keeps its work when someone finally registers. Once a
+  /// Super Admin can delete the last owner of a college deliberately, that same
+  /// path would hand a stranger somebody else content and their published site.
+  /// Deleting an owner clears this; reassigning ownership is a decision, not a
+  /// race won by the next person to sign up.
+  adoptable      Boolean       @default(true)
   /// What kind of institution this is, from onboarding — see
   /// src/lib/college-types.ts for the values and the template each opens with.
   ///
@@ -93,6 +102,14 @@ model Template {
   description  String?
   thumbnailUrl String? @map("thumbnail_url")
   demoUrl      String? @map("demo_url")
+  /// When this template stopped being offered to new colleges.
+  ///
+  /// Not a delete. Section rows cascade from Template, and CollegeSection rows
+  /// cascade from Section — so removing a template row would take the content
+  /// of every college using it with it, which is the opposite of retiring a
+  /// design. Archiving hides it from the picker and leaves every existing site
+  /// untouched. A real delete is only offered when no college uses it.
+  archivedAt   DateTime? @map("archived_at")
 
   sections Section[]
   colleges College[]
@@ -252,4 +269,58 @@ model Page {
 
   @@unique([collegeId, slug])
   @@map("pages")
+}
+
+/// A Super Admin of the platform itself — not a college owner.
+///
+/// Deliberately its own table rather than a flag on `users`. A role column
+/// means one bug in a query is the difference between a college owner and
+/// somebody who can delete every college; a separate table, a separate cookie
+/// and a separate secret means a college session cannot be mistaken for this
+/// one by any code path, because there is no path from one to the other.
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  /// Base32 TOTP secret. Nullable so an account can be created before it is
+  /// enrolled, but sign-in refuses to complete while it is null.
+  totpSecret   String?   @map("totp_secret")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  auditEntries AuditLog[]
+
+  @@map("admin_users")
+}
+
+/// What a Super Admin did, and to what.
+///
+/// `actorEmail` is copied in rather than read through the relation, because the
+/// question this table exists to answer is asked *after* something has gone
+/// wrong — quite possibly after the admin account involved was itself removed.
+/// A log whose rows become anonymous when an account is deleted is not a log.
+///
+/// `SetNull` on the relation for the same reason: losing the actor must never
+/// take the record of what they did with it.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id")
+  actorEmail String   @map("actor_email")
+  /// Machine-readable, e.g. `template.archive`, `user.delete`.
+  action     String
+  /// What was acted on: `template`, `user`, `college`.
+  targetType String   @map("target_type")
+  targetId   String?  @map("target_id")
+  /// One line, written for a human reading this in six months.
+  summary    String
+  /// Anything worth keeping that does not deserve a column — counts, the
+  /// previous value, the confirmation the operator was shown.
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor AdminUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_log")
 }
