@@ -3,6 +3,11 @@ import { SignJWT } from "jose";
 import { z } from "zod";
 
 import { prisma } from "@/db";
+import {
+  hostFromOrigin,
+  sessionCookieScope,
+  type CookieScope,
+} from "@/lib/auth/cookie-domain";
 
 /**
  * Account creation and sign-in, owned by the backend.
@@ -55,21 +60,71 @@ export async function mintSessionToken(payload: {
     .sign(secretKey());
 }
 
+/** The frontend this API serves, as named in CORS_ORIGINS. */
+function frontendOrigin(): string | undefined {
+  return (process.env.CORS_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .find(Boolean);
+}
+
+/**
+ * Said once, at the first cookie written, rather than per request.
+ *
+ * A host-only cookie in a split deployment is the failure that reports itself
+ * as success, so the resolved scope is worth a line in the log either way —
+ * previously it was answerable only by capturing a Set-Cookie header off a
+ * live response.
+ */
+let announcedScope = false;
+
+function announce(scope: CookieScope) {
+  if (announcedScope) return;
+  announcedScope = true;
+
+  // Discriminated on `source`, not on `domain` being truthy: the latter reads
+  // more naturally and does not narrow the union, so `reason` stays invisible.
+  if (scope.source !== "host-only") {
+    console.log(
+      `[auth] session cookie scoped to ${scope.domain} (${scope.source})`,
+    );
+    return;
+  }
+
+  // Single-service and local setups land here legitimately, so this is only a
+  // warning when the two hosts genuinely cannot share one cookie.
+  const log = scope.reason.includes("SESSION_COOKIE_DOMAIN")
+    ? console.warn
+    : console.log;
+  log(`[auth] session cookie is host-only — ${scope.reason}`);
+}
+
 /**
  * Cookie attributes for a session issued by api.xite.co.in and read by
  * xite.co.in.
  *
  * `Domain` is the whole reason this works. Without it the cookie is scoped to
  * api.xite.co.in alone, and the frontend — which renders every guarded page
- * server-side — would never see it: sign-in would appear to succeed and every
- * page after it would say signed out. Setting the parent domain lets one
- * session cover both services.
+ * server-side — would never see it: sign-in appears to succeed and every page
+ * after it says signed out.
  *
- * Unset in local development, where both run on localhost and a Domain of
- * `.xite.co.in` would simply be dropped by the browser.
+ * That is a bad thing to rest on someone remembering an environment variable,
+ * because forgetting it breaks authentication and logs nothing at all. It is
+ * derived from the two hostnames instead — this request's own, and the
+ * frontend's from CORS_ORIGINS, which the browser already requires to be
+ * correct before it will make the call. `SESSION_COOKIE_DOMAIN` still overrides
+ * for a topology this cannot infer, and local development gets a host-only
+ * cookie because localhost cannot carry a Domain.
  */
-export function cookieOptions() {
-  const domain = process.env.SESSION_COOKIE_DOMAIN;
+export function cookieOptions(apiHost?: string) {
+  const scope = sessionCookieScope({
+    configured: process.env.SESSION_COOKIE_DOMAIN,
+    frontendHost: hostFromOrigin(frontendOrigin()),
+    apiHost: hostFromOrigin(apiHost),
+  });
+  announce(scope);
+
+  const domain = scope.domain;
   const crossSite = Boolean(domain);
 
   return {

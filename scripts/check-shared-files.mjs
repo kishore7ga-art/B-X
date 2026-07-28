@@ -1,7 +1,7 @@
 /**
  * Fails the build when a file shared with the other repo has drifted.
  *
- * Nine files exist in both xite-F and xite-B as manual copies. That has caused
+ * Ten files exist in both xite-F and xite-B as manual copies. That has caused
  * two production outages: a schema change without the matching migration in the
  * other repo, and a seed left behind that would have re-baked a demo college's
  * name into every template. Both looked unrelated to the change that caused
@@ -28,6 +28,7 @@ const SHARED = [
   "src/lib/json-stable.ts",
   "src/lib/db-pool.ts",
   "src/lib/auth/demo.ts",
+  "src/lib/auth/cookie-domain.ts",
 ];
 
 const MANIFEST = "shared-files.lock.json";

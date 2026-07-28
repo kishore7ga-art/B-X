@@ -65,6 +65,21 @@ app.use((req, res, next) => {
   next();
 });
 
+/**
+ * The host the browser actually asked for, which is what the cookie's scope has
+ * to be decided against.
+ *
+ * `req.hostname` is not it: behind Traefik this container sees its own service
+ * name, and a cookie scoped to that reaches nobody. The proxy preserves the
+ * original in `X-Forwarded-Host`, which may be a list if more than one hop
+ * added to it — the first entry is the client's.
+ */
+function requestHost(req: express.Request): string | undefined {
+  const forwarded = req.headers["x-forwarded-host"];
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return (value ?? req.headers.host)?.split(",")[0]?.trim() || undefined;
+}
+
 async function requireSession(req: express.Request) {
   const session = await getSession(req.headers.cookie);
   if (!session) {
@@ -193,16 +208,16 @@ app.post("/api/v1/auth/login", async (req, res) => {
     }
 
     const { token, subdomain, next } = await login(req.body ?? {});
-    res.cookie(COOKIE_NAME, token, cookieOptions());
+    res.cookie(COOKIE_NAME, token, cookieOptions(requestHost(req)));
     res.json({ subdomain, next });
   } catch (error) {
     fail(res, error);
   }
 });
 
-app.post("/api/v1/auth/logout", (_req, res) => {
+app.post("/api/v1/auth/logout", (req, res) => {
   // Same attributes as when it was set, or the browser keeps the original.
-  const { maxAge: _drop, ...options } = cookieOptions();
+  const { maxAge: _drop, ...options } = cookieOptions(requestHost(req));
   res.clearCookie(COOKIE_NAME, options);
   res.json({ ok: true });
 });
