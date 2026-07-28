@@ -15,7 +15,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "check:shared": "node scripts/check-shared-files.mjs",
-    "prebuild": "node scripts/check-shared-files.mjs"
+    "prebuild": "node scripts/check-shared-files.mjs",
+    "admin": "node scripts/admin.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.0",
@@ -26,6 +27,7 @@
     "express": "^5.1.0",
     "jose": "^6.2.4",
     "multer": "^2.0.2",
+    "otpauth": "^9.5.1",
     "pg": "^8.22.0",
     "zod": "^4.4.3"
   },

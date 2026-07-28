@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { credentialsSchema, signupSchema } from "@/auth-service";
 import { startWithDesignSchema } from "@/design-service";
+import { adminLoginSchema } from "@/admin-service";
 import { onboardingSchema } from "@/onboarding-service";
 import { restoreSchema, saveSchema } from "@/sections-service";
 
@@ -146,6 +147,7 @@ export const openApiDocument = {
     { name: "Editor", description: "Reads behind a session." },
     { name: "Sections", description: "Editing a section and its history." },
     { name: "Uploads", description: "Images." },
+    { name: "Admin", description: "Super Admin panel. Separate session, separate signing key." },
   ],
   components: {
     securitySchemes: {
@@ -546,6 +548,83 @@ export const openApiDocument = {
             [404, "No such college or template."],
             [500, "Unexpected server error."],
           ),
+        },
+      },
+    },
+
+    "/api/v1/admin/auth/login": {
+      post: {
+        tags: ["Admin"],
+        summary: "Sign in as Super Admin",
+        description:
+          "Sets `xite_admin_session`, signed with ADMIN_SESSION_SECRET rather " +
+          "than the app's own key — a college session can never verify here. " +
+          "Eight-hour lifetime.\n\n" +
+          "A six-digit code is required once the account has enrolled TOTP, and " +
+          "401 \"A 6-digit code is required\" is returned distinctly so the form " +
+          "knows to ask rather than claim the password was wrong. Every other " +
+          "failure answers identically — which admin accounts exist is not " +
+          "something a login form should discuss.\n\n" +
+          "Rate limited to 5 per IP per 15 minutes. 503 while " +
+          "ADMIN_SESSION_SECRET is unset or equal to SESSION_SECRET.",
+        security: [],
+        requestBody: body(adminLoginSchema),
+        responses: {
+          "200": json(
+            { type: "object", properties: { admin: { type: "object" } } },
+            "Signed in; admin cookie set.",
+          ),
+          ...errors(
+            [400, "Validation failed."],
+            [401, "Incorrect email, password or code."],
+            [429, "Too many attempts."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+    },
+    "/api/v1/admin/auth/logout": {
+      post: {
+        tags: ["Admin"],
+        summary: "Clear the admin session",
+        security: [],
+        responses: { "200": json({ type: "object" }, "Cleared.") },
+      },
+    },
+    "/api/v1/admin/me": {
+      get: {
+        tags: ["Admin"],
+        summary: "The signed-in admin",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json({ type: "object" }, "The admin."),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+    "/api/v1/admin/overview": {
+      get: {
+        tags: ["Admin"],
+        summary: "Dashboard counts, template usage and recent actions",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json({ type: "object" }, "Overview."),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+    "/api/v1/admin/sites": {
+      get: {
+        tags: ["Admin"],
+        summary: "Every college, with owner counts and a link to its site",
+        description:
+          "`orphaned` marks a college whose last owner was removed; `adoptable` " +
+          "says whether the next signup may claim it. `lastEditedAt` is the " +
+          "newest section save — nothing in the schema records a publish date.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json({ type: "object" }, "All colleges."),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
         },
       },
     },

@@ -9,6 +9,15 @@ import cors from "cors";
 import express from "express";
 import multer from "multer";
 
+import {
+  ADMIN_COOKIE_NAME,
+  adminConfigured,
+  adminCookieOptions,
+  adminLogin,
+  adminOverview,
+  adminSites,
+  getAdminSession,
+} from "@/admin-service";
 import { getSession, readSession } from "@/auth";
 import {
   AuthError,
@@ -340,6 +349,12 @@ const LIMITS = {
    * script wants.
    */
   signup: { max: 5, windowMs: 60 * 60 * 1000 },
+  /**
+   * Guessing an admin password is worth more than guessing a college owner's,
+   * and there is no legitimate reason for a person to get this wrong five
+   * times in a quarter hour.
+   */
+  adminLogin: { max: 5, windowMs: 15 * 60 * 1000 },
 } as const;
 
 const LONGEST_WINDOW_MS = Math.max(
@@ -542,6 +557,85 @@ app.get("/api/v1/editor/:subdomain", async (req, res) => {
     }
 
     res.json(data);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+// --- Admin panel --------------------------------------------------------------
+
+/**
+ * Its own session, its own cookie, its own signing key.
+ *
+ * `requireSession` above resolves a *college*. This resolves an admin, and the
+ * two share nothing — a college cookie presented here verifies against a key it
+ * was not signed with and fails, which is the point of them being separate.
+ */
+async function requireAdmin(req: express.Request) {
+  if (!adminConfigured()) {
+    const error = new AuthError(
+      "Admin panel is not configured on this deployment",
+      503,
+    );
+    throw error;
+  }
+
+  const session = await getAdminSession(req.headers.cookie);
+  if (!session) {
+    const error = new Error("Not signed in");
+    error.name = "Unauthorized";
+    throw error;
+  }
+  return session;
+}
+
+/**
+ * Guessing an admin password is worth more than guessing a college's, so this
+ * is tighter than the login limiter and keyed separately.
+ */
+app.post("/api/v1/admin/auth/login", async (req, res) => {
+  try {
+    if (rateLimit("adminLogin", req)) {
+      res.status(429).json({ error: "Too many attempts. Try again later." });
+      return;
+    }
+
+    const { token, admin } = await adminLogin(req.body ?? {});
+    res.cookie(ADMIN_COOKIE_NAME, token, adminCookieOptions());
+    res.json({ admin });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/admin/auth/logout", (_req, res) => {
+  const { maxAge: _drop, ...options } = adminCookieOptions();
+  res.clearCookie(ADMIN_COOKIE_NAME, options);
+  res.json({ ok: true });
+});
+
+app.get("/api/v1/admin/me", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json({ admin: session });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/overview", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await adminOverview());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/sites", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ sites: await adminSites() });
   } catch (error) {
     fail(res, error);
   }
