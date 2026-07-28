@@ -1,4 +1,8 @@
 import { prisma } from "@/db";
+import type {
+  CollegePayload,
+  EditorPagePayload,
+} from "@/lib/api-contract";
 import { isSupportedSectionType } from "@/lib/sections/schemas";
 
 /**
@@ -20,9 +24,17 @@ const VARIANT_ORDER = [
   { variantName: "asc" as const },
 ];
 
-/** The signed-in college, as the guarded pages need it. */
-export async function getCollege(collegeId: string) {
-  return prisma.college.findUnique({
+/**
+ * The signed-in college, as the guarded pages need it.
+ *
+ * The return type is the shared contract rather than whatever the `select`
+ * happens to produce, so removing a field here stops compiling instead of
+ * quietly reaching the frontend as `undefined`.
+ */
+export async function getCollege(
+  collegeId: string,
+): Promise<CollegePayload | null> {
+  const college = await prisma.college.findUnique({
     where: { id: collegeId },
     select: {
       id: true,
@@ -38,9 +50,18 @@ export async function getCollege(collegeId: string) {
       createdAt: true,
     },
   });
+
+  if (!college) return null;
+
+  // Serialised here rather than left to res.json's own Date handling — the
+  // contract says string, so the conversion belongs where it can be checked.
+  return { ...college, createdAt: college.createdAt.toISOString() };
 }
 
-export async function getEditorPage(subdomain: string, pageSlug?: string) {
+export async function getEditorPage(
+  subdomain: string,
+  pageSlug?: string,
+): Promise<EditorPagePayload | null> {
   const college = await prisma.college.findUnique({
     where: { subdomain },
     include: {

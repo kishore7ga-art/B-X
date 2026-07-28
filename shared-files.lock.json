@@ -7,6 +7,7 @@
   "src/lib/college-types.ts": "cedbaf82871115ce",
   "src/lib/json-stable.ts": "6141a2d81b86d2fc",
   "src/lib/db-pool.ts": "12620a9a504fdd73",
-  "src/lib/auth/demo.ts": "6880d9615ba7919a",
-  "src/lib/auth/cookie-domain.ts": "a2914b8049d9ff6b"
+  "src/lib/auth/demo.ts": "afbec0f31c6edcd5",
+  "src/lib/auth/cookie-domain.ts": "a2914b8049d9ff6b",
+  "src/lib/api-contract.ts": "fc481c48a1d3b75c"
 }

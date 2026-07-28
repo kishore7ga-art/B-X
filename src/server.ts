@@ -21,8 +21,10 @@ import {
 import { prisma } from "@/db";
 import { getCollege, getEditorPage } from "@/editor-service";
 import {
+  BadRequest,
   listHistory,
   NotFound,
+  restoreSchema,
   restoreVersion,
   saveContent,
   saveSchema,
@@ -35,6 +37,60 @@ const UPLOAD_DIR =
 const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
+
+/**
+ * How many proxy hops in front of this service may be believed.
+ *
+ * `req.ip` is whatever Express decides the client is, and with this off it is
+ * the nearest socket — Traefik. Every request in the deployment therefore
+ * arrived from one address, which quietly turned the login limiter below into a
+ * global one: ten wrong passwords from anybody locked out everybody for fifteen
+ * minutes, and a real attacker got no per-address limit at all.
+ *
+ * `1` means "believe the last hop and nothing further". It is not `true`:
+ * `X-Forwarded-For` is a client-supplied header, so trusting the whole chain
+ * lets anyone prepend an address and be rate-limited as somebody else — the
+ * same bug wearing the opposite mask.
+ *
+ * Off by default outside production, where there is no proxy and believing the
+ * header would make it spoofable by any caller.
+ */
+function trustProxySetting(): boolean | number | string {
+  const raw = process.env.TRUST_PROXY?.trim();
+  if (!raw) return process.env.NODE_ENV === "production" ? 1 : false;
+  if (raw === "false") return false;
+  // `true` trusts the entire chain. Spoofable, and only ever right when
+  // something upstream already sanitises the header.
+  if (raw === "true") return true;
+
+  const hops = Number(raw);
+  // Anything else is passed through as Express's own address/CIDR list.
+  return Number.isInteger(hops) && hops >= 0 ? hops : raw;
+}
+
+const TRUST_PROXY = trustProxySetting();
+app.set("trust proxy", TRUST_PROXY);
+
+/**
+ * Says so when the setting and reality disagree.
+ *
+ * This was found by reading the code, not from any symptom — a limiter keyed on
+ * the wrong address still returns 200s and logs nothing. If forwarded requests
+ * arrive while the header is being ignored, that is worth one line rather than
+ * another silent misconfiguration.
+ */
+let warnedAboutProxy = false;
+
+app.use((req, _res, next) => {
+  if (!warnedAboutProxy && !TRUST_PROXY && req.headers["x-forwarded-for"]) {
+    warnedAboutProxy = true;
+    console.warn(
+      "[api] requests carry X-Forwarded-For but TRUST_PROXY is off — " +
+        "every client is being rate-limited as one address. Set TRUST_PROXY=1.",
+    );
+  }
+  next();
+});
 
 /**
  * Only the frontend may call this, and it must be named exactly.
@@ -90,17 +146,54 @@ async function requireSession(req: express.Request) {
   return session;
 }
 
+/** Zod's first issue, which is the readable half of a validation failure. */
+function firstIssueMessage(error: unknown): string {
+  const issues = (error as { issues?: { message?: unknown }[] }).issues;
+  const message = issues?.[0]?.message;
+  return typeof message === "string" && message ? message : "Check your details";
+}
+
+/**
+ * The one place a failure becomes a response, so all twelve routes answer in
+ * one shape: `{ error: string }`, with a status that means something.
+ *
+ * The default used to be 400 with `error.message` verbatim. Both halves were
+ * wrong. A Prisma fault, a missing SESSION_SECRET or any genuine bug came back
+ * as "400 Bad Request" — blaming the caller for our outage — and carried the
+ * raw driver message with it, which is where table names, column names and
+ * connection details live. Anything unrecognised is now a 500, logged here and
+ * described to the client only in the general.
+ */
 function fail(res: express.Response, error: unknown) {
-  const message = error instanceof Error ? error.message : "Request failed";
-  const status =
-    error instanceof AuthError
-      ? error.status
-      : error instanceof NotFound
-        ? 404
-        : error instanceof Error && error.name === "Unauthorized"
-          ? 401
-          : 400;
-  res.status(status).json({ error: message });
+  // A schema rejection is the caller's to fix, and says so usefully.
+  if (error instanceof Error && error.name === "ZodError") {
+    res.status(400).json({ error: firstIssueMessage(error) });
+    return;
+  }
+
+  if (error instanceof AuthError) {
+    res.status(error.status).json({ error: error.message });
+    return;
+  }
+
+  if (error instanceof NotFound) {
+    res.status(404).json({ error: error.message });
+    return;
+  }
+
+  if (error instanceof BadRequest) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
+
+  if (error instanceof Error && error.name === "Unauthorized") {
+    res.status(401).json({ error: error.message });
+    return;
+  }
+
+  // Ours, not theirs. Logged in full; sent as nothing in particular.
+  console.error("[api] unhandled error:", error);
+  res.status(500).json({ error: "Something went wrong. Please try again." });
 }
 
 // --- Root ---------------------------------------------------------------------
@@ -156,53 +249,87 @@ app.get("/api/health", async (_req, res) => {
 // --- Auth ---------------------------------------------------------------------
 
 /**
- * A crude cap on password guessing.
+ * A crude cap on the two endpoints anyone on the internet can reach.
  *
- * `/api/v1/auth/login` is reachable by anyone on the internet and answers in
- * bcrypt time, which is fast enough to be worth grinding. In-memory is the
- * right size for one instance; a second replica needs this in the database or
- * a shared cache, and this comment is the reminder.
+ * Both answer in bcrypt time, which is slow enough to be worth grinding and
+ * slow enough that grinding hurts. In-memory is the right size for one
+ * instance; a second replica needs this in the database or a shared cache, and
+ * this comment is the reminder.
+ *
+ * Buckets are keyed by action as well as address, so exhausting one does not
+ * close the other — someone who has forgotten their password should still be
+ * able to register, and a signup flood should not lock out sign-in.
  */
-const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
-const MAX_ATTEMPTS = 10;
+const LIMITS = {
+  /** Password guessing. Ten wrong answers in a quarter hour is already a lot. */
+  login: { max: 10, windowMs: 15 * 60 * 1000 },
+  /**
+   * Account creation. Every call costs a bcrypt hash and writes a user and a
+   * college, so this is the CPU-and-junk-rows vector rather than the guessing
+   * one. Five an hour is far above what a person needs and far below what a
+   * script wants.
+   */
+  signup: { max: 5, windowMs: 60 * 60 * 1000 },
+} as const;
+
+const LONGEST_WINDOW_MS = Math.max(
+  ...Object.values(LIMITS).map((limit) => limit.windowMs),
+);
+
 const attempts = new Map<string, number[]>();
 
-function tooManyAttempts(key: string) {
+/**
+ * Records an attempt and says whether it was one too many.
+ *
+ * `req.ip` is only the real client because `trust proxy` is set above; keyed on
+ * the socket address it would be one bucket for the whole internet.
+ */
+function tooManyAttempts(action: keyof typeof LIMITS, ip: string) {
+  const { max, windowMs } = LIMITS[action];
+  const key = `${action}:${ip}`;
   const now = Date.now();
-  const recent = (attempts.get(key) ?? []).filter(
-    (at) => now - at < ATTEMPT_WINDOW_MS,
-  );
+
+  const recent = (attempts.get(key) ?? []).filter((at) => now - at < windowMs);
   recent.push(now);
   attempts.set(key, recent);
 
-  // Unbounded otherwise: one entry per IP that ever tried, kept forever.
+  // Unbounded otherwise: one entry per address that ever tried, kept forever.
+  // Swept against the longest window so a short-window bucket cannot evict a
+  // long-window one that is still counting.
   if (attempts.size > 5000) {
-    for (const [ip, times] of attempts) {
-      if (!times.some((at) => now - at < ATTEMPT_WINDOW_MS)) attempts.delete(ip);
+    for (const [entry, times] of attempts) {
+      const newest = times[times.length - 1] ?? 0;
+      if (now - newest >= LONGEST_WINDOW_MS) attempts.delete(entry);
     }
   }
 
-  return recent.length > MAX_ATTEMPTS;
+  return recent.length > max;
+}
+
+/** One place, so a new limited route cannot invent a different envelope. */
+function rateLimit(action: keyof typeof LIMITS, req: express.Request) {
+  return tooManyAttempts(action, req.ip ?? "unknown");
 }
 
 app.post("/api/v1/auth/signup", async (req, res) => {
   try {
+    if (rateLimit("signup", req)) {
+      res
+        .status(429)
+        .json({ error: "Too many accounts created. Try again later." });
+      return;
+    }
+
     const input = signupSchema.parse(req.body);
     res.status(201).json(await signup(input));
   } catch (error) {
-    // Zod's message is the useful half of a validation failure.
-    if (error instanceof Error && error.name === "ZodError") {
-      const [issue] = JSON.parse(error.message) as { message: string }[];
-      res.status(400).json({ error: issue?.message ?? "Check your details" });
-      return;
-    }
     fail(res, error);
   }
 });
 
 app.post("/api/v1/auth/login", async (req, res) => {
   try {
-    if (tooManyAttempts(req.ip ?? "unknown")) {
+    if (rateLimit("login", req)) {
       res.status(429).json({ error: "Too many attempts. Try again later." });
       return;
     }
@@ -215,12 +342,19 @@ app.post("/api/v1/auth/login", async (req, res) => {
   }
 });
 
-app.post("/api/v1/auth/logout", (req, res) => {
-  // Same attributes as when it was set, or the browser keeps the original.
-  const { maxAge: _drop, ...options } = cookieOptions(requestHost(req));
-  res.clearCookie(COOKIE_NAME, options);
-  res.json({ ok: true });
-});
+/*
+ * There is deliberately no POST /api/v1/auth/logout.
+ *
+ * It existed, and nothing ever called it: the frontend's sign-out action clears
+ * the cookie itself. Keeping it would have been keeping a promise the session
+ * cannot honour — this is a stateless JWT with no blocklist and no server-side
+ * store, so the route could only expire a cookie, which the frontend does
+ * same-origin without a network call that might fail and leave someone
+ * believing they had signed out when they had not.
+ *
+ * Reinstate it the day sessions become revocable server-side, which is the day
+ * it would actually do something.
+ */
 
 // --- Editor reads -------------------------------------------------------------
 
@@ -294,11 +428,7 @@ app.patch("/api/v1/sections/:id", async (req, res) => {
 app.post("/api/v1/sections/:id", async (req, res) => {
   try {
     const session = await requireSession(req);
-    const versionId = (req.body as { versionId?: string })?.versionId;
-    if (!versionId) {
-      res.status(400).json({ error: "versionId required" });
-      return;
-    }
+    const { versionId } = restoreSchema.parse(req.body);
     res.json(await restoreVersion(req.params.id, session.collegeId, versionId));
   } catch (error) {
     fail(res, error);
@@ -379,6 +509,52 @@ app.get("/uploads/:file", async (req, res) => {
 });
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
+
+/**
+ * Failures that never reach a route handler, and so never reach `fail()`.
+ *
+ * Two get here. `express.json()` rejects a malformed body before any handler
+ * runs, and multer rejects an oversized file inside its own middleware. Without
+ * this they fell through to Express's built-in handler, which answers with an
+ * HTML page carrying a stack trace — the wrong status, the wrong content type,
+ * and the one thing the rest of the API is careful never to send.
+ *
+ * Registered last and taking four arguments, which is how Express recognises an
+ * error handler at all.
+ */
+app.use(
+  (
+    error: unknown,
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    // A response already on the wire cannot be rewritten; Express's default
+    // handler closes the connection, which is the only honest option left.
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+
+    if (error instanceof multer.MulterError) {
+      // 413 rather than 400: the request was well-formed, just too big.
+      const tooBig = error.code === "LIMIT_FILE_SIZE";
+      res.status(tooBig ? 413 : 400).json({
+        error: tooBig
+          ? "That image is larger than the 5 MB limit."
+          : "That upload could not be read.",
+      });
+      return;
+    }
+
+    if (error instanceof SyntaxError && "body" in error) {
+      res.status(400).json({ error: "Request body is not valid JSON." });
+      return;
+    }
+
+    fail(res, error);
+  },
+);
 
 app.listen(PORT, () => {
   console.log(`[api] xite backend listening on :${PORT}`);

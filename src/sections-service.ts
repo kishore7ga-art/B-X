@@ -1,23 +1,12 @@
 import { z } from "zod";
 
 import { prisma } from "@/db";
+import { SAVE_TRIGGERS } from "@/lib/api-contract";
 import { stableStringify } from "@/lib/json-stable";
 import {
   isSupportedSectionType,
   parseSectionContent,
 } from "@/lib/sections/schemas";
-
-const SAVE_TRIGGERS = [
-  "typing",
-  "drag",
-  "color",
-  "font",
-  "image",
-  "delete",
-  "resize",
-  "section_update",
-  "restore",
-] as const;
 
 /**
  * Snapshots kept per section. Bounded on insert rather than swept on a
@@ -30,6 +19,28 @@ export const saveSchema = z.object({
   content: z.unknown(),
   trigger: z.enum(SAVE_TRIGGERS).default("typing"),
 });
+
+/**
+ * Restoring a version. Validated like every other body rather than by hand.
+ *
+ * The route checked `if (!versionId)` itself, which was the only input on the
+ * API not going through a schema — so it answered a missing id with a message
+ * in one shape and a malformed one with a 500, while every neighbouring route
+ * answered both the same way.
+ */
+export const restoreSchema = z.object({
+  versionId: z.string().min(1, "versionId is required"),
+});
+
+/**
+ * The request was understood and refused, and the caller can act on why.
+ *
+ * Distinct from a bare Error so `fail()` can tell "you asked for something not
+ * allowed" from "we broke". Without it the two are indistinguishable, and
+ * treating everything unrecognised as a 400 is how a database outage reports
+ * itself to the browser as a validation problem.
+ */
+export class BadRequest extends Error {}
 
 /** Loads a section, refusing anything outside the caller's college. */
 async function loadOwned(id: string, collegeId: string) {
@@ -51,7 +62,7 @@ export async function saveContent(
   const row = await loadOwned(id, collegeId);
 
   if (!isSupportedSectionType(row.section.sectionType)) {
-    throw new Error("Section type is not editable");
+    throw new BadRequest("Section type is not editable");
   }
 
   const parsed = parseSectionContent(row.section.sectionType, input.content);
