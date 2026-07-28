@@ -3,6 +3,7 @@ import { SignJWT } from "jose";
 import { z } from "zod";
 
 import { prisma } from "@/db";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/api-contract";
 import {
   hostFromOrigin,
   sessionCookieScope,
@@ -17,8 +18,6 @@ import {
  * as an API call, and impossible to point at this service. Moving them here is
  * what makes "all API calls go to the backend" true of authentication too.
  */
-
-const MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 export const COOKIE_NAME = "college_session";
 
@@ -56,7 +55,7 @@ export async function mintSessionToken(payload: {
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime(`${MAX_AGE_SECONDS}s`)
+    .setExpirationTime(`${SESSION_MAX_AGE_SECONDS}s`)
     .sign(secretKey());
 }
 
@@ -134,7 +133,7 @@ export function cookieOptions(apiHost?: string) {
     sameSite: (crossSite ? "none" : "lax") as "none" | "lax",
     secure: crossSite || process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: MAX_AGE_SECONDS * 1000,
+    maxAge: SESSION_MAX_AGE_SECONDS * 1000,
     ...(domain ? { domain } : {}),
   };
 }

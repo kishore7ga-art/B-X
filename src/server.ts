@@ -9,16 +9,18 @@ import cors from "cors";
 import express from "express";
 import multer from "multer";
 
-import { getSession } from "@/auth";
+import { getSession, readSession } from "@/auth";
 import {
   AuthError,
   COOKIE_NAME,
   cookieOptions,
   login,
+  mintSessionToken,
   signup,
   signupSchema,
 } from "@/auth-service";
 import { prisma } from "@/db";
+import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { getCollege, getEditorPage } from "@/editor-service";
 import {
   BadRequest,
@@ -135,6 +137,56 @@ function requestHost(req: express.Request): string | undefined {
   const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   return (value ?? req.headers.host)?.split(",")[0]?.trim() || undefined;
 }
+
+/**
+ * Keeps an active session from expiring under someone who is still working.
+ *
+ * The frontend's proxy renews on every page visit, which covers arriving at the
+ * site — but not the editor, where somebody can spend hours in one tab and
+ * never navigate. Those hours are all requests to this service, so this is the
+ * only place that sees them.
+ *
+ * Renewal only. It deliberately makes no authorisation decision and never
+ * rejects anything: the routes below already decide who may do what, and a
+ * second copy of that rule running before all of them is how the two drift
+ * apart. A request with no cookie, an expired one or a forged one simply passes
+ * through untouched and meets the same guard it always did.
+ */
+app.use(async (req, res, next) => {
+  /**
+   * Never on the auth routes. Sign-in writes the session itself, and renewing
+   * the *old* cookie onto that same response would put two `Set-Cookie` headers
+   * for one name on it and leave which one wins to header order.
+   */
+  if (req.path.startsWith("/api/v1/auth/")) {
+    next();
+    return;
+  }
+
+  try {
+    const current = await readSession(req.headers.cookie);
+    const age = current && Math.floor(Date.now() / 1000) - current.issuedAt;
+
+    if (
+      current &&
+      age !== null &&
+      age >= SESSION_RENEW_AFTER_SECONDS &&
+      // Open-access tokens carry a synthetic identity nobody signed in for.
+      // getSession() already refuses them; extending them would work against it.
+      !current.session.userId.startsWith("open-access:")
+    ) {
+      res.cookie(
+        COOKIE_NAME,
+        await mintSessionToken(current.session),
+        cookieOptions(requestHost(req)),
+      );
+    }
+  } catch (error) {
+    // Renewal is a convenience; failing it must never fail the request.
+    console.error("[auth] session renewal skipped:", (error as Error).message);
+  }
+  next();
+});
 
 async function requireSession(req: express.Request) {
   const session = await getSession(req.headers.cookie);

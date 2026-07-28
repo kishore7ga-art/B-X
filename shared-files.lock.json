@@ -9,5 +9,5 @@
   "src/lib/db-pool.ts": "12620a9a504fdd73",
   "src/lib/auth/demo.ts": "afbec0f31c6edcd5",
   "src/lib/auth/cookie-domain.ts": "a2914b8049d9ff6b",
-  "src/lib/api-contract.ts": "fc481c48a1d3b75c"
+  "src/lib/api-contract.ts": "842b52e5aa6168e2"
 }

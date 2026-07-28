@@ -60,14 +60,32 @@ export async function getSession(
     return { userId: `open-access:${college.id}`, collegeId: college.id };
   }
 
+  return (await readSession(cookieHeader))?.session ?? null;
+}
+
+/**
+ * The session plus when it was issued, for deciding whether to renew it.
+ *
+ * Separate from `getSession` because renewal must not see through open-access
+ * mode: that branch invents a session from no token at all, and there is
+ * nothing there to re-issue.
+ */
+export async function readSession(
+  cookieHeader: string | undefined,
+): Promise<{ session: Session; issuedAt: number } | null> {
   const token = readCookie(cookieHeader, COOKIE_NAME);
   if (!token) return null;
 
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    const { userId, collegeId } = payload as Record<string, unknown>;
+    const { userId, collegeId, iat } = payload as Record<string, unknown>;
     if (typeof userId !== "string" || typeof collegeId !== "string") return null;
-    return { userId, collegeId };
+    return {
+      session: { userId, collegeId },
+      // A token minted without `iat` cannot be aged, so treat it as due —
+      // re-issuing one is harmless and gets it a timestamp.
+      issuedAt: typeof iat === "number" ? iat : 0,
+    };
   } catch {
     // Expired or tampered — signed out, not an error worth surfacing.
     return null;

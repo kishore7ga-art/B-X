@@ -105,6 +105,35 @@ export type EditorPagePayload = {
   templateCount: number;
 };
 
+// --- Sessions -----------------------------------------------------------------
+
+/**
+ * How long a session survives without being used.
+ *
+ * An inactivity window, not a fixed lifetime. Both services push it forward on
+ * activity — the frontend's proxy on every page visit, this service on every
+ * authenticated API call — so it only runs out for somebody who has been away
+ * the whole time. Before that it was a hard seven days from sign-in, which
+ * logged people out mid-edit on the eighth day for no visible reason.
+ *
+ * Shared because the two services must agree: the backend mints the token at
+ * sign-in and both re-mint it afterwards, so a different lifetime on either
+ * side would mean the expiry silently changing depending on which service you
+ * touched last.
+ */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+
+/**
+ * How old a token must be before activity re-issues it.
+ *
+ * Not on every request, though the signing cost would be negligible — a
+ * `Set-Cookie` on every response is bytes on the wire and a header that makes
+ * responses less cacheable, for no gain. A day means at most one renewal per
+ * active user per day, while anyone returning inside the window above stays
+ * signed in indefinitely.
+ */
+export const SESSION_RENEW_AFTER_SECONDS = 60 * 60 * 24;
+
 // --- Sections -----------------------------------------------------------------
 
 /**
