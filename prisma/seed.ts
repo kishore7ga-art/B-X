@@ -52,6 +52,36 @@ const PALETTES = [
       light: "#F0FDF4",
     },
   },
+  {
+    name: "Midnight Indigo",
+    colors: {
+      primary: "#312E81",
+      secondary: "#6366F1",
+      accent: "#10B981",
+      dark: "#09090B",
+      light: "#EEF2FF",
+    },
+  },
+  {
+    name: "Sunset Sapphire",
+    colors: {
+      primary: "#0369A1",
+      secondary: "#0284C7",
+      accent: "#F97316",
+      dark: "#0F172A",
+      light: "#F0F9FF",
+    },
+  },
+  {
+    name: "Editorial Plum",
+    colors: {
+      primary: "#581C87",
+      secondary: "#9333EA",
+      accent: "#EAB308",
+      dark: "#18181B",
+      light: "#FAF5FF",
+    },
+  },
 ];
 
 /** Demo login for the sample college. Shared with the sign-in page's autofill. */
@@ -64,6 +94,21 @@ const FONT_PACKS = [
     bodyFont: "Source Sans 3",
   },
   { name: "Modern Sans", headingFont: "Poppins", bodyFont: "Inter" },
+  {
+    name: "Editorial Elegance",
+    headingFont: "Cormorant Garamond",
+    bodyFont: "Plus Jakarta Sans",
+  },
+  {
+    name: "Tech Precision",
+    headingFont: "Outfit",
+    bodyFont: "Roboto",
+  },
+  {
+    name: "Academic Prestige",
+    headingFont: "Merriweather",
+    bodyFont: "Open Sans",
+  },
 ];
 
 /**
