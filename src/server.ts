@@ -19,6 +19,8 @@ import {
   adminSites,
   adminStatus,
   getAdminSession,
+  listUsersForAdmin,
+  updateUserStatusForAdmin,
 } from "@/admin-service";
 import {
   activateWithGoogle,
@@ -1110,6 +1112,24 @@ app.post("/api/v1/admin/access-requests/:id/reject", async (req, res) => {
   try {
     const session = await requireAdmin(req);
     res.json(await rejectAccessRequest(req.params.id, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/users", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ users: await listUsersForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.patch("/api/v1/admin/users/:id/status", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await updateUserStatusForAdmin(req.params.id, req.body ?? {}, session));
   } catch (error) {
     fail(res, error);
   }

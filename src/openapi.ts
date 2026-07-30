@@ -7,7 +7,7 @@ import {
 } from "@/access-service";
 import { credentialsSchema } from "@/auth-service";
 import { startWithDesignSchema } from "@/design-service";
-import { adminLoginSchema } from "@/admin-service";
+import { adminLoginSchema, updateUserStatusSchema } from "@/admin-service";
 import { templateDetailsSchema, templateSlotsSchema } from "@/library-service";
 import { onboardingSchema } from "@/onboarding-service";
 import { restoreSchema, saveSchema } from "@/sections-service";
@@ -846,6 +846,80 @@ export const openApiDocument = {
         responses: {
           "200": json({ type: "object" }, "All colleges."),
           ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+    "/api/v1/admin/users": {
+      get: {
+        tags: ["Admin"],
+        summary: "List registered staff users",
+        description: "Returns all user accounts with their assigned college tenant and status.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                users: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: str,
+                      email: str,
+                      status: str,
+                      createdAt: { type: "string", format: "date-time" },
+                      college: {
+                        type: "object",
+                        properties: { id: str, name: str, subdomain: str },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "Users list.",
+          ),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+    "/api/v1/admin/users/{id}/status": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Update user status (Enable / Disable)",
+        description: "Enables or disables a user account.",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        requestBody: body(updateUserStatusSchema),
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                user: {
+                  type: "object",
+                  properties: {
+                    id: str,
+                    email: str,
+                    status: str,
+                    createdAt: { type: "string", format: "date-time" },
+                    college: {
+                      type: "object",
+                      properties: { id: str, name: str, subdomain: str },
+                    },
+                  },
+                },
+              },
+            },
+            "Updated user.",
+          ),
+          ...errors(
+            [400, "Validation failed."],
+            [401, "Not signed in."],
+            [404, "User not found."],
+            [503, "Admin panel not configured."],
+          ),
         },
       },
     },

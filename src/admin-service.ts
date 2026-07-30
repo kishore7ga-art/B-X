@@ -567,3 +567,83 @@ export async function adminSites() {
     createdAt: college.createdAt.toISOString(),
   }));
 }
+
+export const updateUserStatusSchema = z.object({
+  status: z.enum(["ACTIVE", "DISABLED"], {
+    error: "status must be ACTIVE or DISABLED",
+  }),
+});
+
+export async function listUsersForAdmin() {
+  const users = await prisma.user.findMany({
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      email: true,
+      status: true,
+      createdAt: true,
+      college: {
+        select: {
+          id: true,
+          name: true,
+          subdomain: true,
+        },
+      },
+    },
+  });
+
+  return users.map((user) => ({
+    ...user,
+    createdAt: user.createdAt.toISOString(),
+  }));
+}
+
+export async function updateUserStatusForAdmin(
+  userId: string,
+  input: unknown,
+  actor: AdminSession,
+) {
+  const { status } = updateUserStatusSchema.parse(input);
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, status: true },
+  });
+
+  if (!user) throw new AuthError("User not found", 404);
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { status },
+    select: {
+      id: true,
+      email: true,
+      status: true,
+      createdAt: true,
+      college: {
+        select: {
+          id: true,
+          name: true,
+          subdomain: true,
+        },
+      },
+    },
+  });
+
+  await recordAudit({
+    actor,
+    action: "user.update_status",
+    targetType: "user",
+    targetId: userId,
+    summary: `Updated status for ${user.email} to ${status}`,
+    metadata: { email: user.email, status },
+  });
+
+  return {
+    user: {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+    },
+  };
+}
+
