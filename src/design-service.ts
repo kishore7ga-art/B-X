@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 import { prisma } from "@/db";
+import type { SectionType } from "@/generated/prisma/enums";
 import { defaultContentFor } from "@/lib/sections/defaults";
 import { personalize } from "@/lib/sections/personalize";
 import { isSupportedSectionType } from "@/lib/sections/schemas";
 import { DEFAULT_PAGES } from "@/lib/site/starter";
+import { OFFERABLE } from "@/library-service";
 import { BadRequest, NotFound } from "@/sections-service";
+import { leadVariant, variantLibrary } from "@/variant-library";
 
 /**
  * Choosing a design, and what that does to a college's site.
@@ -19,11 +22,6 @@ import { BadRequest, NotFound } from "@/sections-service";
  * collegeId the session resolved to, and every query is scoped by it.
  */
 
-const VARIANT_ORDER = [
-  { sortOrder: "asc" as const },
-  { variantName: "asc" as const },
-];
-
 export const startWithDesignSchema = z.object({
   templateId: z.string().min(1, "templateId is required"),
   paletteId: z.string().min(1, "paletteId is required"),
@@ -34,7 +32,15 @@ type TemplateSection = {
   id: string;
   sectionType: string;
   defaultContent: unknown;
-  variants: { id: string }[];
+  /**
+   * Which library design this slot opens with.
+   *
+   * Was `variants: { id }[]`, read as `variants[0]`, which worked only while
+   * variants were stored per slot and ordered per template. Now that the library
+   * is shared, "the lead" is this column and the fallback is the library's own
+   * order — see `leadVariant`.
+   */
+  defaultVariantId: string | null;
 };
 
 /**
@@ -74,17 +80,22 @@ async function provisionStarterSite(
   });
   if (!homePage) return;
 
+  const library = await variantLibrary();
+
   let displayOrder = 1;
   for (const section of templateSections) {
-    const variantId = section.variants[0]?.id;
-    if (!variantId) continue;
+    const lead = leadVariant(
+      { sectionType: section.sectionType as SectionType, defaultVariantId: section.defaultVariantId },
+      library,
+    );
+    if (!lead) continue;
     if (!isSupportedSectionType(section.sectionType as never)) continue;
 
     await prisma.collegeSection.create({
       data: {
         collegeId,
         sectionId: section.id,
-        variantId,
+        variantId: lead.id,
         pageId: homePage.id,
         displayOrder: displayOrder++,
         isVisible: true,
@@ -110,14 +121,10 @@ export async function startWithDesign(
 
   const [college, template, palette, font] = await Promise.all([
     prisma.college.findUnique({ where: { id: collegeId } }),
-    prisma.template.findUnique({
-      where: { id: templateId },
-      include: {
-        sections: {
-          orderBy: { defaultOrder: "asc" },
-          include: { variants: { orderBy: VARIANT_ORDER } },
-        },
-      },
+    // A college may only start with a template that is actually on offer.
+    prisma.template.findFirst({
+      where: { id: templateId, ...OFFERABLE },
+      include: { sections: { orderBy: { defaultOrder: "asc" } } },
     }),
     prisma.themePalette.findUnique({ where: { id: paletteId } }),
     prisma.themeFont.findUnique({ where: { id: fontId } }),
@@ -174,7 +181,10 @@ export async function cycleTemplate(collegeId: string) {
   });
   if (!college) throw new NotFound("College not found");
 
+  // Only what a college could have picked itself. Cycling onto a draft or a
+  // withdrawn template would hand it a design the gallery does not offer.
   const templates = await prisma.template.findMany({
+    where: OFFERABLE,
     orderBy: { name: "asc" },
     select: { id: true },
   });
@@ -193,7 +203,6 @@ export async function cycleTemplate(collegeId: string) {
     include: {
       sections: {
         orderBy: { defaultOrder: "asc" },
-        include: { variants: { orderBy: VARIANT_ORDER } },
       },
     },
   });
@@ -201,20 +210,29 @@ export async function cycleTemplate(collegeId: string) {
     return { subdomain: college.subdomain, changed: false as const };
   }
 
-  // Section type -> where it lands in the new template. First variant by name,
-  // the same default provisionStarterSite and addSection both pick.
+  // Section type -> where it lands in the new template, using the slot's own lead
+  // variant. That column is what keeps a template swap landing on the new
+  // template's look rather than on whatever the shared library happens to list
+  // first.
+  const library = await variantLibrary();
   const target = new Map<
     string,
     { sectionId: string; variantId: string; defaultContent: unknown }
   >();
   for (const section of nextTemplate.sections) {
-    const variant = section.variants[0];
-    if (!variant) continue;
+    const lead = leadVariant(
+      {
+        sectionType: section.sectionType as SectionType,
+        defaultVariantId: section.defaultVariantId,
+      },
+      library,
+    );
+    if (!lead) continue;
     if (!isSupportedSectionType(section.sectionType as never)) continue;
     if (target.has(section.sectionType)) continue;
     target.set(section.sectionType, {
       sectionId: section.id,
-      variantId: variant.id,
+      variantId: lead.id,
       defaultContent: section.defaultContent,
     });
   }
@@ -301,14 +319,10 @@ export async function getTemplatePreview(
       where: { subdomain },
       include: { themePalette: true, themeFont: true },
     }),
-    prisma.template.findUnique({
-      where: { id: templateId },
-      include: {
-        sections: {
-          orderBy: { defaultOrder: "asc" },
-          include: { variants: { orderBy: VARIANT_ORDER } },
-        },
-      },
+    // Same gate as the gallery: previewing is how a college decides to pick.
+    prisma.template.findFirst({
+      where: { id: templateId, ...OFFERABLE },
+      include: { sections: { orderBy: { defaultOrder: "asc" } } },
     }),
   ]);
 
@@ -325,10 +339,18 @@ export async function getTemplatePreview(
   const sections = [];
   let displayOrder = 1;
 
+  const library = await variantLibrary();
+
   for (const section of template.sections) {
-    // Lead variant: sortOrder decides, which is what makes each template open
-    // with its own look.
-    const variant = section.variants[0];
+    // Lead variant: the slot's own choice, which is what makes each template
+    // preview open with its own look rather than the library's first entry.
+    const variant = leadVariant(
+      {
+        sectionType: section.sectionType as SectionType,
+        defaultVariantId: section.defaultVariantId,
+      },
+      library,
+    );
     if (!variant) continue;
     if (!isSupportedSectionType(section.sectionType as never)) continue;
 
