@@ -597,7 +597,7 @@ app.post("/api/v1/auth/login", async (req, res) => {
 
     const { token, subdomain, next } = await login(req.body ?? {});
     res.cookie(COOKIE_NAME, token, cookieOptions(requestHost(req)));
-    res.json({ subdomain, next });
+    res.json({ token, subdomain, next });
   } catch (error) {
     fail(res, error);
   }
