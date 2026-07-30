@@ -3,6 +3,7 @@ import { SignJWT } from "jose";
 import { z } from "zod";
 
 import { prisma } from "@/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { SESSION_MAX_AGE_SECONDS } from "@/lib/api-contract";
 import {
   hostFromOrigin,
@@ -163,16 +164,106 @@ function subdomainSeed(email: string) {
 }
 
 /** First free variant of `seed`, `seed-2`, `seed-3`… */
-async function freeSubdomain(seed: string) {
+async function freeSubdomain(db: Db, seed: string) {
   for (let suffix = 1; suffix < 100; suffix += 1) {
     const candidate = suffix === 1 ? seed : `${seed}-${suffix}`;
-    const taken = await prisma.college.findUnique({
+    const taken = await db.college.findUnique({
       where: { subdomain: candidate },
       select: { id: true },
     });
     if (!taken) return candidate;
   }
   throw new AuthError("Could not allocate a site address", 500);
+}
+
+/**
+ * Either the client or a transaction, so activation can do this inside one.
+ *
+ * `PrismaClient` satisfies this structurally — `TransactionClient` is the client
+ * minus the methods a transaction cannot offer — so callers with no transaction
+ * pass `prisma` and nothing else changes.
+ */
+type Db = Prisma.TransactionClient;
+
+/**
+ * Creates an account and the college it will own.
+ *
+ * Extracted from `signup()` because activation now needs exactly this and the
+ * copy of it in xite-F's Google callback is already one copy too many. The
+ * caller supplies a finished password hash: this function decides what tenant
+ * the account belongs to and nothing about how it proves who it is.
+ *
+ * Adopt before create. An install that ran in open-access mode has a real
+ * college, with real content, and no user attached; making a second one would
+ * strand the first — whoever built the site arrives, lands on an empty one, and
+ * their work is intact but unreachable.
+ *
+ * `adoptable: true` in that filter is a fix, not a copy. The column exists for
+ * exactly this decision and its own documentation says so — "reassigning
+ * ownership is a decision, not a race won by the next person to sign up" — but
+ * nothing has ever read it. `signup()` and the Google callback both adopt any
+ * ownerless college, so a Super Admin removing a college's last owner did not
+ * lock it: the next arrival was handed somebody else's content and their
+ * published site. Activation would inherit that, and an invited stranger is
+ * precisely the arrival the comment was written about.
+ */
+export async function provisionCollegeAndUser(
+  db: Db,
+  input: { email: string; passwordHash: string },
+) {
+  const { email, passwordHash } = input;
+
+  const selection = {
+    id: true,
+    collegeId: true,
+    college: { select: { subdomain: true, templateId: true } },
+  } as const;
+
+  const unclaimed = await db.college.findFirst({
+    where: { isDemo: false, adoptable: true, users: { none: {} } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+
+  if (unclaimed) {
+    return db.user.create({
+      data: { email, passwordHash, college: { connect: { id: unclaimed.id } } },
+      select: selection,
+    });
+  }
+
+  const seed = subdomainSeed(email);
+  return db.user.create({
+    data: {
+      email,
+      passwordHash,
+      college: {
+        create: {
+          // Named from the email until onboarding asks properly. A placeholder
+          // that says where it came from beats "My College".
+          name: `${seed} college`,
+          subdomain: await freeSubdomain(db, seed),
+          status: "DRAFT",
+        },
+      },
+    },
+    select: selection,
+  });
+}
+
+/**
+ * Where to land after proving who you are.
+ *
+ * Shared by sign-in and activation so the two cannot disagree: the editor if
+ * there is something to edit, onboarding if this account has never chosen a
+ * design. An adopted college may already have a template, which is why this is
+ * computed rather than a constant.
+ */
+export function destinationFor(college: {
+  subdomain: string;
+  templateId: string | null;
+}) {
+  return college.templateId ? `/editor/${college.subdomain}` : "/onboarding";
 }
 
 /**
@@ -192,42 +283,7 @@ export async function signup(input: { email: string; password: string }) {
   if (existing) throw new AuthError("That email is already registered", 409);
 
   const passwordHash = await bcrypt.hash(password, 12);
-
-  /**
-   * Adopt an unclaimed college before creating one.
-   *
-   * An install that ran in open-access mode has a real college, with real
-   * content, and no user attached. Creating a second one would strand the
-   * first: whoever built the site signs up, lands on an empty one, and their
-   * work is intact but unreachable.
-   */
-  const unclaimed = await prisma.college.findFirst({
-    where: { isDemo: false, users: { none: {} } },
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
-  });
-
-  const user = unclaimed
-    ? await prisma.user.create({
-        data: { email, passwordHash, college: { connect: { id: unclaimed.id } } },
-        select: { id: true },
-      })
-    : await prisma.user.create({
-        data: {
-          email,
-          passwordHash,
-          college: {
-            create: {
-              // Named from the email until onboarding asks properly. A
-              // placeholder that says where it came from beats "My College".
-              name: `${subdomainSeed(email)} college`,
-              subdomain: await freeSubdomain(subdomainSeed(email)),
-              status: "DRAFT",
-            },
-          },
-        },
-        select: { id: true },
-      });
+  const user = await provisionCollegeAndUser(prisma, { email, passwordHash });
 
   return { id: user.id, email };
 }
@@ -265,10 +321,6 @@ export async function login(input: { email: string; password: string }) {
       collegeId: user.collegeId,
     }),
     subdomain: user.college.subdomain,
-    // Where to land: the editor if there is something to edit, onboarding if
-    // this account has never chosen a design.
-    next: user.college.templateId
-      ? `/editor/${user.college.subdomain}`
-      : "/onboarding",
+    next: destinationFor(user.college),
   };
 }
