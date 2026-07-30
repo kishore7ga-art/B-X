@@ -36,8 +36,6 @@ import {
   cookieOptions,
   login,
   mintSessionToken,
-  signup,
-  signupSchema,
 } from "@/auth-service";
 import { prisma } from "@/db";
 import {
@@ -391,13 +389,11 @@ app.get("/api/health", async (_req, res) => {
 const LIMITS = {
   /** Password guessing. Ten wrong answers in a quarter hour is already a lot. */
   login: { max: 10, windowMs: 15 * 60 * 1000 },
-  /**
-   * Account creation. Every call costs a bcrypt hash and writes a user and a
-   * college, so this is the CPU-and-junk-rows vector rather than the guessing
-   * one. Five an hour is far above what a person needs and far below what a
-   * script wants.
+  /*
+   * The `signup` bucket is gone with the route it protected. The equivalent cost
+   * now sits behind `accessRequest` (one small row, no bcrypt) and `activate`
+   * (bcrypt plus a college and a user, but only reachable with a valid invite).
    */
-  signup: { max: 5, windowMs: 60 * 60 * 1000 },
   /**
    * Guessing an admin password is worth more than guessing a college owner's,
    * and there is no legitimate reason for a person to get this wrong five
@@ -472,21 +468,22 @@ function rateLimit(action: keyof typeof LIMITS, req: express.Request) {
   return tooManyAttempts(action, req.ip ?? "unknown");
 }
 
-app.post("/api/v1/auth/signup", async (req, res) => {
-  try {
-    if (rateLimit("signup", req)) {
-      res
-        .status(429)
-        .json({ error: "Too many accounts created. Try again later." });
-      return;
-    }
-
-    const input = signupSchema.parse(req.body);
-    res.status(201).json(await signup(input));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+/*
+ * There is deliberately no POST /api/v1/auth/signup.
+ *
+ * It created a College and a User for anybody who posted an email and a
+ * password, which is the opposite of the approval flow this service now runs.
+ * Leaving it reachable would have made every part of that flow decorative —
+ * request, review, invite, activation — because the queue could simply be
+ * walked around.
+ *
+ * The way in is POST /api/v1/access-requests, then activation once a Super Admin
+ * approves it. `activateWithPassword` owns the password rule and the
+ * provisioning this route used to do.
+ *
+ * Deleted rather than disabled behind a flag. An endpoint that exists and is
+ * switched off is one environment variable away from being the door again.
+ */
 
 app.post("/api/v1/auth/login", async (req, res) => {
   try {

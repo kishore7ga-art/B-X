@@ -5,7 +5,7 @@ import {
   activateGoogleSchema,
   activatePasswordSchema,
 } from "@/access-service";
-import { credentialsSchema, signupSchema } from "@/auth-service";
+import { credentialsSchema } from "@/auth-service";
 import { startWithDesignSchema } from "@/design-service";
 import { adminLoginSchema } from "@/admin-service";
 import { templateDetailsSchema, templateSlotsSchema } from "@/library-service";
@@ -17,8 +17,8 @@ import { restoreSchema, saveSchema } from "@/sections-service";
  *
  * Request bodies are converted straight out of the zod schemas the routes parse
  * with, so a validation rule and its documentation cannot disagree — change
- * `signupSchema`'s minimum password length and this says the new number without
- * anyone remembering to edit it. zod 4 can do that on its own; no
+ * `activatePasswordSchema`'s minimum password length and this says the new
+ * number without anyone remembering to edit it. zod 4 can do that on its own; no
  * openapi-generator dependency was added, because none was needed.
  *
  * Responses are hand-written JSON Schema. There are no zod schemas for
@@ -147,7 +147,7 @@ export const openApiDocument = {
   ],
   tags: [
     { name: "Service", description: "What this is and whether it is healthy." },
-    { name: "Auth", description: "Creating an account and signing in." },
+    { name: "Auth", description: "Signing in. Accounts are created by activation, not here." },
     { name: "Access", description: "Requesting access, and activating once approved." },
     { name: "Public", description: "Reads that need no session." },
     { name: "Onboarding", description: "Naming a college, choosing a design, provisioning a site." },
@@ -233,32 +233,6 @@ export const openApiDocument = {
       },
     },
 
-    "/api/v1/auth/signup": {
-      post: {
-        tags: ["Auth"],
-        summary: "Create an account",
-        description:
-          "Creates a user and a college. Deliberately issues no session: the " +
-          "flow is signup → sign in → editor, so the password is proved to work " +
-          "as part of creating the account.\n\n" +
-          "Rate limited to 5 per IP per hour — it is public, hashes at bcrypt " +
-          "cost 12 and writes rows.",
-        security: [],
-        requestBody: body(signupSchema),
-        responses: {
-          "201": json(
-            { type: "object", properties: { id: str, email: str } },
-            "Account created.",
-          ),
-          ...errors(
-            [400, "Validation failed."],
-            [409, "That email is already registered."],
-            [429, "Too many accounts created from this address."],
-            [500, "Unexpected server error."],
-          ),
-        },
-      },
-    },
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
@@ -269,7 +243,17 @@ export const openApiDocument = {
           "it has never chosen one.\n\n" +
           "Rate limited to 10 per IP per 15 minutes. One message for both a " +
           "wrong password and an unknown address, because which emails exist is " +
-          "not public.",
+          "not public.\n\n" +
+          "**There is no signup endpoint.** Access is by approved request only: " +
+          "`POST /api/v1/access-requests`, then activation. This is the only " +
+          "password sign-in.\n\n" +
+          "403 when the account exists, the password is right, and " +
+          "`users.status` is not `ACTIVE`. Checked *after* the password " +
+          "deliberately: before it, anyone could learn that an address exists and " +
+          "has been deactivated without knowing its password — the enumeration " +
+          "the 401 above refuses. After it, only somebody who has proved they own " +
+          "the account learns anything, and what they learn is that this is not a " +
+          "password problem.",
         security: [],
         requestBody: body(credentialsSchema),
         responses: {
@@ -288,6 +272,7 @@ export const openApiDocument = {
           ...errors(
             [400, "Email or password missing."],
             [401, "Incorrect email or password."],
+            [403, "Correct credentials, but the account is not ACTIVE."],
             [429, "Too many attempts from this address."],
             [500, "Unexpected server error."],
           ),

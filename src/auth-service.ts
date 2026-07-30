@@ -50,9 +50,21 @@ export const credentialsSchema = z.object({
   password: z.string().min(1, "Enter your password"),
 });
 
-export const signupSchema = credentialsSchema.extend({
-  password: z.string().min(8, "Password must be at least 8 characters"),
-});
+/*
+ * There is deliberately no signupSchema, and no signup().
+ *
+ * Access is not self-service any more. The only way an account comes into
+ * existence is an approved access request redeemed through
+ * `activateWithPassword` or `activateWithGoogle` — see access-service.ts, which
+ * owns the password rule (eight characters, as this schema used to say) and the
+ * provisioning that `signup()` used to do.
+ *
+ * Removed rather than left behind a flag. A registration endpoint that exists
+ * but is switched off is one environment variable away from being the door
+ * again, and nothing about the approval flow means anything while it is
+ * reachable: it created a College and a User for anybody who posted an email
+ * and a password.
+ */
 
 function secretKey() {
   const secret = process.env.SESSION_SECRET;
@@ -266,28 +278,6 @@ export function destinationFor(college: {
   return college.templateId ? `/editor/${college.subdomain}` : "/onboarding";
 }
 
-/**
- * Creates an account from an email and password alone.
- *
- * Deliberately no session: the flow is signup → sign in → editor, so proving
- * the password works is part of creating the account rather than something
- * discovered a week later.
- */
-export async function signup(input: { email: string; password: string }) {
-  const { email, password } = signupSchema.parse(input);
-
-  const existing = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true },
-  });
-  if (existing) throw new AuthError("That email is already registered", 409);
-
-  const passwordHash = await bcrypt.hash(password, 12);
-  const user = await provisionCollegeAndUser(prisma, { email, passwordHash });
-
-  return { id: user.id, email };
-}
-
 export async function login(input: { email: string; password: string }) {
   const parsed = credentialsSchema.safeParse(input);
   if (!parsed.success) throw new AuthError("Enter your email and password");
@@ -298,6 +288,7 @@ export async function login(input: { email: string; password: string }) {
       id: true,
       passwordHash: true,
       collegeId: true,
+      status: true,
       college: { select: { subdomain: true, templateId: true } },
     },
   });
@@ -313,6 +304,24 @@ export async function login(input: { email: string; password: string }) {
 
   if (!(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
     throw invalid;
+  }
+
+  /**
+   * Checked after the password, not before, and that ordering is the point.
+   *
+   * Before it, anyone could learn that a given address exists and has been
+   * deactivated without knowing its password — the enumeration this function
+   * refuses two checks above. After it, only somebody who has already proved they
+   * own the account learns anything, and what they learn is the one thing they
+   * need: this is not a password problem, so stop trying to fix it like one.
+   *
+   * 403 rather than 401: the credentials were right. The answer is no anyway.
+   */
+  if (user.status !== "ACTIVE") {
+    throw new AuthError(
+      "This account has been deactivated. Contact your administrator.",
+      403,
+    );
   }
 
   return {
