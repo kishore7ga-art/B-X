@@ -3,26 +3,35 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/db";
 
 /**
- * Creates the very first Super Admin from the environment, once.
+ * Makes the environment's Super Admin true at boot: creates it, or sets its
+ * password to the one given.
  *
- * The CLI is the right way to make an admin account, and it stays the right
+ * The CLI is the right way to manage an admin account, and it stays the right
  * way — but it needs a shell on the box, and a Dokploy deployment is a
  * dashboard with environment variables long before it is a terminal somebody
  * is comfortable in. Without this the panel ships complete and unreachable,
  * which is how it went out.
  *
- * Three things keep it from becoming a back door:
+ * It used to refuse the moment any admin existed, which read as safe and left
+ * one hole it could not climb out of: a deployment with an account whose
+ * password nobody knows. That is not a hypothetical — a bootstrapped account and
+ * a password set later on a different database is exactly it, and the login says
+ * "Incorrect password or code" with no way in from the dashboard. So it now
+ * resets rather than skips.
  *
- * It only ever runs against an empty table. The moment one admin exists this
- * does nothing, so it cannot add a second account, cannot reset a password,
- * and cannot be used to get back in after being locked out.
+ * That is not a new privilege. Anybody who can set these variables can already
+ * set ADMIN_SESSION_SECRET and sign their own session, or read DATABASE_URL and
+ * write the row directly. What keeps it honest:
  *
- * It needs both variables set deliberately. There is no default email and no
- * default password — an unconfigured deployment creates nothing.
+ * Both variables have to be set deliberately. No default email, no default
+ * password, and an unconfigured deployment does nothing at all.
  *
- * It says what it did, at boot, in the log, including telling you to remove
- * the variables. Credentials sitting in a dashboard after they have been used
- * are credentials in a dashboard.
+ * It is idempotent and quiet when nothing needs doing — a password that already
+ * matches is left alone rather than rehashed on every restart.
+ *
+ * It says what it did, loudly, including telling you to remove the variables.
+ * Credentials sitting in a dashboard after they have been used are credentials
+ * in a dashboard, and now they are ones that would be re-applied on every deploy.
  */
 export async function bootstrapAdmin() {
   const email = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
@@ -31,15 +40,6 @@ export async function bootstrapAdmin() {
   if (!email || !password) return;
 
   try {
-    const existing = await prisma.adminUser.count();
-    if (existing > 0) {
-      console.log(
-        `[admin] bootstrap skipped — ${existing} admin account(s) already exist. ` +
-          "Remove ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD.",
-      );
-      return;
-    }
-
     if (password.length < 8) {
       console.error(
         "[admin] bootstrap refused — ADMIN_BOOTSTRAP_PASSWORD is under 8 characters.",
@@ -47,14 +47,33 @@ export async function bootstrapAdmin() {
       return;
     }
 
-    await prisma.adminUser.create({
-      data: { email, passwordHash: await bcrypt.hash(password, 12) },
-    });
+    const existing = await prisma.adminUser.findUnique({ where: { email } });
 
-    console.log(`[admin] created first Super Admin: ${email}`);
+    if (!existing) {
+      await prisma.adminUser.create({
+        data: { email, passwordHash: await bcrypt.hash(password, 12) },
+      });
+      console.log(`[admin] created Super Admin: ${email}`);
+    } else if (await bcrypt.compare(password, existing.passwordHash)) {
+      // Already what the environment asks for. Nothing to say beyond the fact
+      // that the variables have outlived their purpose.
+      console.log(
+        `[admin] ${email} already has this password. ` +
+          "Remove ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD.",
+      );
+      return;
+    } else {
+      await prisma.adminUser.update({
+        where: { id: existing.id },
+        data: { passwordHash: await bcrypt.hash(password, 12) },
+      });
+      console.log(`[admin] reset the password for ${email} from the environment.`);
+    }
+
     console.log(
       "[admin] REMOVE ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD now — " +
-        "they have done their job and are a password sitting in a dashboard.",
+        "they have done their job, and while they are set every deploy applies " +
+        "them again.",
     );
   } catch (error) {
     // Never fatal. A service that will not start because it could not create an
