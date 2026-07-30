@@ -902,10 +902,28 @@ app.post("/api/v1/admin/auth/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Who is signed in, or nobody.
+ *
+ * The one admin route that is not a protected resource: it is the question the
+ * panel asks before it knows whether it may ask anything else, and "nobody" is a
+ * real answer to it rather than a refusal. It used to go through `requireAdmin`
+ * and answer 401, which both clients already handled correctly — and which put a
+ * red `GET /api/v1/admin/me 401 (Unauthorized)` in the console of every visitor
+ * who was simply not logged in yet. A panel that looks broken every time it
+ * loads gets debugged instead of used; this one was, more than once.
+ *
+ * 200 with `admin: null` says the same thing without the alarm. Callers read
+ * `payload.admin` either way, so nothing downstream changes. A deployment that
+ * genuinely cannot run the admin surface still answers 503 — that one is a
+ * refusal, and it should look like one.
+ */
 app.get("/api/v1/admin/me", async (req, res) => {
   try {
-    const session = await requireAdmin(req);
-    res.json({ admin: session });
+    if (!(await adminConfigured())) {
+      throw new AuthError("Admin panel is not configured on this deployment", 503);
+    }
+    res.json({ admin: (await getAdminSession(req.headers.cookie)) ?? null });
   } catch (error) {
     fail(res, error);
   }

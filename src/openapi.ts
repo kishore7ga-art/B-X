@@ -805,11 +805,21 @@ export const openApiDocument = {
     "/api/v1/admin/me": {
       get: {
         tags: ["Admin"],
-        summary: "The signed-in admin",
+        summary: "The signed-in admin, or null",
+        description:
+          "A session probe rather than a protected resource: not being signed " +
+          "in is an answer, not a refusal, so this is 200 with `admin: null` " +
+          "rather than 401. Every other admin route answers 401.",
         security: SESSION_COOKIE,
         responses: {
-          "200": json({ type: "object" }, "The admin."),
-          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+          "200": json(
+            {
+              type: "object",
+              properties: { admin: { type: "object", nullable: true } },
+            },
+            "The admin, or null when nobody is signed in.",
+          ),
+          ...errors([503, "Admin panel not configured."]),
         },
       },
     },
