@@ -32,7 +32,20 @@ export class AuthError extends Error {
 }
 
 export const credentialsSchema = z.object({
-  email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email")),
+  /**
+   * The `error` argument covers the field being *absent*, which zod treats as a
+   * different issue from failing `email` and words itself — "Invalid input:
+   * expected string, received undefined" was reaching the signup form.
+   *
+   * Only signup: `login()` below discards the parse error and answers "Enter
+   * your email and password" regardless, so this never leaked there. Which is
+   * also why the gap survived — the endpoint most people exercise was hiding it.
+   */
+  email: z
+    .string({ error: "Enter a valid email" })
+    .trim()
+    .toLowerCase()
+    .pipe(z.email("Enter a valid email")),
   password: z.string().min(1, "Enter your password"),
 });
 
