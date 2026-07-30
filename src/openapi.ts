@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+import {
+  accessRequestSchema,
+  activateGoogleSchema,
+  activatePasswordSchema,
+} from "@/access-service";
 import { credentialsSchema, signupSchema } from "@/auth-service";
 import { startWithDesignSchema } from "@/design-service";
 import { adminLoginSchema } from "@/admin-service";
+import { templateDetailsSchema, templateSlotsSchema } from "@/library-service";
 import { onboardingSchema } from "@/onboarding-service";
 import { restoreSchema, saveSchema } from "@/sections-service";
 
@@ -142,6 +148,7 @@ export const openApiDocument = {
   tags: [
     { name: "Service", description: "What this is and whether it is healthy." },
     { name: "Auth", description: "Creating an account and signing in." },
+    { name: "Access", description: "Requesting access, and activating once approved." },
     { name: "Public", description: "Reads that need no session." },
     { name: "Onboarding", description: "Naming a college, choosing a design, provisioning a site." },
     { name: "Editor", description: "Reads behind a session." },
@@ -196,7 +203,12 @@ export const openApiDocument = {
         summary: "Liveness and database reachability",
         description:
           "503 when the database cannot be reached, so an uptime monitor " +
-          "notices rather than reading 200 off a service that cannot serve.",
+          "notices rather than reading 200 off a service that cannot serve.\n\n" +
+          "`mailer` is `configured` only when both `RESEND_API_KEY` and " +
+          "`MAIL_FROM` are set. It is reported here because an unconfigured " +
+          "mailer fails quietly: approving still answers 200 and the row still " +
+          "says APPROVED — the only symptom is somebody who never got an email " +
+          "and no way for them to tell you.",
         security: [],
         responses: {
           "200": json(
@@ -207,6 +219,7 @@ export const openApiDocument = {
                 service: str,
                 database: str,
                 templates: { type: ["integer", "null"] },
+                mailer: { type: "string", enum: ["configured", "not configured"] },
                 latencyMs: int,
               },
             },
@@ -277,6 +290,190 @@ export const openApiDocument = {
             [401, "Incorrect email or password."],
             [429, "Too many attempts from this address."],
             [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+
+    "/api/v1/access-requests": {
+      post: {
+        tags: ["Access"],
+        summary: "Request access",
+        description:
+          "Records a request for an admin to review. Public and " +
+          "unauthenticated — it is the only door into the platform, so it has " +
+          "to be openable from outside. Pushing it writes one row and grants " +
+          "nothing: no session, no user, no college, no token.\n\n" +
+          "**Answers 202 with the same body whether or not a row was written.** " +
+          "A second request from an address that already has one pending is " +
+          "dropped, and the caller cannot tell — otherwise this endpoint would " +
+          "be a way to ask whether a given person has applied, which is the " +
+          "same enumeration this API refuses at sign-in.\n\n" +
+          "202 rather than 201 because on one of those two paths nothing was " +
+          "created.\n\n" +
+          "Rate limited to 3 per IP per hour. The cost being defended is not " +
+          "CPU but the review queue: every row lands in front of a human.",
+        security: [],
+        requestBody: body(accessRequestSchema),
+        responses: {
+          "202": json(
+            {
+              type: "object",
+              properties: { received: { type: "boolean", enum: [true] } },
+              required: ["received"],
+            },
+            "Request received. Says nothing about whether it was already known.",
+          ),
+          ...errors(
+            [400, "Validation failed."],
+            [429, "Too many requests from this address."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+
+    "/api/v1/activate": {
+      get: {
+        tags: ["Access"],
+        summary: "What an invite is for, before redeeming it",
+        description:
+          "Lets the activation page name the address it is about to activate, " +
+          "for somebody who was forwarded an invite or is holding two. Safe to " +
+          "return: the caller already holds the token, and the token is the " +
+          "secret — the address is what it is *for*.\n\n" +
+          "Consumes nothing. A browser that prefetches the link must not burn " +
+          "the invite before the form is submitted.\n\n" +
+          "410 rather than 400 for an expired invite: it was a real link and it " +
+          "is gone, which is a different problem from one that never existed and " +
+          "has a different fix. A link already redeemed reports 400 — its hash " +
+          "is nulled on use, so nothing distinguishes it from one that was " +
+          "never issued.\n\n" +
+          "Shares the activation rate limit so it cannot be used as a free " +
+          "oracle while the POST beside it is capped.",
+        security: [],
+        parameters: [
+          { name: "token", in: "query", required: true, schema: str },
+        ],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: { email: str, name: str },
+              required: ["email", "name"],
+            },
+            "The invite is live and belongs to this address.",
+          ),
+          ...errors(
+            [400, "Not a valid invite, or already redeemed."],
+            [410, "The invite expired."],
+            [429, "Too many attempts."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+    "/api/v1/activate/password": {
+      post: {
+        tags: ["Access"],
+        summary: "Redeem an invite by setting a password",
+        description:
+          "**This is where a College first exists.** Approval created nothing, " +
+          "so an invite nobody opened never held a subdomain. Redeeming creates " +
+          "the college and the user together, adopting an unclaimed college " +
+          "first if one is waiting.\n\n" +
+          "College, user and token consumption are one transaction, and the " +
+          "token is nulled *first*, conditionally on still being there — so two " +
+          "clicks on one link cannot both proceed, and a failure anywhere rolls " +
+          "back and leaves the invite live rather than burning it on an account " +
+          "that was never created.\n\n" +
+          "Issues a session on success, unlike `POST /api/v1/auth/signup`, " +
+          "which deliberately does not: the invite has already proved who this " +
+          "is, and a one-time link followed by a login form asks for the same " +
+          "proof twice. The cookie is the same `college_session` set by login — " +
+          "same name, same derived scope, no second mechanism.\n\n" +
+          "409 if the address acquired an account during the 48-hour window. " +
+          "`users.email` is unique, and the alternative is a constraint " +
+          "violation surfacing as a 500 to somebody who did nothing wrong.",
+        security: [],
+        requestBody: body(activatePasswordSchema),
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: { subdomain: str, next: str },
+              required: ["subdomain", "next"],
+            },
+            "Activated and signed in. `next` is the editor if the adopted " +
+              "college already has a template, onboarding otherwise.",
+          ),
+          ...errors(
+            [400, "Not a valid invite, already redeemed, or a weak password."],
+            [409, "That address already has an account."],
+            [410, "The invite expired."],
+            [429, "Too many attempts."],
+            [500, "Unexpected server error."],
+          ),
+        },
+      },
+    },
+
+    "/api/v1/activate/google": {
+      post: {
+        tags: ["Access"],
+        summary: "Redeem an invite by linking a Google account",
+        description:
+          "Called by the frontend's Google callback, **server to server** — not " +
+          "by a browser. xite-F runs the code exchange because it holds the " +
+          "client secret, then forwards the raw `id_token` here.\n\n" +
+          "**The email match is the security boundary of this whole flow.** An " +
+          "invite is a bearer token in an email; without the match, anyone who " +
+          "intercepts one redeems it with their own Google account and owns the " +
+          "college it was meant for. So this service verifies the token again " +
+          "against Google's keys — signature, issuer, and `audience` pinned to " +
+          "`GOOGLE_CLIENT_ID` — rather than believing an email the caller " +
+          "supplied. A token Google signed for a different application is still " +
+          "a valid Google token; pinning the audience is what rejects it.\n\n" +
+          "`email_verified` must be true. Google sets it false for some " +
+          "Workspace configurations, and it is the difference between " +
+          "controlling a mailbox and typing an address into a profile — the " +
+          "invite went to a mailbox.\n\n" +
+          "403 on mismatch names the *expected* address and never the one " +
+          "offered: the invite holder already knows their own address, and this " +
+          "response is reachable by anyone holding a leaked invite, so it must " +
+          "not become a way to read who they signed in as.\n\n" +
+          "No password is stored — the row gets an unusable " +
+          "`google:<uuid>` hash, so password sign-in does not work for the " +
+          "account, which is correct rather than incidental.\n\n" +
+          "The session token is returned in the body as well as set as a cookie, " +
+          "because the caller is a server setting the cookie on its own " +
+          "redirect. That is only safe because reaching this at all requires a " +
+          "valid unredeemed invite *and* a matching verified Google identity.",
+        security: [],
+        requestBody: body(activateGoogleSchema),
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                sessionToken: str,
+                userId: str,
+                collegeId: str,
+                subdomain: str,
+                next: str,
+              },
+              required: ["sessionToken", "userId", "collegeId", "subdomain", "next"],
+            },
+            "Activated. The caller sets the session cookie on its redirect.",
+          ),
+          ...errors(
+            [400, "Not a valid invite, or already redeemed."],
+            [401, "Could not verify that Google account."],
+            [403, "Verified, but the address does not match the invite."],
+            [409, "That address already has an account."],
+            [410, "The invite expired."],
+            [429, "Too many attempts."],
+            [503, "Google sign-in is not configured."],
           ),
         },
       },
@@ -650,6 +847,441 @@ export const openApiDocument = {
         responses: {
           "200": json({ type: "object" }, "All colleges."),
           ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+
+    "/api/v1/admin/templates/stats": {
+      get: {
+        tags: ["Admin"],
+        summary: "How much is in the library, and how much is in use",
+        description:
+          "`library` counts `section_variants`, not `sections`. The reusable " +
+          "design is the variant; a `sections` row is one template's slot for a " +
+          "section type and has no active/retired state of its own.\n\n" +
+          "`draft` is counted, not derived as total minus published: a template " +
+          "can be both unpublished and archived, and subtracting would file a " +
+          "withdrawn one under \"still being built\".\n\n" +
+          "`collegesOnTemplates` is here because it is what makes a delete " +
+          "unsafe — see the delete note on the list endpoint.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                templates: {
+                  type: "object",
+                  properties: {
+                    total: int,
+                    published: int,
+                    draft: int,
+                    archived: int,
+                  },
+                },
+                library: {
+                  type: "object",
+                  properties: { total: int, active: int, retired: int },
+                },
+                byType: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { sectionType: str, active: int },
+                  },
+                },
+                collegesOnTemplates: int,
+              },
+            },
+            "Library and template counts.",
+          ),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+    "/api/v1/admin/templates": {
+      get: {
+        tags: ["Admin"],
+        summary: "Every template, drafts and archived included",
+        description:
+          "The admin list, as distinct from `GET /api/v1/templates`, which is " +
+          "the gallery and shows only what a college may pick.\n\n" +
+          "A template's composition is **not** a join table of library items. It " +
+          "is its `sections` rows — one per section type it offers — each naming " +
+          "the design it leads with in `defaultVariantId`. That is what `slots` " +
+          "reports.\n\n" +
+          "`deletable` is computed here rather than guessed in the UI, and it is " +
+          "the important field on this endpoint. `sections` cascades from " +
+          "`templates` and `college_sections` cascades from `sections`, so " +
+          "deleting a template in use destroys the content of every college " +
+          "using it. `collegeSections` says how much. The schema's own rule is " +
+          "\"a real delete is only offered when no college uses it\"; archiving " +
+          "is the operation for everything else.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                templates: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: str,
+                      name: str,
+                      description: nullableStr,
+                      thumbnailUrl: nullableStr,
+                      isPublished: bool,
+                      archivedAt: nullableStr,
+                      createdAt: str,
+                      createdByEmail: nullableStr,
+                      colleges: int,
+                      collegeSections: int,
+                      deletable: bool,
+                      slots: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            slotId: str,
+                            sectionType: str,
+                            order: int,
+                            isRequired: bool,
+                            leadVariantId: nullableStr,
+                            leadVariantName: nullableStr,
+                            leadComponentKey: nullableStr,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "All templates, with composition and delete safety.",
+          ),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+
+    "/api/v1/admin/library": {
+      get: {
+        tags: ["Admin"],
+        summary: "Every design in the section library",
+        description:
+          "What the edit screen's per-slot dropdowns are built from. Retired " +
+          "variants are included and flagged, because an admin needs to see that " +
+          "one exists and was withdrawn.\n\n" +
+          "`inUse` is not decoration: `college_sections.variant_id` is ON DELETE " +
+          "RESTRICT, so a non-zero count is why a design can be retired but never " +
+          "removed.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                variants: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: str,
+                      sectionType: str,
+                      variantName: str,
+                      componentKey: str,
+                      isActive: bool,
+                      createdByEmail: nullableStr,
+                      inUse: int,
+                    },
+                  },
+                },
+              },
+            },
+            "The library.",
+          ),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+    "/api/v1/admin/templates/{id}": {
+      get: {
+        tags: ["Admin"],
+        summary: "One template, for the edit screen",
+        description:
+          "The same shape as a row from the list endpoint, including `slots` and " +
+          "`deletable`.",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        responses: {
+          "200": json({ type: "object" }, "The template."),
+          ...errors(
+            [401, "Not signed in."],
+            [404, "No such template."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+      patch: {
+        tags: ["Admin"],
+        summary: "Edit name, description, publish and archive state",
+        description:
+          "Never touches composition — that is the `/sections` endpoint below.\n\n" +
+          "`isPublished` and `archived` are separate axes. Draft means \"being " +
+          "built\", archived means \"was offered and withdrawn\", and a template " +
+          "can be either, both, or neither. **Both now actually gate the " +
+          "gallery**: before this endpoint existed, `listTemplates()` filtered on " +
+          "nothing, so `archivedAt` never hid anything despite its own comment " +
+          "saying it did. The gallery, the theme picker, the preview, " +
+          "\"start with this design\" and the template cycler all check it now.\n\n" +
+          "`archived: false` un-archives, which the addendum has no way to do — " +
+          "a withdrawal that cannot be reversed is a delete wearing a gentler " +
+          "name. Re-archiving keeps the original timestamp: when it was withdrawn " +
+          "is a fact, and saving the form again should not rewrite it to now.\n\n" +
+          "409 on a rename collision, because `name` is unique. Logged via " +
+          "`recordAudit` as `template.update`, with a summary naming what moved.",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        requestBody: body(templateDetailsSchema),
+        responses: {
+          "200": json({ type: "object" }, "The template as it now stands."),
+          ...errors(
+            [400, "Validation failed."],
+            [401, "Not signed in."],
+            [404, "No such template."],
+            [409, "Another template already has that name."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+      delete: {
+        tags: ["Admin"],
+        summary: "Archive it, or delete it when nothing depends on it",
+        description:
+          "**Archives by default.** `sections` cascades from `templates` and " +
+          "`college_sections` cascades from `sections`, so deleting a template in " +
+          "use destroys the content of every college built from it. The schema's " +
+          "own rule is \"a real delete is only offered when no college uses it\".\n\n" +
+          "`?hard=true` asks for a row delete and is honoured only when `colleges` " +
+          "and `collegeSections` are both zero. Otherwise 409, naming how many " +
+          "sections it would have taken. A confirm() dialog in a browser is not a " +
+          "substitute for the server knowing what it is about to cascade.\n\n" +
+          "Archiving is reversible via `PATCH { archived: false }`.\n\n" +
+          "Logged as `template.archive` or `template.delete`.",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "id", in: "path", required: true, schema: str },
+          {
+            name: "hard",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["true"] },
+          },
+        ],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: { archived: bool, deleted: bool },
+              required: ["archived", "deleted"],
+            },
+            "Which of the two happened.",
+          ),
+          ...errors(
+            [401, "Not signed in."],
+            [404, "No such template."],
+            [409, "In use — archive it instead."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+    },
+    "/api/v1/admin/templates/{id}/sections": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Swap which design fills each category, and reorder",
+        description:
+          "**An UPDATE, not a replace.** The addendum's version does " +
+          "`deleteMany` then `createMany` on a join table; there is no such table " +
+          "here, and the nearest equivalent — deleting `sections` rows — cascades " +
+          "into `college_sections`. Which categories a template offers is fixed " +
+          "by its `sections` rows; which design fills one is " +
+          "`sections.default_variant_id`, and that is all this writes.\n\n" +
+          "Two checks before anything is written:\n\n" +
+          "- the slot must belong to **this** template, or an admin editing one " +
+          "template could write to another's row by passing its id\n" +
+          "- the design must be an **active variant of that slot's own section " +
+          "type**, or a HERO slot could be pointed at a CONTACT component and the " +
+          "registry would render the wrong shape against content that does not " +
+          "match it\n\n" +
+          "All slots move in one transaction, so a rejection partway through " +
+          "cannot leave the template half-swapped.\n\n" +
+          "Logged as `template.slots_update`.",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        requestBody: body(templateSlotsSchema),
+        responses: {
+          "200": json({ type: "object" }, "The template as it now stands."),
+          ...errors(
+            [400, "Unknown slot, wrong section type, or a retired design."],
+            [401, "Not signed in."],
+            [404, "No such template."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+    },
+    "/api/v1/admin/access-requests": {
+      get: {
+        tags: ["Admin"],
+        summary: "Requests awaiting review",
+        description:
+          "`status` selects the list and defaults to `PENDING`, the only one " +
+          "with work in it. Validated against the enum: an unknown value is a " +
+          "400, not a driver error.\n\n" +
+          "`inviteValid` is true for an approved request whose 48-hour window " +
+          "is still open. `activatedUserId` is null until the invite is " +
+          "redeemed, which is what separates \"approved\" from \"in use\". " +
+          "`alreadyHasAccount` warns that approving would mint an invite that " +
+          "cannot be redeemed — `users.email` is unique.\n\n" +
+          "The invite token hash is never returned by any endpoint.",
+        security: SESSION_COOKIE,
+        parameters: [
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["PENDING", "APPROVED", "REJECTED"],
+              default: "PENDING",
+            },
+          },
+        ],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                requests: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: str,
+                      name: str,
+                      email: str,
+                      organization: nullableStr,
+                      message: nullableStr,
+                      status: {
+                        type: "string",
+                        enum: ["PENDING", "APPROVED", "REJECTED"],
+                      },
+                      createdAt: str,
+                      reviewedAt: nullableStr,
+                      reviewedByEmail: nullableStr,
+                      inviteValid: bool,
+                      inviteExpiresAt: nullableStr,
+                      activatedUserId: nullableStr,
+                      alreadyHasAccount: bool,
+                    },
+                  },
+                },
+              },
+            },
+            "Requests with that status, newest first.",
+          ),
+          ...errors(
+            [400, "Unknown status."],
+            [401, "Not signed in."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+    },
+    "/api/v1/admin/access-requests/{id}/approve": {
+      post: {
+        tags: ["Admin"],
+        summary: "Approve a request and issue an invite",
+        description:
+          "Creates **no user and no college**. A college owns a unique " +
+          "subdomain, so allocating one here would let an invite nobody opens " +
+          "squat a name forever; the account is built at activation instead, " +
+          "and until then this row plus a token hash is the whole footprint.\n\n" +
+          "The invite is single-use and expires in 48 hours. Only a hash is " +
+          "stored — the raw token goes into the email and exists nowhere " +
+          "else, including this response.\n\n" +
+          "Only a `PENDING` request may be approved, and the write is " +
+          "conditional on it still being pending, so two admins clicking at " +
+          "once cannot mint two tokens and silently break the first email. " +
+          "409 if the row moved underneath the caller, or if the address " +
+          "already has an account.\n\n" +
+          "**`delivered: false` still answers 200.** By the time the send is " +
+          "attempted the row is APPROVED and the token minted, so a 500 would " +
+          "deny an approval that happened — and the obvious retry answers 409. " +
+          "The approval and the delivery are reported separately; " +
+          "`deliveryError` carries the reason, for the operator only.\n\n" +
+          "Logged via `recordAudit` as `access_request.approve`.",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "id", in: "path", required: true, schema: str },
+        ],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                approved: { type: "boolean", enum: [true] },
+                email: str,
+                expiresAt: str,
+                delivered: bool,
+                deliveryError: str,
+              },
+              required: ["approved", "email", "expiresAt", "delivered"],
+            },
+            "Approved. The token is not included, by design.",
+          ),
+          ...errors(
+            [401, "Not signed in."],
+            [404, "No such request."],
+            [409, "Already reviewed, or that address already has an account."],
+            [503, "Admin panel not configured."],
+          ),
+        },
+      },
+    },
+    "/api/v1/admin/access-requests/{id}/reject": {
+      post: {
+        tags: ["Admin"],
+        summary: "Reject a request",
+        description:
+          "Guarded on `PENDING` like approve. Rejecting an already-approved " +
+          "request is refused rather than performed: a live invite has already " +
+          "been emailed by then, and flipping the row would leave that invite " +
+          "working. Revoking an approval is a different operation and would " +
+          "have to clear the token.\n\n" +
+          "Logged via `recordAudit` as `access_request.reject`.",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "id", in: "path", required: true, schema: str },
+        ],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: { rejected: { type: "boolean", enum: [true] } },
+              required: ["rejected"],
+            },
+            "Rejected.",
+          ),
+          ...errors(
+            [401, "Not signed in."],
+            [404, "No such request."],
+            [409, "Already reviewed."],
+            [503, "Admin panel not configured."],
+          ),
         },
       },
     },

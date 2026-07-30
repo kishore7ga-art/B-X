@@ -19,6 +19,15 @@ import {
   adminStatus,
   getAdminSession,
 } from "@/admin-service";
+import {
+  activateWithGoogle,
+  activateWithPassword,
+  approveAccessRequest,
+  inviteSummary,
+  listAccessRequests,
+  rejectAccessRequest,
+  submitAccessRequest,
+} from "@/access-service";
 import { bootstrapAdmin } from "@/admin-bootstrap";
 import { getSession, readSession } from "@/auth";
 import {
@@ -38,6 +47,16 @@ import {
   startWithDesignSchema,
 } from "@/design-service";
 import { docsPage } from "@/docs-page";
+import {
+  getTemplateForAdmin,
+  libraryVariantsForAdmin,
+  listTemplatesForAdmin,
+  retireTemplate,
+  templateStats,
+  updateTemplateDetails,
+  updateTemplateSlots,
+} from "@/library-service";
+import { mailerConfigured, sendActivationEmail } from "@/mailer";
 import {
   buildSiteForType,
   completeOnboarding,
@@ -140,6 +159,25 @@ app.use(
     credentials: true,
   }),
 );
+
+/**
+ * Where the app lives, for links this service puts in an email.
+ *
+ * An activation link has to point at the *frontend* — it opens a page, not an
+ * endpoint — and this service otherwise has no reason to know that address. It
+ * is derived from `CORS_ORIGINS` rather than requiring a second variable saying
+ * the same thing, on the same reasoning as the session cookie's Domain: the
+ * browser already forces that list to be right before it will make a call, so it
+ * is the one origin here that cannot quietly be wrong.
+ *
+ * `APP_URL` overrides, for a deployment where the first allowed origin is not
+ * the one invitations should point at — an admin panel listed first, say.
+ */
+function appUrl(): string {
+  const configured = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  return ORIGINS[0]?.replace(/\/+$/, "") ?? "http://localhost:3000";
+}
 
 /** Every request, one line — the log a split deployment is diagnosed from. */
 app.use((req, res, next) => {
@@ -314,6 +352,15 @@ app.get("/api/health", async (_req, res) => {
       service: "backend",
       database: "connected",
       templates: await prisma.template.count().catch(() => null),
+      /**
+       * Whether an approval can actually reach anybody.
+       *
+       * Here rather than left to be discovered, because an unconfigured mailer
+       * fails in the quietest possible way: approving still answers 200, the row
+       * still says APPROVED, and the only sign anything is wrong is a person who
+       * never got an email and has no way to say so. The dashboard reads this.
+       */
+      mailer: mailerConfigured() ? "configured" : "not configured",
       latencyMs: Date.now() - startedAt,
     });
   } catch (error) {
@@ -357,6 +404,33 @@ const LIMITS = {
    * times in a quarter hour.
    */
   adminLogin: { max: 5, windowMs: 15 * 60 * 1000 },
+  /**
+   * Requesting access. Public, unauthenticated, and the only write of its kind.
+   *
+   * Cheap per call — no bcrypt, one small row — so this is not about CPU. It is
+   * about the queue: every row lands in front of a human who has to read it, and
+   * a flood does not break the API so much as make the admin list useless, which
+   * is a denial of service against the one part of this flow that cannot be
+   * automated. Three an hour is generous for a person and pointless for a script.
+   *
+   * Still trivially beaten by a botnet, because it is keyed on one address. A
+   * CAPTCHA on the form is the answer if that day comes; this is the floor.
+   */
+  accessRequest: { max: 3, windowMs: 60 * 60 * 1000 },
+  /**
+   * Redeeming an invite, and reading one.
+   *
+   * Not really a guessing defence — the token is 32 random bytes and a bucket
+   * this size makes no difference to something that would take longer than the
+   * universe. It is here because activation hashes a password at cost 12 and
+   * writes a college and a user, so it is the same shape of cost as signup, and
+   * because an unmetered public endpoint is worth capping on principle rather
+   * than after somebody finds a reason.
+   *
+   * Shared with the GET that reads an invite, so that cannot be used as a free
+   * oracle while the POST beside it is limited.
+   */
+  activate: { max: 10, windowMs: 15 * 60 * 1000 },
 } as const;
 
 const LONGEST_WINDOW_MS = Math.max(
@@ -442,6 +516,110 @@ app.post("/api/v1/auth/login", async (req, res) => {
  * Reinstate it the day sessions become revocable server-side, which is the day
  * it would actually do something.
  */
+
+// --- Access requests ----------------------------------------------------------
+
+/**
+ * Anyone may ask; nobody is granted anything here.
+ *
+ * `security: []` in the docs is not an oversight — this is the door, and it has
+ * to be openable from outside. What keeps it safe is that pushing it writes one
+ * row and nothing else: no session, no user, no college, no token.
+ *
+ * Answers 202 with the same body whether or not a row was written. See
+ * `submitAccessRequest` for why the two cases must be indistinguishable.
+ */
+app.post("/api/v1/access-requests", async (req, res) => {
+  try {
+    if (rateLimit("accessRequest", req)) {
+      res
+        .status(429)
+        .json({ error: "Too many requests from this address. Try again later." });
+      return;
+    }
+
+    res.status(202).json(await submitAccessRequest(req.body ?? {}));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * What the activation page reads before it draws the form.
+ *
+ * A GET carrying a credential in the query string, which is worth naming: the
+ * token is in the URL because it arrived in an email, and an email can only
+ * carry a link. That has consequences — it lands in browser history and in the
+ * Referer header of anything the page loads — and they are the reason the token
+ * is single-use, short-lived, and grants exactly one action.
+ *
+ * Rate limited on the same bucket as activation itself, so this cannot be used
+ * as an unmetered oracle for guessing tokens.
+ */
+app.get("/api/v1/activate", async (req, res) => {
+  try {
+    if (rateLimit("activate", req)) {
+      res.status(429).json({ error: "Too many attempts. Try again later." });
+      return;
+    }
+
+    res.json(await inviteSummary(req.query.token));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Redeems an invite by setting a password, and signs the person in.
+ *
+ * The session cookie is set exactly as `POST /api/v1/auth/login` sets it — same
+ * name, same derived scope — because this is a sign-in that happens to be
+ * somebody's first. Nothing here is a second auth mechanism.
+ */
+app.post("/api/v1/activate/password", async (req, res) => {
+  try {
+    if (rateLimit("activate", req)) {
+      res.status(429).json({ error: "Too many attempts. Try again later." });
+      return;
+    }
+
+    const { token, subdomain, next } = await activateWithPassword(req.body ?? {});
+    res.cookie(COOKIE_NAME, token, cookieOptions(requestHost(req)));
+    res.json({ subdomain, next });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Redeems an invite by linking a Google account.
+ *
+ * Called by xite-F's Google callback, server to server, not by a browser — the
+ * frontend runs the code exchange because it holds the client secret, then
+ * forwards the raw id_token here. This service verifies it again against Google's
+ * keys rather than believing the email alongside it; `google-identity.ts` says
+ * why at length.
+ *
+ * The session token is in the response body as well as the cookie, because the
+ * caller is a server that has to set the cookie on its own redirect. That is only
+ * safe because the exchange above is not reachable without a valid, unexpired,
+ * unredeemed invite *and* a Google identity matching it.
+ */
+app.post("/api/v1/activate/google", async (req, res) => {
+  try {
+    if (rateLimit("activate", req)) {
+      res.status(429).json({ error: "Too many attempts. Try again later." });
+      return;
+    }
+
+    const { token, userId, collegeId, subdomain, next } =
+      await activateWithGoogle(req.body ?? {});
+    res.cookie(COOKIE_NAME, token, cookieOptions(requestHost(req)));
+    res.json({ sessionToken: token, userId, collegeId, subdomain, next });
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
 // --- Docs ---------------------------------------------------------------------
 
@@ -646,6 +824,166 @@ app.get("/api/v1/admin/sites", async (req, res) => {
   try {
     await requireAdmin(req);
     res.json({ sites: await adminSites() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Registered before `/templates/:id` would be, and that ordering is load-bearing.
+ *
+ * Express matches in declaration order, so a `:id` route declared above this one
+ * captures the literal string "stats" as an id and answers 404 for the stats call.
+ * It costs nothing to get right here and is confusing to diagnose later.
+ */
+app.get("/api/v1/admin/templates/stats", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await templateStats());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/** Every template, drafts and archived included — the admin list, not the gallery. */
+app.get("/api/v1/admin/templates", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ templates: await listTemplatesForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/** The design library, for the edit screen's per-slot dropdowns. */
+app.get("/api/v1/admin/library", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ variants: await libraryVariantsForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/templates/:id", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await getTemplateForAdmin(req.params.id));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.patch("/api/v1/admin/templates/:id", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(
+      await updateTemplateDetails(req.params.id, req.body ?? {}, session),
+    );
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Swaps which design fills each of this template's categories.
+ *
+ * Kept on the addendum's path even though the verb underneath is different: it
+ * updates `sections.default_variant_id` rather than deleting and recreating rows.
+ * See `updateTemplateSlots` for why the destructive version cannot be used here.
+ */
+app.patch("/api/v1/admin/templates/:id/sections", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await updateTemplateSlots(req.params.id, req.body ?? {}, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Archives, or deletes when nothing depends on it.
+ *
+ * `?hard=true` asks for a real delete and is refused with a 409 unless the template
+ * has no colleges and no college sections. The frontend's confirm() dialog is not
+ * the check — the server is, because only it can see the cascade.
+ */
+app.delete("/api/v1/admin/templates/:id", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(
+      await retireTemplate(
+        req.params.id,
+        { hard: req.query.hard === "true" },
+        session,
+      ),
+    );
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/access-requests", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ requests: await listAccessRequests(req.query) });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Approves a request and sends the invite.
+ *
+ * The raw token exists in this handler and nowhere else — it is minted by
+ * `approveAccessRequest`, handed to `sendActivationEmail`, and never stored,
+ * returned or logged in production.
+ *
+ * **`delivered: false` is a 200, not a failure**, and that is a deliberate
+ * choice worth stating. By the time a send is attempted the row is already
+ * APPROVED and the token already minted; throwing here would answer 500 to an
+ * admin whose approval *did* happen, and the retry they would reasonably try
+ * next answers 409. So the approval is reported as what it is, with whether the
+ * email arrived alongside it, and the panel says so.
+ *
+ * That leaves a real gap: an approval whose email bounced has a live invite
+ * nobody received and no way to resend it. The fix is a resend endpoint that
+ * re-mints against an already-approved row; until that exists the activation URL
+ * is recoverable outside production from the log, and not at all inside it.
+ */
+app.post("/api/v1/admin/access-requests/:id/approve", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    const { email, name, rawToken, expiresAt } = await approveAccessRequest(
+      req.params.id,
+      session,
+    );
+
+    const delivery = await sendActivationEmail({
+      to: email,
+      name,
+      activationUrl: `${appUrl()}/activate?token=${rawToken}`,
+      expiresAt,
+    });
+
+    // Never the token. The panel gets what it needs to redraw the row and to
+    // tell the operator whether anything actually left the building.
+    res.json({
+      approved: true,
+      email,
+      expiresAt: expiresAt.toISOString(),
+      delivered: delivery.delivered,
+      ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
+    });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post("/api/v1/admin/access-requests/:id/reject", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await rejectAccessRequest(req.params.id, session));
   } catch (error) {
     fail(res, error);
   }
