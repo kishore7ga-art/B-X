@@ -5,6 +5,7 @@ import { jwtVerify, SignJWT } from "jose";
 import * as OTPAuth from "otpauth";
 import { z } from "zod";
 
+import { bootstrapState } from "@/admin-bootstrap";
 import { prisma } from "@/db";
 import { AuthError } from "@/auth-service";
 
@@ -167,18 +168,21 @@ export type AdminSession = { adminId: string; email: string };
  * useful; who the admins are is not.
  */
 export async function adminStatus() {
+  const bootstrap = bootstrapState();
+
   if (!(await adminConfigured())) {
-    return { configured: false as const, hasAccounts: false };
+    return { configured: false as const, hasAccounts: false, bootstrap };
   }
   try {
     return {
       configured: true as const,
       hasAccounts: (await prisma.adminUser.count()) > 0,
+      bootstrap,
     };
   } catch {
     // The table is missing or the database is unreachable — either way setup
     // is not finished, which is what the caller is asking.
-    return { configured: true as const, hasAccounts: false };
+    return { configured: true as const, hasAccounts: false, bootstrap };
   }
 }
 

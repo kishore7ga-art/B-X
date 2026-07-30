@@ -3,6 +3,37 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/db";
 
 /**
+ * What the last boot did, for `/api/v1/admin/status` to report.
+ *
+ * Everything below writes its decision to a log, and a log is behind a
+ * dashboard, an ssh key or a support request. When a sign-in fails there are
+ * three possible causes — the variables never reached this service, they reached
+ * it and were refused, or they were applied and the password being typed is
+ * simply wrong — and telling them apart from a browser was impossible. This is
+ * the outcome only: no email, no password, no lengths.
+ */
+export type BootstrapOutcome =
+  | "idle"
+  | "created"
+  | "reset"
+  | "matched"
+  | "refused"
+  | "failed";
+
+let lastOutcome: BootstrapOutcome = "idle";
+
+export function bootstrapState() {
+  return {
+    /** Whether both variables are present on *this* service. */
+    varsSet: Boolean(
+      process.env.ADMIN_BOOTSTRAP_EMAIL?.trim() &&
+        process.env.ADMIN_BOOTSTRAP_PASSWORD,
+    ),
+    lastRun: lastOutcome,
+  };
+}
+
+/**
  * Makes the environment's Super Admin true at boot: creates it, or sets its
  * password to the one given.
  *
@@ -41,6 +72,7 @@ export async function bootstrapAdmin() {
 
   try {
     if (password.length < 8) {
+      lastOutcome = "refused";
       console.error(
         "[admin] bootstrap refused — ADMIN_BOOTSTRAP_PASSWORD is under 8 characters.",
       );
@@ -53,10 +85,12 @@ export async function bootstrapAdmin() {
       await prisma.adminUser.create({
         data: { email, passwordHash: await bcrypt.hash(password, 12) },
       });
+      lastOutcome = "created";
       console.log(`[admin] created Super Admin: ${email}`);
     } else if (await bcrypt.compare(password, existing.passwordHash)) {
       // Already what the environment asks for. Nothing to say beyond the fact
       // that the variables have outlived their purpose.
+      lastOutcome = "matched";
       console.log(
         `[admin] ${email} already has this password. ` +
           "Remove ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD.",
@@ -67,6 +101,7 @@ export async function bootstrapAdmin() {
         where: { id: existing.id },
         data: { passwordHash: await bcrypt.hash(password, 12) },
       });
+      lastOutcome = "reset";
       console.log(`[admin] reset the password for ${email} from the environment.`);
     }
 
@@ -79,6 +114,7 @@ export async function bootstrapAdmin() {
     // Never fatal. A service that will not start because it could not create an
     // admin account is a service that has taken every college's site down over
     // a convenience.
+    lastOutcome = "failed";
     console.error("[admin] bootstrap failed:", (error as Error).message);
   }
 }
