@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { createReadStream } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -405,6 +406,40 @@ app.get("/", (_req, res) => {
 
 // --- Health -----------------------------------------------------------------
 
+/**
+ * Which variables reached *this* process, and which container it is.
+ *
+ * Names and booleans, never values. This exists because of a failure mode no
+ * amount of correct code prevents: a deployment with several services, and
+ * configuration pasted into the wrong one. The symptom is on a different service
+ * from the cause, every screen involved looks identical, and the only proof
+ * either way was a log line. Two deploys were lost to it.
+ *
+ * `instance` is the container's hostname, which is how a Dokploy service is
+ * recognised in its own dashboard — open this URL, read the name, and the
+ * service serving this domain stops being a guess.
+ *
+ * Deliberately not the whole environment: this lists the keys the deployment is
+ * asked to set, so an unexpected one cannot be probed for. A boolean against a
+ * known key tells an attacker nothing they could act on — they cannot set it —
+ * and it tells an operator the one thing they cannot otherwise see.
+ */
+const CONFIG_KEYS = [
+  "DATABASE_URL",
+  "SESSION_SECRET",
+  "CORS_ORIGINS",
+  "SESSION_COOKIE_DOMAIN",
+  "ADMIN_SESSION_SECRET",
+  "ADMIN_BOOTSTRAP_EMAIL",
+  "ADMIN_BOOTSTRAP_PASSWORD",
+] as const;
+
+function configPresence() {
+  return Object.fromEntries(
+    CONFIG_KEYS.map((key) => [key, Boolean(process.env[key]?.trim())]),
+  );
+}
+
 app.get("/api/health", async (_req, res) => {
   const startedAt = Date.now();
   try {
@@ -412,6 +447,8 @@ app.get("/api/health", async (_req, res) => {
     res.json({
       status: "ok",
       service: "backend",
+      instance: hostname(),
+      config: configPresence(),
       database: "connected",
       templates: await prisma.template.count().catch(() => null),
       /**
@@ -431,6 +468,8 @@ app.get("/api/health", async (_req, res) => {
     res.status(503).json({
       status: "degraded",
       service: "backend",
+      instance: hostname(),
+      config: configPresence(),
       database: "unreachable",
     });
   }
