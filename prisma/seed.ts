@@ -356,7 +356,11 @@ const contentFor = (
       "To be recognised among the leading centres of applied research and engineering education in the region by 2030.",
     principalName: "Dr. Anita Raghavan",
     principalDesignation: "Principal",
-    principalPhotoUrl: "/hero-madras-college.jpg",
+    // `/hero-madras-college.jpg` was seeded here and has never existed in
+    // public/, so every seeded About section asked for a 404 and fell through to
+    // SiteImage's campus photo — a building where a portrait belongs. The seed
+    // placeholder is a portrait, and a college replaces it with its own.
+    principalPhotoUrl: "/seed/principal.svg",
     principalMessage:
       `Our students leave ${d.collegeName} with more than a degree — they leave with the habit of solving real problems. That is the promise we renew with every incoming batch.`,
   },

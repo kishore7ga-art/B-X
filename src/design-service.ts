@@ -66,13 +66,21 @@ async function provisionStarterSite(
   collegeName: string,
   templateSections: TemplateSection[],
 ) {
-  const existingPages = await prisma.page.count({ where: { collegeId } });
-
-  if (existingPages === 0) {
-    await prisma.page.createMany({
-      data: DEFAULT_PAGES.map((page) => ({ collegeId, ...page })),
-    });
-  }
+  /*
+   * Every default page, including any the college is missing.
+   *
+   * The guard here used to be `count === 0`, which meant the starter list was
+   * only ever applied to a college that had no pages at all. When the list grew
+   * from four pages to twelve, colleges provisioned under the old list stayed on
+   * four — and the editor and the public nav both offered the other eight, each
+   * one a link to a page the database does not have. `skipDuplicates` leans on
+   * the `(collegeId, slug)` unique index, so re-running this adds what is
+   * missing and leaves edited titles alone.
+   */
+  await prisma.page.createMany({
+    data: DEFAULT_PAGES.map((page) => ({ collegeId, ...page })),
+    skipDuplicates: true,
+  });
 
   const homePage = await prisma.page.findFirst({
     where: { collegeId },
