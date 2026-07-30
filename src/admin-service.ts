@@ -195,18 +195,80 @@ async function mintAdminToken(payload: AdminSession) {
 }
 
 /**
+ * Whether a cookie set by `b` will be sent on a request from `a` under `Lax`.
+ *
+ * True for the same host, and for one being a parent of the other:
+ * `api.xite.co.in` and `xite.co.in` pass, `admin.meetkishore.in` and
+ * `api.xite.co.in` do not. Ports are deliberately ignored — they do not make a
+ * site — which is what keeps `localhost:5174` calling `localhost:4000` on the
+ * `Lax` path in development.
+ *
+ * Siblings are the deliberate imprecision: `admin.xite.co.in` and
+ * `api.xite.co.in` *are* the same site, and this reports them as different, so
+ * they get `None` where `Lax` would have done. Telling siblings apart from
+ * `foo.co.in` and `bar.co.in` needs a public suffix list, and the cost of not
+ * having one is a cookie marked less restrictively than it could be on requests
+ * whose origin CORS has already had to allow by name. A wrong answer the other
+ * way would be a panel that cannot stay signed in.
+ */
+function laxWouldReach(a: string, b: string): boolean {
+  const one = a.split(":")[0]!.toLowerCase();
+  const two = b.split(":")[0]!.toLowerCase();
+  return one === two || one.endsWith(`.${two}`) || two.endsWith(`.${one}`);
+}
+
+/**
  * Cookie attributes for the admin session.
  *
  * Host-only on purpose, and the one place this service deliberately differs
  * from the college cookie: that one is scoped to the parent domain so both
  * services can read it. This one has no reason to travel anywhere except back
  * to the panel, so it does not.
+ *
+ * `SameSite` is decided per request rather than from configuration. It used to
+ * be `lax` unless `SESSION_COOKIE_DOMAIN` was set, which meant a panel served
+ * from a different domain than the API — `admin.meetkishore.in` calling
+ * `api.xite.co.in` — signed in successfully and was then signed out on the very
+ * next request, because a `Lax` cookie is not sent across sites. Nothing in that
+ * failure points at a cookie: the login returns 200, the panel shows the account,
+ * and every call after it answers 401.
+ *
+ * So a cross-site panel now gets `SameSite=None; Secure` because it has to. The
+ * `Lax` CSRF protection that costs is not what is protecting these routes: every
+ * state-changing admin call sends `Content-Type: application/json`, which a
+ * cross-site form cannot set without a preflight, and the preflight is answered
+ * against an allow-list of named origins. A same-site panel is unaffected and
+ * keeps `Lax`.
  */
-export function adminCookieOptions() {
-  const crossSite = Boolean(process.env.SESSION_COOKIE_DOMAIN);
+export function adminCookieOptions(
+  origin?: string,
+  host?: string,
+): {
+  httpOnly: true;
+  sameSite: "none" | "lax";
+  secure: boolean;
+  path: string;
+  maxAge: number;
+  domain?: string;
+} {
+  const originHost = (() => {
+    if (!origin) return undefined;
+    try {
+      return new URL(origin).host;
+    } catch {
+      return undefined;
+    }
+  })();
+
+  const crossSite =
+    Boolean(process.env.SESSION_COOKIE_DOMAIN) ||
+    Boolean(originHost && host && !laxWouldReach(originHost, host));
+
   return {
     httpOnly: true,
-    sameSite: (crossSite ? "none" : "lax") as "none" | "lax",
+    sameSite: crossSite ? "none" : "lax",
+    // Required alongside SameSite=None, and a browser drops the cookie without
+    // it. Localhost counts as a secure context, so development is unaffected.
     secure: crossSite || process.env.NODE_ENV === "production",
     path: "/",
     maxAge: ADMIN_MAX_AGE_SECONDS * 1000,

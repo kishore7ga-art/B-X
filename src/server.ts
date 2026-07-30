@@ -881,7 +881,11 @@ app.post("/api/v1/admin/auth/login", async (req, res) => {
     }
 
     const { token, admin } = await adminLogin(req.body ?? {});
-    res.cookie(ADMIN_COOKIE_NAME, token, adminCookieOptions());
+    res.cookie(
+      ADMIN_COOKIE_NAME,
+      token,
+      adminCookieOptions(req.headers.origin, requestHost(req)),
+    );
     res.json({ admin });
   } catch (error) {
     fail(res, error);
@@ -896,8 +900,12 @@ app.get("/api/v1/admin/status", async (_req, res) => {
   }
 });
 
-app.post("/api/v1/admin/auth/logout", (_req, res) => {
-  const { maxAge: _drop, ...options } = adminCookieOptions();
+app.post("/api/v1/admin/auth/logout", (req, res) => {
+  // Same attributes it was set with, or the browser keeps the original.
+  const { maxAge: _drop, ...options } = adminCookieOptions(
+    req.headers.origin,
+    requestHost(req),
+  );
   res.clearCookie(ADMIN_COOKIE_NAME, options);
   res.json({ ok: true });
 });
