@@ -535,6 +535,32 @@ async function seedReferenceData() {
   );
 
   // --- Templates, each carrying the whole variant library -------------------
+  /**
+   * The shared design library, seeded once for every template at once.
+   *
+   * Keyed on `componentKey`, which is globally unique now, so re-running this is
+   * an update rather than a fourth copy. `sortOrder` is the library's own picker
+   * order and no longer carries "which one does this template lead with" — that
+   * moved to `sections.default_variant_id`, set per template below.
+   */
+  const libraryIds = new Map<string, string>();
+
+  for (const librarySpec of VARIANT_LIBRARY) {
+    const sectionType = librarySpec.sectionType as SupportedSectionType;
+    for (const [index, variant] of librarySpec.variants.entries()) {
+      const row = await prisma.sectionVariant.upsert({
+        where: { componentKey: variant.componentKey },
+        update: {
+          variantName: variant.variantName,
+          sectionType,
+          sortOrder: index,
+        },
+        create: { ...variant, sectionType, sortOrder: index },
+      });
+      libraryIds.set(variant.componentKey, row.id);
+    }
+  }
+
   const templates = [];
 
   for (const spec of TEMPLATES) {
@@ -568,7 +594,7 @@ async function seedReferenceData() {
 
     const sectionsByType = new Map<
       SupportedSectionType,
-      { id: string; variantIds: string[] }
+      { id: string; leadVariantId: string }
     >();
 
     for (const librarySpec of VARIANT_LIBRARY) {
@@ -592,35 +618,30 @@ async function seedReferenceData() {
         },
       });
 
-      // This template's lead variant first, the rest of the library behind it.
-      // Same components everywhere, different face on each template.
+      /**
+       * The lead is recorded on the slot; the designs themselves are seeded once,
+       * above, for every template at the same time.
+       *
+       * This loop used to insert the whole library per template — the same design
+       * five times over, ordered so that each template's lead came out first. That
+       * is what made 30 designs into 150 rows. The library is shared now, so the
+       * only per-template fact left is which of them this template opens with, and
+       * that is a column on the slot.
+       */
       const leadKey = spec.lead[sectionType];
-      const ordered = [
-        ...librarySpec.variants.filter((v) => v.componentKey === leadKey),
-        ...librarySpec.variants.filter((v) => v.componentKey !== leadKey),
-      ];
-      if (ordered[0]?.componentKey !== leadKey) {
+      const lead = libraryIds.get(leadKey);
+      if (!lead) {
         throw new Error(
           `${spec.name}: lead variant "${leadKey}" is not in the ${sectionType} library`,
         );
       }
 
-      const variantIds: string[] = [];
-      for (const [index, variant] of ordered.entries()) {
-        const row = await prisma.sectionVariant.upsert({
-          where: {
-            sectionId_componentKey: {
-              sectionId: section.id,
-              componentKey: variant.componentKey,
-            },
-          },
-          update: { variantName: variant.variantName, sortOrder: index },
-          create: { sectionId: section.id, ...variant, sortOrder: index },
-        });
-        variantIds.push(row.id);
-      }
+      await prisma.section.update({
+        where: { id: section.id },
+        data: { defaultVariantId: lead },
+      });
 
-      sectionsByType.set(sectionType, { id: section.id, variantIds });
+      sectionsByType.set(sectionType, { id: section.id, leadVariantId: lead });
     }
 
     templates.push({ spec, template, sectionsByType });
@@ -699,7 +720,7 @@ async function seedDemoSites({
             collegeId: college.id,
             sectionId: section.id,
             // Index 0 is the lead variant — the template's signature look.
-            variantId: section.variantIds[0],
+            variantId: section.leadVariantId,
             pageId: page.id,
             displayOrder: index + 1,
             isVisible: true,
@@ -771,7 +792,7 @@ async function seedDemoCollege({
         data: {
           collegeId: college.id,
           sectionId: section.id,
-          variantId: section.variantIds[0],
+          variantId: section.leadVariantId,
           pageId: page.id,
           displayOrder: index + 1,
           isVisible: true,

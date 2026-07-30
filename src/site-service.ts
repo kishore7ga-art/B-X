@@ -1,4 +1,5 @@
 import { prisma } from "@/db";
+import { OFFERABLE } from "@/library-service";
 
 /**
  * The public reads: the template gallery, and one page of one college's site.
@@ -18,9 +19,17 @@ const VARIANT_ORDER = [
   { variantName: "asc" as const },
 ];
 
-/** The design gallery. Reference data — the same for every visitor. */
+/**
+ * The design gallery. Reference data — the same for every visitor.
+ *
+ * `OFFERABLE` is what makes the admin panel's publish and archive controls mean
+ * something. Until it was added here this selected every row, so a half-assembled
+ * template would have appeared in the gallery the moment it was created, and an
+ * archived one never left it.
+ */
 export async function listTemplates() {
   const templates = await prisma.template.findMany({
+    where: OFFERABLE,
     orderBy: { name: "asc" },
     select: {
       id: true,
@@ -43,8 +52,11 @@ export async function listTemplates() {
 /** One template, with every palette and font pack it can be paired with. */
 export async function getTemplateDetail(templateId: string) {
   const [template, palettes, fonts] = await Promise.all([
-    prisma.template.findUnique({
-      where: { id: templateId },
+    // findFirst, not findUnique: the offerable check is a filter, and a draft
+    // template must answer "no such template" here rather than hand a college the
+    // theme picker for something it is not allowed to start with.
+    prisma.template.findFirst({
+      where: { id: templateId, ...OFFERABLE },
       select: {
         id: true,
         name: true,

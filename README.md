@@ -50,10 +50,23 @@ Dokploy → **Create → Compose**
 
 ```
 SESSION_SECRET=<the SAME 32+ chars as the frontend>
+ADMIN_SESSION_SECRET=<32+ chars, DIFFERENT from SESSION_SECRET>
 POSTGRES_PASSWORD=<strong random>
 CORS_ORIGINS=https://xite.co.in
-AUTH_DISABLED=true
+RESEND_API_KEY=<from resend.com/api-keys>
+MAIL_FROM=XITE <no-reply@xite.co.in>
 ```
+
+**Do not set `AUTH_DISABLED=true`.** It used to be listed here and it is not a
+deployment setting — it removes authentication entirely. `getSession()` returns
+the oldest college to every caller without reading the cookie, so no `users` row
+is consulted at all: access requests, approval and the `status` check on sign-in
+all stop meaning anything, and every visitor can edit and publish the site.
+
+`RESEND_API_KEY` and `MAIL_FROM` are what deliver an approved request's invite.
+Without both, approving still succeeds and still mints a valid invite — it simply
+cannot send it. `/api/health` reports `mailer: "not configured"` so this is
+visible rather than discovered by someone who never got an email.
 
 **`SESSION_SECRET` must be byte-identical to the frontend's.** It is the key
 the session cookie is signed with — if they differ, every cookie the frontend
