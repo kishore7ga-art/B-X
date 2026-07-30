@@ -587,12 +587,14 @@ async function seedReferenceData() {
         description: spec.description,
         thumbnailUrl: spec.thumbnailUrl,
         demoUrl: `/site/${spec.demo.subdomain}`,
+        isPublished: true,
       },
       create: {
         name: spec.name,
         description: spec.description,
         thumbnailUrl: spec.thumbnailUrl,
         demoUrl: `/site/${spec.demo.subdomain}`,
+        isPublished: true,
       },
     });
 
