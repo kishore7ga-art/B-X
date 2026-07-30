@@ -141,15 +141,50 @@ app.use((req, _res, next) => {
 });
 
 /**
- * Only the frontend may call this, and it must be named exactly.
+ * The origins this product is deployed at, committed rather than configured.
  *
- * `*` is not an option: the session cookie rides on these requests, and
- * browsers refuse a wildcard origin alongside credentials.
+ * Only these may call the API, and each must match exactly. `*` is not an
+ * option: the session cookie rides on these requests, and browsers refuse a
+ * wildcard origin alongside credentials.
+ *
+ * `CORS_ORIGINS` alone meant every new surface began life broken in a way the
+ * browser describes and the server did not: "No 'Access-Control-Allow-Origin'
+ * header is present" names no variable, no service and no file, and the fix was
+ * an environment variable on whichever service runs this process — which is not
+ * obvious from a Dokploy project with several. The admin panel spent a day
+ * behind exactly that.
+ *
+ * There is nothing secret in a hostname, and no origin here is one somebody else
+ * controls, which is the only thing that would matter: a listed origin's scripts
+ * may read authenticated responses, so this list is a trust decision and stays
+ * an explicit list of our own hosts. It is not a wildcard and never becomes one.
+ *
+ * `CORS_ORIGINS` still works and is additive — a new host goes live by being set
+ * there, and belongs here on its next commit.
  */
-const ORIGINS = (process.env.CORS_ORIGINS ?? "")
+const DEFAULT_ORIGINS = [
+  "https://xite.co.in",
+  "https://www.xite.co.in",
+  "https://admin.xite.co.in",
+  "https://admin.meetkishore.in",
+  // The dev servers: xite-F on 3000, the admin panel's Vite on 5174.
+  "http://localhost:3000",
+  "http://localhost:5174",
+];
+
+/**
+ * What the deployment named, separately from what is built in.
+ *
+ * `appUrl()` below reads this rather than the merged list: an activation link has
+ * to point at the frontend *this* deployment serves, and the first built-in
+ * default is production's address even when the process is running on a laptop.
+ */
+const CONFIGURED_ORIGINS = (process.env.CORS_ORIGINS ?? "")
   .split(",")
-  .map((o) => o.trim())
+  .map((o) => o.trim().replace(/\/+$/, ""))
   .filter(Boolean);
+
+const ORIGINS = [...new Set([...DEFAULT_ORIGINS, ...CONFIGURED_ORIGINS])];
 
 /**
  * Says so when it turns an origin away.
@@ -203,7 +238,7 @@ app.use(
 function appUrl(): string {
   const configured = process.env.APP_URL?.trim().replace(/\/+$/, "");
   if (configured) return configured;
-  return ORIGINS[0]?.replace(/\/+$/, "") ?? "http://localhost:3000";
+  return CONFIGURED_ORIGINS[0] ?? "http://localhost:3000";
 }
 
 /** Every request, one line — the log a split deployment is diagnosed from. */
@@ -778,7 +813,7 @@ app.get("/api/v1/editor/:subdomain", async (req, res) => {
  * was not signed with and fails, which is the point of them being separate.
  */
 async function requireAdmin(req: express.Request) {
-  if (!adminConfigured()) {
+  if (!(await adminConfigured())) {
     const error = new AuthError(
       "Admin panel is not configured on this deployment",
       503,

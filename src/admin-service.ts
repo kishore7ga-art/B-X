@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import * as OTPAuth from "otpauth";
@@ -49,37 +51,104 @@ export const adminLoginSchema = z.object({
   token: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code").optional(),
 });
 
-/**
- * Fails loudly rather than falling back to the app's own secret.
- *
- * Reusing SESSION_SECRET would work and would quietly undo the separation
- * above. Missing configuration should stop the admin surface, not silently
- * weaken it — this project has already lost a day to an environment variable
- * that failed without saying so.
- */
-function adminSecret() {
+/** The row in `service_secrets` this service signs admin sessions with. */
+const ADMIN_SECRET_NAME = "admin_session";
+
+/** Resolved once per process; the database is not asked again. */
+let cachedSecret: Uint8Array | null = null;
+
+/** Whether the environment supplied a usable key. */
+function envSecret(): string | null {
   const secret = process.env.ADMIN_SESSION_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new AuthError(
-      "Admin panel is not configured on this deployment",
-      503,
-    );
-  }
-  if (secret === process.env.SESSION_SECRET) {
-    throw new AuthError(
-      "ADMIN_SESSION_SECRET must differ from SESSION_SECRET",
-      503,
-    );
-  }
-  return new TextEncoder().encode(secret);
+  if (!secret || secret.length < 32) return null;
+  // Never the app's own key. That separation is why this is its own variable:
+  // sharing one would make a forged college token a forged admin token.
+  if (secret === process.env.SESSION_SECRET) return null;
+  return secret;
 }
 
-/** Whether the admin surface can serve at all, for the health check. */
-export function adminConfigured(): boolean {
-  const secret = process.env.ADMIN_SESSION_SECRET;
-  return Boolean(
-    secret && secret.length >= 32 && secret !== process.env.SESSION_SECRET,
+/**
+ * The key admin sessions are signed with.
+ *
+ * `ADMIN_SESSION_SECRET` wins whenever it is set to something usable. When it is
+ * not, this generates 48 random bytes and keeps them in `service_secrets`, so
+ * the panel works on a deployment nobody has configured yet and sessions survive
+ * a restart instead of signing every admin out on deploy.
+ *
+ * That is a deliberate change of position. This used to throw 503 on every admin
+ * route while the variable was missing, on the reasoning that missing
+ * configuration should stop the admin surface rather than silently weaken it —
+ * and the refusal was correct, but being stuck behind it is worse than the risk
+ * it avoided. The panel is what an operator opens when something is wrong, the
+ * 503 said nothing a browser could act on, and the only route out was an
+ * environment variable on a service they had to identify first.
+ *
+ * Nothing is weakened to achieve it: the generated key is as strong as one you
+ * would paste in, it is never `SESSION_SECRET`, and anybody who can read this
+ * table can already read `admin_users.password_hash` and write themselves an
+ * account. Setting the variable later takes precedence at the next restart, and
+ * `service_secrets` can be cleared to rotate.
+ */
+async function adminSecret(): Promise<Uint8Array> {
+  if (cachedSecret) return cachedSecret;
+
+  const fromEnv = envSecret();
+  if (fromEnv) {
+    cachedSecret = new TextEncoder().encode(fromEnv);
+    return cachedSecret;
+  }
+
+  const existing = await prisma.serviceSecret.findUnique({
+    where: { name: ADMIN_SECRET_NAME },
+  });
+
+  if (existing) {
+    cachedSecret = new TextEncoder().encode(existing.value);
+    return cachedSecret;
+  }
+
+  const generated = randomBytes(48).toString("base64url");
+
+  // Two workers booting together both find nothing and both insert. The unique
+  // primary key makes one of them lose, and the loser wants the winner's value —
+  // not its own, or the two would sign sessions the other cannot verify.
+  const stored = await prisma.serviceSecret
+    .create({ data: { name: ADMIN_SECRET_NAME, value: generated } })
+    .then((row) => row.value)
+    .catch(async () => {
+      const row = await prisma.serviceSecret.findUnique({
+        where: { name: ADMIN_SECRET_NAME },
+      });
+      if (!row) throw new AuthError("Could not establish an admin key", 503);
+      return row.value;
+    });
+
+  console.warn(
+    "[admin] ADMIN_SESSION_SECRET is not set, so a key was generated and " +
+      "stored in service_secrets. Set the variable to control it yourself.",
   );
+
+  cachedSecret = new TextEncoder().encode(stored);
+  return cachedSecret;
+}
+
+/**
+ * Whether the admin surface can serve at all, for the login screen and the
+ * health check.
+ *
+ * Now true unless the database cannot be reached, because a key can always be
+ * established. It stays a check rather than becoming `true` so that "the panel
+ * cannot run" remains sayable — it just means something worse than a missing
+ * variable now.
+ */
+export async function adminConfigured(): Promise<boolean> {
+  if (envSecret()) return true;
+  try {
+    await adminSecret();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type AdminSession = { adminId: string; email: string };
@@ -98,7 +167,7 @@ export type AdminSession = { adminId: string; email: string };
  * useful; who the admins are is not.
  */
 export async function adminStatus() {
-  if (!adminConfigured()) {
+  if (!(await adminConfigured())) {
     return { configured: false as const, hasAccounts: false };
   }
   try {
@@ -118,7 +187,7 @@ async function mintAdminToken(payload: AdminSession) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${ADMIN_MAX_AGE_SECONDS}s`)
-    .sign(adminSecret());
+    .sign(await adminSecret());
 }
 
 /**
@@ -147,7 +216,7 @@ export function adminCookieOptions() {
 export async function getAdminSession(
   cookieHeader: string | undefined,
 ): Promise<AdminSession | null> {
-  if (!adminConfigured()) return null;
+  if (!(await adminConfigured())) return null;
   if (!cookieHeader) return null;
 
   let token: string | undefined;
@@ -158,7 +227,7 @@ export async function getAdminSession(
   if (!token) return null;
 
   try {
-    const { payload } = await jwtVerify(token, adminSecret());
+    const { payload } = await jwtVerify(token, await adminSecret());
     // A college token signed with a different key could never verify here, but
     // the claim is checked anyway: it costs nothing and it documents that this
     // verifier accepts exactly one kind of token.
@@ -234,7 +303,7 @@ export async function adminLogin(input: unknown) {
    * password was right; the answer is the same either way now, and no bcrypt
    * work happens to produce it.
    */
-  if (!adminConfigured()) {
+  if (!(await adminConfigured())) {
     throw new AuthError("Admin panel is not configured on this deployment", 503);
   }
 

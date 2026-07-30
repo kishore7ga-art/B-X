@@ -518,3 +518,28 @@ enum AccessRequestStatus {
   APPROVED
   REJECTED
 }
+
+/// A key this service generated for itself because nothing supplied one.
+///
+/// Exists for exactly one reason: `ADMIN_SESSION_SECRET` used to be a hard
+/// requirement, and a deployment that had not set it answered 503 on every admin
+/// route with no way to fix it from inside the running system. That is a correct
+/// refusal and a terrible one to be stuck behind — the panel is the surface an
+/// operator reaches for when something is wrong.
+///
+/// The env variable still wins whenever it is set, and this is never a fallback
+/// to `SESSION_SECRET`: the separation that made the admin key its own variable
+/// is the whole point, and reusing the app's key would quietly undo it. What
+/// gets stored here is 48 fresh random bytes, once, so sessions survive a
+/// restart rather than logging every admin out on deploy.
+///
+/// Anybody who can read this table can already read `admin_users.password_hash`
+/// and write their own admin account, so it is not a new exposure.
+model ServiceSecret {
+  /// Stable identifier, e.g. `admin_session`. Not a description.
+  name      String   @id
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("service_secrets")
+}
