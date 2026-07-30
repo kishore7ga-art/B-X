@@ -4,6 +4,7 @@ import type {
   EditorPagePayload,
 } from "@/lib/api-contract";
 import { isSupportedSectionType } from "@/lib/sections/schemas";
+import { variantLibrary } from "@/variant-library";
 
 /**
  * The reads behind the two screens you land on after signing in.
@@ -19,10 +20,8 @@ import { isSupportedSectionType } from "@/lib/sections/schemas";
  * neither is worth a tenth file kept in sync by hand across two repos.
  */
 
-const VARIANT_ORDER = [
-  { sortOrder: "asc" as const },
-  { variantName: "asc" as const },
-];
+// VARIANT_ORDER moved to variant-library.ts with the designs themselves — the
+// order is a property of the library, not of the two services that read it.
 
 /**
  * The signed-in college, as the guarded pages need it.
@@ -68,12 +67,7 @@ export async function getEditorPage(
       themePalette: true,
       themeFont: true,
       template: {
-        include: {
-          sections: {
-            orderBy: { defaultOrder: "asc" },
-            include: { variants: { orderBy: VARIANT_ORDER } },
-          },
-        },
+        include: { sections: { orderBy: { defaultOrder: "asc" } } },
       },
       pages: { orderBy: { navOrder: "asc" } },
     },
@@ -91,11 +85,12 @@ export async function getEditorPage(
   const rows = await prisma.collegeSection.findMany({
     where: { collegeId: college.id, pageId: currentPage.id },
     orderBy: { displayOrder: "asc" },
-    include: {
-      section: { include: { variants: { orderBy: VARIANT_ORDER } } },
-      variant: true,
-    },
+    include: { section: true, variant: true },
   });
+
+  // One read for the whole library, then looked up per row. The alternative is a
+  // join per section, which is what this used to be when variants were per slot.
+  const library = await variantLibrary();
 
   const sections = rows
     .filter((row) => isSupportedSectionType(row.section.sectionType))
@@ -110,18 +105,16 @@ export async function getEditorPage(
       isVisible: row.isVisible,
       content: row.content,
       lastSavedAt: row.lastSavedAt?.toISOString() ?? null,
-      variants: row.section.variants.map((variant) => ({
-        id: variant.id,
-        variantName: variant.variantName,
-        componentKey: variant.componentKey,
-      })),
+      // Every design of this type, from the shared library — which is what the
+      // old per-slot include was already trying to approximate.
+      variants: library.get(row.section.sectionType) ?? [],
     }));
 
   const addableSections = (college.template?.sections ?? [])
     .filter(
       (section) =>
         isSupportedSectionType(section.sectionType) &&
-        section.variants.length > 0,
+        (library.get(section.sectionType)?.length ?? 0) > 0,
     )
     .map((section) => ({
       sectionId: section.id,
