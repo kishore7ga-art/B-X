@@ -151,9 +151,38 @@ const ORIGINS = (process.env.CORS_ORIGINS ?? "")
   .map((o) => o.trim())
   .filter(Boolean);
 
+/**
+ * Says so when it turns an origin away.
+ *
+ * A rejected origin is answered by *omitting* a header, so the only evidence is
+ * in the caller's console and it names nothing actionable — "No
+ * 'Access-Control-Allow-Origin' header is present" is true of a misconfigured
+ * allow-list and of a server that is not running. Nothing reached this log at
+ * all, which is the wrong way round: the list is here.
+ *
+ * Once per origin, because a panel that cannot authenticate retries.
+ */
+const rejectedOrigins = new Set<string>();
+
 app.use(
   cors({
-    origin: ORIGINS.length ? ORIGINS : true,
+    origin(origin, callback) {
+      // No Origin header: same-origin, curl, a server-side call. Not a CORS
+      // decision to make.
+      if (!origin || !ORIGINS.length || ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
+      if (!rejectedOrigins.has(origin)) {
+        rejectedOrigins.add(origin);
+        console.warn(
+          `[api] CORS rejected ${origin}. CORS_ORIGINS allows: ` +
+            `${ORIGINS.join(", ")}. Add it verbatim — scheme, host and port — ` +
+            "and redeploy.",
+        );
+      }
+      return callback(null, false);
+    },
     credentials: true,
   }),
 );
