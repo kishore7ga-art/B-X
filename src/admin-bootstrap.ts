@@ -34,7 +34,40 @@ export function bootstrapState() {
 }
 
 /**
- * Makes the environment's Super Admin true at boot: creates it, or sets its
+ * The account this repository ships with, for a deployment that has set nothing.
+ *
+ * A committed credential, which is normally the wrong answer and is the right
+ * one here for two reasons. This repository is private, so it is readable by
+ * exactly the people who can already read DATABASE_URL and write the row
+ * themselves. And the alternative on offer was removing the login page — an
+ * unauthenticated admin API on a public domain, which is not a trade worth
+ * making to save one environment variable.
+ *
+ * `ADMIN_BOOTSTRAP_EMAIL` / `ADMIN_BOOTSTRAP_PASSWORD` still take precedence, and
+ * this is applied *once* — see `DEFAULT_APPLIED_MARKER`. It is a way in, not a
+ * password the deployment is stuck with.
+ */
+const DEFAULT_ADMIN = {
+  email: "admin@xite.co.in",
+  password: "kishore@7",
+};
+
+/**
+ * Records that the committed default has had its turn.
+ *
+ * Without it, every deploy would reset the password back — so changing it would
+ * last exactly until the next push, and the first thing anybody is told to do
+ * with a default credential is change it. The marker means the default opens the
+ * door once and never touches the account again.
+ *
+ * The environment variables are deliberately not subject to this: setting them is
+ * a live instruction, and a deployment that wants a password re-applied on every
+ * boot can have one.
+ */
+const DEFAULT_APPLIED_MARKER = "admin_default_applied";
+
+/**
+ * Makes the configured Super Admin true at boot: creates it, or sets its
  * password to the one given.
  *
  * The CLI is the right way to manage an admin account, and it stays the right
@@ -54,23 +87,31 @@ export function bootstrapState() {
  * set ADMIN_SESSION_SECRET and sign their own session, or read DATABASE_URL and
  * write the row directly. What keeps it honest:
  *
- * Both variables have to be set deliberately. No default email, no default
- * password, and an unconfigured deployment does nothing at all.
- *
  * It is idempotent and quiet when nothing needs doing — a password that already
  * matches is left alone rather than rehashed on every restart.
  *
  * It says what it did, loudly, including telling you to remove the variables.
  * Credentials sitting in a dashboard after they have been used are credentials
- * in a dashboard, and now they are ones that would be re-applied on every deploy.
+ * in a dashboard, and while they are set every deploy applies them again.
  */
 export async function bootstrapAdmin() {
-  const email = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
-  const password = process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  const envEmail = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
+  const envPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  const fromEnv = Boolean(envEmail && envPassword);
 
-  if (!email || !password) return;
+  const email = fromEnv ? envEmail! : DEFAULT_ADMIN.email;
+  const password = fromEnv ? envPassword! : DEFAULT_ADMIN.password;
 
   try {
+    // The committed default gets one turn, ever. Anything the environment says
+    // is a live instruction and is applied every boot.
+    if (!fromEnv) {
+      const applied = await prisma.serviceSecret.findUnique({
+        where: { name: DEFAULT_APPLIED_MARKER },
+      });
+      if (applied) return;
+    }
+
     if (password.length < 8) {
       lastOutcome = "refused";
       console.error(
@@ -88,27 +129,44 @@ export async function bootstrapAdmin() {
       lastOutcome = "created";
       console.log(`[admin] created Super Admin: ${email}`);
     } else if (await bcrypt.compare(password, existing.passwordHash)) {
-      // Already what the environment asks for. Nothing to say beyond the fact
-      // that the variables have outlived their purpose.
       lastOutcome = "matched";
-      console.log(
-        `[admin] ${email} already has this password. ` +
-          "Remove ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD.",
-      );
-      return;
+      console.log(`[admin] ${email} already has this password.`);
     } else {
       await prisma.adminUser.update({
         where: { id: existing.id },
         data: { passwordHash: await bcrypt.hash(password, 12) },
       });
       lastOutcome = "reset";
-      console.log(`[admin] reset the password for ${email} from the environment.`);
+      console.log(
+        `[admin] reset the password for ${email} from ` +
+          `${fromEnv ? "the environment" : "the committed default"}.`,
+      );
     }
 
-    console.log(
-      "[admin] REMOVE ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD now — " +
-        "they have done their job, and while they are set every deploy applies " +
-        "them again.",
+    if (fromEnv) {
+      console.log(
+        "[admin] REMOVE ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD now — " +
+          "they have done their job, and while they are set every deploy applies " +
+          "them again.",
+      );
+      return;
+    }
+
+    // Burn the default's one turn, whether it created the account or reset it.
+    // Written after the fact rather than before: a marker set ahead of a write
+    // that then failed would lock the door it was meant to open.
+    await prisma.serviceSecret
+      .create({
+        data: { name: DEFAULT_APPLIED_MARKER, value: new Date().toISOString() },
+      })
+      .catch(() => {
+        // Another worker won the race and wrote it first. Same outcome.
+      });
+
+    console.warn(
+      `[admin] This deployment is using the committed default password for ` +
+        `${email}. It will not be applied again — change it now:\n` +
+        "    node scripts/admin.mjs password <email> <new password>",
     );
   } catch (error) {
     // Never fatal. A service that will not start because it could not create an
