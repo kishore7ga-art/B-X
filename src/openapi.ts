@@ -747,6 +747,10 @@ export const openApiDocument = {
           "knows to ask rather than claim the password was wrong. Every other " +
           "failure answers identically — which admin accounts exist is not " +
           "something a login form should discuss.\n\n" +
+          "`email` is optional and the sign-in form does not send it: the " +
+          "password alone identifies the account, compared against every " +
+          "admin's hash. Naming the account is still accepted and is one " +
+          "comparison rather than N.\n\n" +
           "Rate limited to 5 per IP per 15 minutes. 503 while " +
           "ADMIN_SESSION_SECRET is unset or equal to SESSION_SECRET.",
         security: [],
@@ -758,7 +762,7 @@ export const openApiDocument = {
           ),
           ...errors(
             [400, "Validation failed."],
-            [401, "Incorrect email, password or code."],
+            [401, "Incorrect password or code."],
             [429, "Too many attempts."],
             [503, "Admin panel not configured."],
           ),

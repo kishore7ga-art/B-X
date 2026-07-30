@@ -28,7 +28,22 @@ export const ADMIN_COOKIE_NAME = "xite_admin_session";
 const ADMIN_MAX_AGE_SECONDS = 60 * 60 * 8;
 
 export const adminLoginSchema = z.object({
-  email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email")),
+  /**
+   * Optional: the panel signs in on a password alone.
+   *
+   * The email is still the account's identity — it keys the row, labels the
+   * TOTP enrolment and names the actor in the audit log — but the login form no
+   * longer asks for it, so the password has to find the account by itself. Kept
+   * accepted rather than removed because `scripts/admin.mjs` and any existing
+   * client still send it, and naming the account is strictly more precise than
+   * searching for it.
+   */
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .pipe(z.email("Enter a valid email"))
+    .optional(),
   password: z.string().min(1, "Enter your password"),
   /** Six digits, and only checked when the account has enrolled. */
   token: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code").optional(),
@@ -157,11 +172,54 @@ export async function getAdminSession(
 }
 
 /**
+ * A real bcrypt hash shape that nothing can match, for spending the same time
+ * on a miss as on a hit.
+ */
+const DUMMY_HASH = `$2a$12$${"x".repeat(53)}`;
+
+/**
+ * The account a password belongs to.
+ *
+ * The login form asks for a password and nothing else, so the account has to be
+ * found by the only thing offered. Every admin's hash is compared, in a fixed
+ * order, and the work does not depend on which one matches or on whether any
+ * does — an early return on the first hit would make "matched the first
+ * account" measurably faster than "matched the last", and no accounts at all
+ * faster still.
+ *
+ * The cost is one bcrypt comparison per admin account per attempt, which is why
+ * this is only viable for a handful of them, and why the endpoint in front of it
+ * is rate limited. Two admins may not share a password: the earlier account
+ * wins, and the later one could never sign in. Nothing enforces that, because
+ * enforcing it would mean comparing a new password against every existing hash
+ * at the point it is set — the collision is astronomically unlikely and a
+ * password-only panel is a deliberately small deployment.
+ */
+async function findAdminByPassword(password: string) {
+  const admins = await prisma.adminUser.findMany({
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (admins.length === 0) {
+    await bcrypt.compare(password, DUMMY_HASH);
+    return null;
+  }
+
+  let match: (typeof admins)[number] | null = null;
+  for (const admin of admins) {
+    if (await bcrypt.compare(password, admin.passwordHash)) {
+      match ??= admin;
+    }
+  }
+  return match;
+}
+
+/**
  * Signs an admin in.
  *
- * One message for every failure — wrong address, wrong password, missing or
- * wrong code. Which admin accounts exist is not something a login form should
- * be willing to discuss.
+ * One message for every failure — wrong password, missing or wrong code, and
+ * wrong address for a caller that still sends one. Which admin accounts exist
+ * is not something a login form should be willing to discuss.
  */
 export async function adminLogin(input: unknown) {
   /**
@@ -186,18 +244,26 @@ export async function adminLogin(input: unknown) {
   }
 
   const { email, password, token } = parsed.data;
-  const invalid = new AuthError("Incorrect email, password or code", 401);
+  const invalid = new AuthError(
+    email ? "Incorrect email, password or code" : "Incorrect password or code",
+    401,
+  );
 
-  const admin = await prisma.adminUser.findUnique({ where: { email } });
+  const admin = email
+    ? await prisma.adminUser.findUnique({ where: { email } })
+    : await findAdminByPassword(password);
 
   if (!admin) {
     // Comparable work for a missing account, so absence is not obvious from
-    // how quickly this answers.
-    await bcrypt.compare(password, `$2a$12$${"x".repeat(53)}`);
+    // how quickly this answers. `findAdminByPassword` has already done its own.
+    if (email) await bcrypt.compare(password, DUMMY_HASH);
     throw invalid;
   }
 
-  if (!(await bcrypt.compare(password, admin.passwordHash))) throw invalid;
+  // Only when the account was named. Finding it by password is the comparison.
+  if (email && !(await bcrypt.compare(password, admin.passwordHash))) {
+    throw invalid;
+  }
 
   if (admin.totpSecret) {
     if (!token) {
