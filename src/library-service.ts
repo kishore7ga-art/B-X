@@ -481,6 +481,79 @@ export async function updateTemplateSlots(
  * does. A confirm() dialog in a browser is not a substitute for the server knowing
  * what it is about to cascade.
  */
+export const createTemplateSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name is too short")
+    .max(80, "Name is too long"),
+  description: z.string().trim().max(600, "Description is too long").optional(),
+  thumbnailUrl: z.string().trim().optional(),
+  isPublished: z.boolean().default(true),
+});
+
+export async function createTemplate(input: unknown, actor: AdminSession) {
+  const data = createTemplateSchema.parse(input);
+
+  const existing = await prisma.template.findUnique({
+    where: { name: data.name },
+  });
+  if (existing) {
+    throw new AuthError("A template with that name already exists", 409);
+  }
+
+  const defaultVariants = await prisma.sectionVariant.findMany({
+    where: { isActive: true },
+    select: { id: true, sectionType: true },
+  });
+
+  const variantsByType = new Map<string, string>();
+  for (const v of defaultVariants) {
+    if (!variantsByType.has(v.sectionType)) {
+      variantsByType.set(v.sectionType, v.id);
+    }
+  }
+
+  const standardTypes: SectionType[] = [
+    "HEADER",
+    "HERO",
+    "ABOUT",
+    "COURSES",
+    "FACULTY",
+    "CONTACT",
+    "FOOTER",
+  ];
+
+  const created = await prisma.template.create({
+    data: {
+      name: data.name,
+      description: data.description ?? null,
+      thumbnailUrl: data.thumbnailUrl ?? null,
+      isPublished: data.isPublished,
+      createdByEmail: actor.email,
+      sections: {
+        create: standardTypes.map((type, idx) => ({
+          sectionType: type,
+          defaultOrder: idx + 1,
+          isRequired: type === "HEADER" || type === "HERO" || type === "FOOTER",
+          defaultVariantId: variantsByType.get(type) ?? null,
+        })),
+      },
+    },
+  });
+
+  await recordAudit({
+    actor,
+    action: "template.create",
+    targetType: "template",
+    targetId: created.id,
+    summary: `Created template "${created.name}"`,
+    metadata: { name: created.name },
+  });
+
+  return getTemplateForAdmin(created.id);
+}
+
 export async function retireTemplate(
   id: string,
   options: { hard?: boolean },
@@ -495,6 +568,7 @@ export async function retireTemplate(
         archivedAt: template.archivedAt
           ? new Date(template.archivedAt)
           : new Date(),
+        isPublished: false,
       },
     });
 

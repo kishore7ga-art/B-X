@@ -8,7 +8,11 @@ import {
 import { credentialsSchema } from "@/auth-service";
 import { startWithDesignSchema } from "@/design-service";
 import { adminLoginSchema, updateUserStatusSchema } from "@/admin-service";
-import { templateDetailsSchema, templateSlotsSchema } from "@/library-service";
+import {
+  createTemplateSchema,
+  templateDetailsSchema,
+  templateSlotsSchema,
+} from "@/library-service";
 import { onboardingSchema } from "@/onboarding-service";
 import { restoreSchema, saveSchema } from "@/sections-service";
 
@@ -1035,6 +1039,22 @@ export const openApiDocument = {
             "All templates, with composition and delete safety.",
           ),
           ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+      post: {
+        tags: ["Admin"],
+        summary: "Create a new template",
+        description: "Creates a new template with default section slots.",
+        security: SESSION_COOKIE,
+        requestBody: body(createTemplateSchema),
+        responses: {
+          "201": json({ type: "object" }, "The newly created template."),
+          ...errors(
+            [400, "Validation failed."],
+            [401, "Not signed in."],
+            [409, "A template with that name already exists."],
+            [503, "Admin panel not configured."],
+          ),
         },
       },
     },
