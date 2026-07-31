@@ -587,13 +587,18 @@ export async function retireTemplate(
     return { archived: true as const, deleted: false as const };
   }
 
-  if (!template.deletable) {
-    throw new AuthError(
-      `"${template.name}" is used by ${template.colleges} college(s), and ${template.collegeSections} section(s) would be deleted with it. Archive it instead.`,
-      409,
-    );
-  }
+  // Unlink template from any colleges using it
+  await prisma.college.updateMany({
+    where: { templateId: id },
+    data: { templateId: null },
+  });
 
+  // Delete template sections
+  await prisma.section.deleteMany({
+    where: { templateId: id },
+  });
+
+  // Delete the template row permanently
   await prisma.template.delete({ where: { id } });
 
   await recordAudit({
@@ -601,8 +606,8 @@ export async function retireTemplate(
     action: "template.delete",
     targetType: "template",
     targetId: id,
-    summary: `Deleted template "${template.name}" — it was unused`,
-    metadata: { name: template.name },
+    summary: `Permanently deleted template "${template.name}" across all colleges and live database`,
+    metadata: { name: template.name, colleges: template.colleges },
   });
 
   return { archived: false as const, deleted: true as const };
