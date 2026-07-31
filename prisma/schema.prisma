@@ -8,7 +8,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mongodb"
 }
 
 enum CollegeStatus {
@@ -54,7 +54,7 @@ enum SectionType {
 }
 
 model College {
-  id             String        @id @default(cuid())
+  id             String        @id @default(cuid()) @map("_id")
   name           String
   subdomain      String        @unique
   customDomain   String?       @unique @map("custom_domain")
@@ -102,7 +102,7 @@ model College {
 /// Login accounts. A college can have several staff accounts; each account
 /// belongs to exactly one college, which is the tenant boundary.
 model User {
-  id           String     @id @default(cuid())
+  id           String     @id @default(cuid()) @map("_id")
   email        String     @unique
   passwordHash String     @map("password_hash")
   collegeId    String     @map("college_id")
@@ -143,7 +143,7 @@ enum UserStatus {
 }
 
 model Template {
-  id           String    @id @default(cuid())
+  id           String    @id @default(cuid()) @map("_id")
   name         String    @unique
   description  String?
   thumbnailUrl String?   @map("thumbnail_url")
@@ -188,7 +188,7 @@ model Template {
 
 /// Master list of section types available in a template.
 model Section {
-  id             String      @id @default(cuid())
+  id             String      @id @default(cuid()) @map("_id")
   templateId     String      @map("template_id")
   sectionType    SectionType @map("section_type")
   defaultOrder   Int         @map("default_order")
@@ -225,7 +225,7 @@ model Section {
 
 /// Design variants cycled through by the editor's refresh (↻) button.
 model SectionVariant {
-  id           String      @id @default(cuid())
+  id           String      @id @default(cuid()) @map("_id")
   /**
    * What kind of section this design is for.
    * Replaces `sectionId`, and that swap is the point of this change. A variant
@@ -291,7 +291,7 @@ model SectionVariant {
 /// Each college's actual configured sections. `content` is validated in app code
 /// by a per-section-type Zod schema (see src/lib/sections/schemas.ts).
 model CollegeSection {
-  id           String    @id @default(cuid())
+  id           String    @id @default(cuid()) @map("_id")
   collegeId    String    @map("college_id")
   sectionId    String    @map("section_id")
   variantId    String    @map("variant_id")
@@ -334,7 +334,7 @@ model CollegeSection {
 /// anyone will ever read them, and unbounded JSONB copies of a page's content
 /// is a storage bill, not a feature.
 model CollegeSectionHistory {
-  id               String   @id @default(cuid())
+  id               String   @id @default(cuid()) @map("_id")
   collegeSectionId String   @map("college_section_id")
   contentSnapshot  Json     @map("content_snapshot")
   savedAt          DateTime @default(now()) @map("saved_at")
@@ -349,7 +349,7 @@ model CollegeSectionHistory {
 }
 
 model ThemePalette {
-  id     String @id @default(cuid())
+  id     String @id @default(cuid()) @map("_id")
   name   String @unique
   /// { primary, secondary, accent, dark, light }
   colors Json
@@ -360,7 +360,7 @@ model ThemePalette {
 }
 
 model ThemeFont {
-  id          String @id @default(cuid())
+  id          String @id @default(cuid()) @map("_id")
   name        String @unique
   headingFont String @map("heading_font")
   bodyFont    String @map("body_font")
@@ -371,7 +371,7 @@ model ThemeFont {
 }
 
 model Page {
-  id        String @id @default(cuid())
+  id        String @id @default(cuid()) @map("_id")
   collegeId String @map("college_id")
   slug      String
   title     String
@@ -406,7 +406,7 @@ model Page {
 /// and a separate secret means a college session cannot be mistaken for this
 /// one by any code path, because there is no path from one to the other.
 model AdminUser {
-  id           String    @id @default(cuid())
+  id           String    @id @default(cuid()) @map("_id")
   email        String    @unique
   passwordHash String    @map("password_hash")
   /// Base32 TOTP secret. Nullable so an account can be created before it is
@@ -433,7 +433,7 @@ model AdminUser {
 /// `SetNull` on the relation for the same reason: losing the actor must never
 /// take the record of what they did with it.
 model AuditLog {
-  id         String   @id @default(cuid())
+  id         String   @id @default(cuid()) @map("_id")
   actorId    String?  @map("actor_id")
   actorEmail String   @map("actor_email")
   /// Machine-readable, e.g. `template.archive`, `user.delete`.
@@ -469,7 +469,7 @@ model AuditLog {
 /// approval nobody acts on leaves a row here and nothing else, rather than an
 /// orphan college squatting a name forever.
 model AccessRequest {
-  id           String              @id @default(cuid())
+  id           String              @id @default(cuid()) @map("_id")
   name         String
   /// Not unique, and not a foreign key. Somebody rejected once may apply again,
   /// and the address is not an account until activation makes it one. Uniqueness
@@ -537,7 +537,7 @@ enum AccessRequestStatus {
 /// and write their own admin account, so it is not a new exposure.
 model ServiceSecret {
   /// Stable identifier, e.g. `admin_session`. Not a description.
-  name      String   @id
+  name      String   @id @map("_id")
   value     String
   createdAt DateTime @default(now()) @map("created_at")
 
