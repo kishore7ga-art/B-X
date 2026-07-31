@@ -446,7 +446,7 @@ function configPresence() {
 app.get("/api/health", async (_req, res) => {
   const startedAt = Date.now();
   try {
-    await prisma.template.count();
+    await prisma.$queryRawUnsafe("SELECT 1");
     res.json({
       status: "ok",
       service: "backend",
