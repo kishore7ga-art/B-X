@@ -8,6 +8,7 @@ import {
   templateNameFor,
 } from "@/lib/college-types";
 import { isUntouched, personalize } from "@/lib/sections/personalize";
+import { OFFERABLE } from "@/library-service";
 import { BadRequest, NotFound } from "@/sections-service";
 
 /**
@@ -175,15 +176,21 @@ export async function buildSiteForType(collegeId: string) {
 
   const templateName = templateNameFor(college.collegeType);
 
-  const template = await prisma.template.findUnique({
-    where: { name: templateName },
+  let template = await prisma.template.findFirst({
+    where: { name: templateName, ...OFFERABLE },
     select: { id: true },
   });
+
   if (!template) {
-    // A seeding problem, not the caller's: 500 rather than 404, and said in
-    // terms an operator can act on.
-    throw new Error(
-      `Template "${templateName}" is not seeded — run the seed before building a site.`,
+    template = await prisma.template.findFirst({
+      where: OFFERABLE,
+      select: { id: true },
+    });
+  }
+
+  if (!template) {
+    throw new BadRequest(
+      "No active templates available in the system. An admin must publish a template in the Admin Panel.",
     );
   }
 

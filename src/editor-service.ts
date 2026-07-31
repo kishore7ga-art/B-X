@@ -4,6 +4,7 @@ import type {
   EditorPagePayload,
 } from "@/lib/api-contract";
 import { isSupportedSectionType } from "@/lib/sections/schemas";
+import { OFFERABLE } from "@/library-service";
 import { variantLibrary } from "@/variant-library";
 
 /**
@@ -75,6 +76,13 @@ export async function getEditorPage(
 
   if (!college) return null;
 
+  const offerableTemplate =
+    college.template &&
+    college.template.isPublished &&
+    college.template.archivedAt === null
+      ? college.template
+      : null;
+
   const currentPage = pageSlug
     ? college.pages.find((page) => page.slug === pageSlug)
     : college.pages[0];
@@ -110,7 +118,7 @@ export async function getEditorPage(
       variants: library.get(row.section.sectionType) ?? [],
     }));
 
-  const addableSections = (college.template?.sections ?? [])
+  const addableSections = (offerableTemplate?.sections ?? [])
     .filter(
       (section) =>
         isSupportedSectionType(section.sectionType) &&
@@ -127,7 +135,7 @@ export async function getEditorPage(
       name: college.name,
       subdomain: college.subdomain,
       status: college.status,
-      templateName: college.template?.name ?? null,
+      templateName: offerableTemplate?.name ?? null,
     },
     theme: {
       paletteColors: college.themePalette?.colors ?? null,
@@ -148,6 +156,6 @@ export async function getEditorPage(
     addableSections,
     // The editor only asks whether there is more than one design to cycle
     // through, so the count travels with the payload instead of a second call.
-    templateCount: await prisma.template.count(),
+    templateCount: await prisma.template.count({ where: OFFERABLE }),
   };
 }
