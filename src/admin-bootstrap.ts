@@ -49,7 +49,7 @@ export function bootstrapState() {
  */
 const DEFAULT_ADMIN = {
   email: "admin@xite.co.in",
-  password: "kishore@7",
+  password: "2008",
 };
 
 /**

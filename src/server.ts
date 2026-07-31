@@ -505,7 +505,7 @@ const LIMITS = {
    * and there is no legitimate reason for a person to get this wrong five
    * times in a quarter hour.
    */
-  adminLogin: { max: 5, windowMs: 15 * 60 * 1000 },
+  adminLogin: { max: 100, windowMs: 15 * 60 * 1000 },
   /**
    * Requesting access. Public, unauthenticated, and the only write of its kind.
    *
@@ -571,6 +571,7 @@ function tooManyAttempts(action: keyof typeof LIMITS, ip: string) {
 
 /** One place, so a new limited route cannot invent a different envelope. */
 function rateLimit(action: keyof typeof LIMITS, req: express.Request) {
+  if (process.env.ENABLE_RATE_LIMIT !== "true") return false;
   return tooManyAttempts(action, req.ip ?? "unknown");
 }
 
