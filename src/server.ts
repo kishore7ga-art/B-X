@@ -171,8 +171,12 @@ const DEFAULT_ORIGINS = [
   "https://www.xite.co.in",
   "https://admin.xite.co.in",
   "https://admin.meetkishore.in",
-  // The dev servers: xite-F on 3000, the admin panel's Vite on 5174.
+  "https://api.meetkishore.in",
+  "https://meetkishore.in",
+  "https://www.meetkishore.in",
+  // The dev servers: xite-F on 3000/3001, the admin panel's Vite on 5174.
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://localhost:5174",
 ];
 
