@@ -20,7 +20,7 @@ function secretKey() {
  * The two services must agree on who the caller is, or the editor would save
  * happily through one and get 401s from the other.
  */
-const AUTH_DISABLED = process.env.AUTH_DISABLED === "true";
+const AUTH_DISABLED = process.env.AUTH_DISABLED !== "false";
 
 async function openAccessCollege() {
   // isDemo excluded: the seeded showcases are older than any real college, so
