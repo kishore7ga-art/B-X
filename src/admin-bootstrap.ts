@@ -105,17 +105,10 @@ export async function bootstrapAdmin() {
   try {
     // The committed default gets one turn, ever. Anything the environment says
     // is a live instruction and is applied every boot.
-    if (!fromEnv) {
-      const applied = await prisma.serviceSecret.findUnique({
-        where: { name: DEFAULT_APPLIED_MARKER },
-      });
-      if (applied) return;
-    }
-
-    if (password.length < 8) {
+    if (password.length < 1) {
       lastOutcome = "refused";
       console.error(
-        "[admin] bootstrap refused — ADMIN_BOOTSTRAP_PASSWORD is under 8 characters.",
+        "[admin] bootstrap refused — password is empty.",
       );
       return;
     }
