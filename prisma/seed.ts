@@ -216,7 +216,113 @@ type TemplateSpec = {
   lead: Record<SupportedSectionType, string>;
 };
 
-const TEMPLATES: TemplateSpec[] = [];
+const TEMPLATES: TemplateSpec[] = [
+  {
+    name: "Radian",
+    description: "Modern engineering and technical institute template featuring bold mastheads and clean department grids.",
+    thumbnailUrl: "/template-brightwood.jpg",
+    demo: {
+      subdomain: "radian-demo",
+      collegeName: "Radian Institute of Technology",
+      tagline: "Engineering Excellence & Applied Innovation",
+      city: "Bengaluru, Karnataka 560001",
+      domain: "radian.edu.in",
+      paletteName: "Academic Blue",
+      fontName: "Tech Precision",
+    },
+    lead: {
+      HERO: "hero_academic_masthead",
+      ABOUT: "about_image_beside",
+      COURSES: "courses_card_grid",
+      FACULTY: "faculty_photo_cards",
+      CONTACT: "contact_map_split",
+    },
+  },
+  {
+    name: "Meridian",
+    description: "Elegant arts and sciences college layout focusing on historical legacy, research, and campus life.",
+    thumbnailUrl: "/template-evergreen.jpg",
+    demo: {
+      subdomain: "meridian-demo",
+      collegeName: "Meridian College of Arts & Science",
+      tagline: "Inspiring Leaders, Scholars & Innovators",
+      city: "Chennai, Tamil Nadu 600001",
+      domain: "meridian.edu.in",
+      paletteName: "Heritage Maroon",
+      fontName: "Editorial Elegance",
+    },
+    lead: {
+      HERO: "hero_split_image",
+      ABOUT: "about_two_column",
+      COURSES: "courses_table",
+      FACULTY: "faculty_circle_grid",
+      CONTACT: "contact_centered",
+    },
+  },
+  {
+    name: "Beacon",
+    description: "Clean medical, nursing, and health sciences template designed for clinical clarity and faculty trust.",
+    thumbnailUrl: "/template-calistoga.jpg",
+    demo: {
+      subdomain: "beacon-demo",
+      collegeName: "Beacon Medical College & Research Hospital",
+      tagline: "Compassionate Care through Medical Education",
+      city: "Hyderabad, Telangana 500001",
+      domain: "beacon.edu.in",
+      paletteName: "Midnight Indigo",
+      fontName: "Modern Sans",
+    },
+    lead: {
+      HERO: "hero_side_panel",
+      ABOUT: "about_quote_lead",
+      COURSES: "courses_accordion",
+      FACULTY: "faculty_roster_list",
+      CONTACT: "contact_dark_panel",
+    },
+  },
+  {
+    name: "Harbour",
+    description: "Dynamic polytechnic, vocational, and management template with high-impact numbers and action tiles.",
+    thumbnailUrl: "/template-oakwood.jpg",
+    demo: {
+      subdomain: "harbour-demo",
+      collegeName: "Harbour Polytechnic & Business Academy",
+      tagline: "Hands-on Technical Skills for Modern Industry",
+      city: "Mumbai, Maharashtra 400001",
+      domain: "harbour.edu.in",
+      paletteName: "Campus Green",
+      fontName: "Academic Prestige",
+    },
+    lead: {
+      HERO: "hero_centered",
+      ABOUT: "about_stacked_cards",
+      COURSES: "courses_compact_tiles",
+      FACULTY: "faculty_department_groups",
+      CONTACT: "contact_form_only",
+    },
+  },
+  {
+    name: "Almanac",
+    description: "Prestigious university and heritage campus layout with serif typography and multi-department navigation.",
+    thumbnailUrl: "/macbook-madras-college.png",
+    demo: {
+      subdomain: "almanac-demo",
+      collegeName: "Almanac University & Central Campus",
+      tagline: "Centuries of Discovery, Knowledge & Excellence",
+      city: "Kolkata, West Bengal 700001",
+      domain: "almanac.edu.in",
+      paletteName: "Editorial Plum",
+      fontName: "Classic Serif",
+    },
+    lead: {
+      HERO: "hero_stacked_banner",
+      ABOUT: "about_timeline",
+      COURSES: "courses_split_rows",
+      FACULTY: "faculty_overlay_tiles",
+      CONTACT: "contact_full_width_map",
+    },
+  },
+];
 
 /**
  * Section copy for a demo site. Parameterised rather than fixed: five
