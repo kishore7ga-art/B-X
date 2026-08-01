@@ -991,7 +991,7 @@ app.get("/api/v1/admin/templates", async (req, res) => {
 
 const templateUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 const ALLOWED_CODE_EXTENSIONS = [
@@ -1008,32 +1008,47 @@ const ALLOWED_CODE_EXTENSIONS = [
   ".css",
 ];
 
-app.post("/api/v1/admin/templates", templateUpload.single("file"), async (req, res) => {
+app.post("/api/v1/admin/templates", templateUpload.any(), async (req, res) => {
   try {
     const session = await requireAdmin(req);
 
     let code: string | undefined = undefined;
 
-    if (req.file) {
-      const filename = req.file.originalname.toLowerCase();
-      const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-      if (!isValidExt) {
-        res.status(415).json({
-          error:
-            "Unsupported file type. Allowed extensions: .html, .blade.php, .jsx, .vue, .txt",
-        });
-        return;
+    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+
+    if (files.length > 0) {
+      const validFiles: Express.Multer.File[] = [];
+
+      for (const file of files) {
+        const filename = file.originalname.toLowerCase();
+        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+        if (!isValidExt) continue;
+
+        // Skip binary files (inspect for null bytes)
+        if (file.buffer.includes(0)) continue;
+
+        validFiles.push(file);
       }
 
-      // Reject binary files (inspect for null bytes)
-      if (req.file.buffer.includes(0)) {
+      if (validFiles.length === 0) {
         res.status(400).json({
-          error: "Binary files are not allowed. Please upload a plain text code file.",
+          error:
+            "No valid text or code files found in the upload. Allowed extensions: .html, .blade.php, .jsx, .vue, .css, .txt",
         });
         return;
       }
 
-      code = req.file.buffer.toString("utf-8");
+      if (validFiles.length === 1) {
+        code = validFiles[0]!.buffer.toString("utf-8");
+      } else {
+        // Stitch multiple folder files together
+        const codeBlocks = validFiles.map((file) => {
+          const name = file.originalname || file.filename;
+          const text = file.buffer.toString("utf-8");
+          return `<!-- File: ${name} -->\n${text}`;
+        });
+        code = codeBlocks.join("\n\n");
+      }
     } else if (typeof req.body?.code === "string") {
       code = req.body.code;
     }
