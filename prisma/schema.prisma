@@ -148,6 +148,8 @@ model Template {
   description  String?
   thumbnailUrl String?   @map("thumbnail_url")
   demoUrl      String?   @map("demo_url")
+  /// Code or markup content of the template, uploaded as a file or saved manually.
+  code         String?   @map("code")
   /// When this template stopped being offered to new colleges.
   ///
   /// Not a delete. Section rows cascade from Template, and CollegeSection rows

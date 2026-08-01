@@ -989,10 +989,69 @@ app.get("/api/v1/admin/templates", async (req, res) => {
   }
 });
 
-app.post("/api/v1/admin/templates", async (req, res) => {
+const templateUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
+
+const ALLOWED_CODE_EXTENSIONS = [
+  ".html",
+  ".htm",
+  ".blade.php",
+  ".jsx",
+  ".vue",
+  ".txt",
+  ".php",
+  ".js",
+  ".tsx",
+  ".ts",
+  ".css",
+];
+
+app.post("/api/v1/admin/templates", templateUpload.single("file"), async (req, res) => {
   try {
     const session = await requireAdmin(req);
-    res.status(201).json(await createTemplate(req.body ?? {}, session));
+
+    let code: string | undefined = undefined;
+
+    if (req.file) {
+      const filename = req.file.originalname.toLowerCase();
+      const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+      if (!isValidExt) {
+        res.status(415).json({
+          error:
+            "Unsupported file type. Allowed extensions: .html, .blade.php, .jsx, .vue, .txt",
+        });
+        return;
+      }
+
+      // Reject binary files (inspect for null bytes)
+      if (req.file.buffer.includes(0)) {
+        res.status(400).json({
+          error: "Binary files are not allowed. Please upload a plain text code file.",
+        });
+        return;
+      }
+
+      code = req.file.buffer.toString("utf-8");
+    } else if (typeof req.body?.code === "string") {
+      code = req.body.code;
+    }
+
+    const isPublishedValue =
+      req.body?.isPublished === undefined
+        ? true
+        : req.body.isPublished === "true" || req.body.isPublished === true;
+
+    const payload = {
+      name: req.body?.name,
+      description: req.body?.description || undefined,
+      thumbnailUrl: req.body?.thumbnailUrl || undefined,
+      isPublished: isPublishedValue,
+      code,
+    };
+
+    res.status(201).json(await createTemplate(payload, session));
   } catch (error) {
     fail(res, error);
   }

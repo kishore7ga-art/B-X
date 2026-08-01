@@ -1,10 +1,31 @@
 import { z } from "zod";
+import sanitizeHtml from "sanitize-html";
 
 import { type AdminSession, recordAudit } from "@/admin-service";
 import { AuthError } from "@/auth-service";
 import { prisma } from "@/db";
 import type { SectionType } from "@/generated/prisma/enums";
 import { BadRequest, NotFound } from "@/sections-service";
+
+export function sanitizeTemplateCode(rawCode: string): string {
+  return sanitizeHtml(rawCode, {
+    allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+      "html", "body", "head", "title", "meta", "link", "style", "header", "footer", "nav",
+      "section", "article", "aside", "main", "figure", "figcaption", "svg", "path", "g",
+      "use", "polygon", "rect", "circle", "line", "polyline", "button", "form", "input",
+      "label", "select", "textarea", "option", "iframe", "template", "slot"
+    ]),
+    allowedAttributes: {
+      "*": [
+        "class", "id", "style", "title", "role", "aria-*", "data-*", "name", "type",
+        "value", "placeholder", "src", "href", "alt", "rel", "target", "width", "height",
+        "xmlns", "viewBox", "d", "fill", "stroke"
+      ],
+    },
+    allowedSchemes: ["http", "https", "mailto", "data"],
+  });
+}
+
 
 /**
  * The section library and the templates assembled from it, as an admin sees them.
@@ -115,6 +136,7 @@ export type TemplateRow = {
   name: string;
   description: string | null;
   thumbnailUrl: string | null;
+  code: string | null;
   isPublished: boolean;
   archivedAt: string | null;
   createdAt: string;
@@ -151,6 +173,7 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
       name: true,
       description: true,
       thumbnailUrl: true,
+      code: true,
       isPublished: true,
       archivedAt: true,
       createdAt: true,
@@ -183,6 +206,7 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
       name: template.name,
       description: template.description,
       thumbnailUrl: template.thumbnailUrl,
+      code: template.code,
       isPublished: template.isPublished,
       archivedAt: template.archivedAt?.toISOString() ?? null,
       createdAt: template.createdAt.toISOString(),
@@ -489,6 +513,7 @@ export const createTemplateSchema = z.object({
     .max(80, "Name is too long"),
   description: z.string().trim().max(600, "Description is too long").optional(),
   thumbnailUrl: z.string().trim().optional(),
+  code: z.string().optional(),
   isPublished: z.boolean().default(true),
 });
 
@@ -524,11 +549,14 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
     "FOOTER",
   ];
 
+  const sanitizedCode = data.code ? sanitizeTemplateCode(data.code) : null;
+
   const created = await prisma.template.create({
     data: {
       name: data.name,
       description: data.description ?? null,
       thumbnailUrl: data.thumbnailUrl ?? null,
+      code: sanitizedCode,
       isPublished: data.isPublished,
       createdByEmail: actor.email,
       sections: {
