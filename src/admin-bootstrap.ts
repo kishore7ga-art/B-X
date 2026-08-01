@@ -252,6 +252,7 @@ export async function bootstrapTemplates() {
       { name: "Beacon", description: "Clean medical, nursing, and health sciences template designed for clinical clarity.", thumbnailUrl: "/template-calistoga.jpg", lead: { HERO: "hero_side_panel", ABOUT: "about_quote_lead", COURSES: "courses_accordion", FACULTY: "faculty_roster_list", CONTACT: "contact_dark_panel" } },
       { name: "Harbour", description: "Dynamic polytechnic, vocational, and management template with high-impact numbers.", thumbnailUrl: "/template-oakwood.jpg", lead: { HERO: "hero_centered", ABOUT: "about_stacked_cards", COURSES: "courses_compact_tiles", FACULTY: "faculty_department_groups", CONTACT: "contact_form_only" } },
       { name: "Almanac", description: "Prestigious university and heritage campus layout with serif typography.", thumbnailUrl: "/macbook-madras-college.png", lead: { HERO: "hero_stacked_banner", ABOUT: "about_timeline", COURSES: "courses_split_rows", FACULTY: "faculty_overlay_tiles", CONTACT: "contact_full_width_map" } },
+      { name: "Vanguard", description: "Autonomous research university template featuring interactive department showcases.", thumbnailUrl: "/template-brightwood.jpg", lead: { HERO: "hero_split_image", ABOUT: "about_split_panel", COURSES: "courses_card_grid", FACULTY: "faculty_photo_cards", CONTACT: "contact_map_split" } },
     ];
 
     for (const t of TEMPLATES) {

@@ -322,6 +322,27 @@ const TEMPLATES: TemplateSpec[] = [
       CONTACT: "contact_full_width_map",
     },
   },
+  {
+    name: "Vanguard",
+    description: "Autonomous research university template featuring interactive department showcases, placement stats, and faculty spotlights.",
+    thumbnailUrl: "/template-brightwood.jpg",
+    demo: {
+      subdomain: "vanguard-demo",
+      collegeName: "Vanguard Institute of Advanced Research",
+      tagline: "Pioneering Breakthrough Engineering & Global Research",
+      city: "Hyderabad, Telangana 500081",
+      domain: "vanguard.edu.in",
+      paletteName: "Sunset Sapphire",
+      fontName: "Tech Precision",
+    },
+    lead: {
+      HERO: "hero_split_image",
+      ABOUT: "about_split_panel",
+      COURSES: "courses_card_grid",
+      FACULTY: "faculty_photo_cards",
+      CONTACT: "contact_map_split",
+    },
+  },
 ];
 
 /**
