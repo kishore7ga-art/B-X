@@ -161,11 +161,120 @@ export async function bootstrapAdmin() {
         `${email}. It will not be applied again — change it now:\n` +
         "    node scripts/admin.mjs password <email> <new password>",
     );
+
+    await bootstrapTemplates();
   } catch (error) {
     // Never fatal. A service that will not start because it could not create an
     // admin account is a service that has taken every college's site down over
     // a convenience.
     lastOutcome = "failed";
     console.error("[admin] bootstrap failed:", (error as Error).message);
+  }
+}
+
+export async function bootstrapTemplates() {
+  try {
+    const templateCount = await prisma.template.count();
+    if (templateCount > 0) return;
+
+    console.log("[bootstrap] 0 templates found in database. Auto-seeding reference templates...");
+
+    const PALETTES = [
+      { name: "Academic Blue", colors: { primary: "#1E3A8A", secondary: "#3B82F6", accent: "#F59E0B", dark: "#0F172A", light: "#F8FAFC" } },
+      { name: "Heritage Maroon", colors: { primary: "#7F1D1D", secondary: "#B91C1C", accent: "#D4A017", dark: "#1C1917", light: "#FEF7ED" } },
+      { name: "Campus Green", colors: { primary: "#14532D", secondary: "#16A34A", accent: "#FACC15", dark: "#0B1F16", light: "#F0FDF4" } },
+      { name: "Midnight Indigo", colors: { primary: "#312E81", secondary: "#6366F1", accent: "#10B981", dark: "#09090B", light: "#EEF2FF" } },
+      { name: "Sunset Sapphire", colors: { primary: "#0369A1", secondary: "#0284C7", accent: "#F97316", dark: "#0F172A", light: "#F0F9FF" } },
+      { name: "Editorial Plum", colors: { primary: "#581C87", secondary: "#9333EA", accent: "#EAB308", dark: "#18181B", light: "#FAF5FF" } },
+    ];
+
+    const FONT_PACKS = [
+      { name: "Classic Serif", headingFont: "Playfair Display", bodyFont: "Source Sans 3" },
+      { name: "Modern Sans", headingFont: "Poppins", bodyFont: "Inter" },
+      { name: "Editorial Elegance", headingFont: "Cormorant Garamond", bodyFont: "Plus Jakarta Sans" },
+      { name: "Tech Precision", headingFont: "Outfit", bodyFont: "Roboto" },
+      { name: "Academic Prestige", headingFont: "Merriweather", bodyFont: "Open Sans" },
+    ];
+
+    for (const p of PALETTES) {
+      await prisma.themePalette.upsert({ where: { name: p.name }, update: { colors: p.colors }, create: p });
+    }
+    for (const f of FONT_PACKS) {
+      await prisma.themeFont.upsert({ where: { name: f.name }, update: f, create: f });
+    }
+
+    const VARIANT_SPECS = [
+      { sectionType: "HERO", sortOrder: 0, variantName: "Centered", componentKey: "hero_centered" },
+      { sectionType: "HERO", sortOrder: 1, variantName: "Image Split", componentKey: "hero_split_image" },
+      { sectionType: "HERO", sortOrder: 2, variantName: "Academic Masthead", componentKey: "hero_academic_masthead" },
+      { sectionType: "HERO", sortOrder: 3, variantName: "Minimal Text", componentKey: "hero_minimal_text" },
+      { sectionType: "HERO", sortOrder: 4, variantName: "Side Panel", componentKey: "hero_side_panel" },
+      { sectionType: "HERO", sortOrder: 5, variantName: "Stacked Banner", componentKey: "hero_stacked_banner" },
+      { sectionType: "ABOUT", sortOrder: 0, variantName: "Two Column", componentKey: "about_two_column" },
+      { sectionType: "ABOUT", sortOrder: 1, variantName: "Stacked Cards", componentKey: "about_stacked_cards" },
+      { sectionType: "ABOUT", sortOrder: 2, variantName: "Timeline", componentKey: "about_timeline" },
+      { sectionType: "ABOUT", sortOrder: 3, variantName: "Quote Lead", componentKey: "about_quote_lead" },
+      { sectionType: "ABOUT", sortOrder: 4, variantName: "Image Beside", componentKey: "about_image_beside" },
+      { sectionType: "ABOUT", sortOrder: 5, variantName: "Split Panel", componentKey: "about_split_panel" },
+      { sectionType: "COURSES", sortOrder: 0, variantName: "Card Grid", componentKey: "courses_card_grid" },
+      { sectionType: "COURSES", sortOrder: 1, variantName: "Comparison Table", componentKey: "courses_table" },
+      { sectionType: "COURSES", sortOrder: 2, variantName: "Accordion", componentKey: "courses_accordion" },
+      { sectionType: "COURSES", sortOrder: 3, variantName: "Numbered List", componentKey: "courses_numbered_list" },
+      { sectionType: "COURSES", sortOrder: 4, variantName: "Split Rows", componentKey: "courses_split_rows" },
+      { sectionType: "COURSES", sortOrder: 5, variantName: "Compact Tiles", componentKey: "courses_compact_tiles" },
+      { sectionType: "FACULTY", sortOrder: 0, variantName: "Photo Cards", componentKey: "faculty_photo_cards" },
+      { sectionType: "FACULTY", sortOrder: 1, variantName: "Roster List", componentKey: "faculty_roster_list" },
+      { sectionType: "FACULTY", sortOrder: 2, variantName: "Circle Grid", componentKey: "faculty_circle_grid" },
+      { sectionType: "FACULTY", sortOrder: 3, variantName: "Department Groups", componentKey: "faculty_department_groups" },
+      { sectionType: "FACULTY", sortOrder: 4, variantName: "Overlay Tiles", componentKey: "faculty_overlay_tiles" },
+      { sectionType: "FACULTY", sortOrder: 5, variantName: "Minimal Table", componentKey: "faculty_minimal_table" },
+      { sectionType: "CONTACT", sortOrder: 0, variantName: "Split Map", componentKey: "contact_map_split" },
+      { sectionType: "CONTACT", sortOrder: 1, variantName: "Centered", componentKey: "contact_centered" },
+      { sectionType: "CONTACT", sortOrder: 2, variantName: "Form Only", componentKey: "contact_form_only" },
+      { sectionType: "CONTACT", sortOrder: 3, variantName: "Full Width Map", componentKey: "contact_full_width_map" },
+      { sectionType: "CONTACT", sortOrder: 4, variantName: "Cards Row", componentKey: "contact_cards_row" },
+      { sectionType: "CONTACT", sortOrder: 5, variantName: "Dark Panel", componentKey: "contact_dark_panel" },
+    ];
+
+    const variantIds = new Map<string, string>();
+    for (const v of VARIANT_SPECS) {
+      const row = await prisma.sectionVariant.upsert({
+        where: { componentKey: v.componentKey },
+        update: { variantName: v.variantName, sectionType: v.sectionType as any, sortOrder: v.sortOrder },
+        create: { componentKey: v.componentKey, variantName: v.variantName, sectionType: v.sectionType as any, sortOrder: v.sortOrder },
+      });
+      variantIds.set(v.componentKey, row.id);
+    }
+
+    const TEMPLATES = [
+      { name: "Radian", description: "Modern engineering and technical institute template featuring bold mastheads.", thumbnailUrl: "/template-brightwood.jpg", lead: { HERO: "hero_academic_masthead", ABOUT: "about_image_beside", COURSES: "courses_card_grid", FACULTY: "faculty_photo_cards", CONTACT: "contact_map_split" } },
+      { name: "Meridian", description: "Elegant arts and sciences college layout focusing on historical legacy.", thumbnailUrl: "/template-evergreen.jpg", lead: { HERO: "hero_split_image", ABOUT: "about_two_column", COURSES: "courses_table", FACULTY: "faculty_circle_grid", CONTACT: "contact_centered" } },
+      { name: "Beacon", description: "Clean medical, nursing, and health sciences template designed for clinical clarity.", thumbnailUrl: "/template-calistoga.jpg", lead: { HERO: "hero_side_panel", ABOUT: "about_quote_lead", COURSES: "courses_accordion", FACULTY: "faculty_roster_list", CONTACT: "contact_dark_panel" } },
+      { name: "Harbour", description: "Dynamic polytechnic, vocational, and management template with high-impact numbers.", thumbnailUrl: "/template-oakwood.jpg", lead: { HERO: "hero_centered", ABOUT: "about_stacked_cards", COURSES: "courses_compact_tiles", FACULTY: "faculty_department_groups", CONTACT: "contact_form_only" } },
+      { name: "Almanac", description: "Prestigious university and heritage campus layout with serif typography.", thumbnailUrl: "/macbook-madras-college.png", lead: { HERO: "hero_stacked_banner", ABOUT: "about_timeline", COURSES: "courses_split_rows", FACULTY: "faculty_overlay_tiles", CONTACT: "contact_full_width_map" } },
+    ];
+
+    for (const t of TEMPLATES) {
+      const template = await prisma.template.upsert({
+        where: { name: t.name },
+        update: { description: t.description, thumbnailUrl: t.thumbnailUrl, isPublished: true },
+        create: { name: t.name, description: t.description, thumbnailUrl: t.thumbnailUrl, isPublished: true },
+      });
+
+      const types = ["HERO", "ABOUT", "COURSES", "FACULTY", "CONTACT"] as const;
+      for (const st of types) {
+        const leadKey = (t.lead as any)[st];
+        const leadVariantId = variantIds.get(leadKey);
+        await prisma.section.upsert({
+          where: { templateId_sectionType: { templateId: template.id, sectionType: st as any } },
+          update: { defaultOrder: types.indexOf(st) + 1, isRequired: st === "HERO" || st === "CONTACT", defaultVariantId: leadVariantId },
+          create: { templateId: template.id, sectionType: st as any, defaultOrder: types.indexOf(st) + 1, isRequired: st === "HERO" || st === "CONTACT", defaultVariantId: leadVariantId },
+        });
+      }
+    }
+
+    console.log("[bootstrap] Successfully auto-seeded 5 academic templates into database.");
+  } catch (err) {
+    console.error("[bootstrap] template auto-seed error:", (err as Error).message);
   }
 }
