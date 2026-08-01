@@ -196,29 +196,41 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
   });
 
   return templates.map((template) => {
-    const collegeSections = template.sections.reduce(
-      (sum, slot) => sum + slot._count.collegeSections,
+    const collegeSections = (template.sections ?? []).reduce(
+      (sum, slot) => sum + (slot._count?.collegeSections ?? 0),
       0,
     );
+
+    const archivedAtStr =
+      template.archivedAt instanceof Date
+        ? template.archivedAt.toISOString()
+        : template.archivedAt
+        ? String(template.archivedAt)
+        : null;
+
+    const createdAtStr =
+      template.createdAt instanceof Date
+        ? template.createdAt.toISOString()
+        : String(template.createdAt ?? new Date().toISOString());
 
     return {
       id: template.id,
       name: template.name,
-      description: template.description,
-      thumbnailUrl: template.thumbnailUrl,
-      code: template.code,
-      isPublished: template.isPublished,
-      archivedAt: template.archivedAt?.toISOString() ?? null,
-      createdAt: template.createdAt.toISOString(),
-      createdByEmail: template.createdByEmail,
-      colleges: template._count.colleges,
+      description: template.description ?? null,
+      thumbnailUrl: template.thumbnailUrl ?? null,
+      code: template.code ?? null,
+      isPublished: Boolean(template.isPublished),
+      archivedAt: archivedAtStr,
+      createdAt: createdAtStr,
+      createdByEmail: template.createdByEmail ?? null,
+      colleges: template._count?.colleges ?? 0,
       collegeSections,
-      deletable: template._count.colleges === 0 && collegeSections === 0,
-      slots: template.sections.map((slot) => ({
+      deletable: (template._count?.colleges ?? 0) === 0 && collegeSections === 0,
+      slots: (template.sections ?? []).map((slot) => ({
         slotId: slot.id,
         sectionType: slot.sectionType,
         order: slot.defaultOrder,
-        isRequired: slot.isRequired,
+        isRequired: Boolean(slot.isRequired),
         leadVariantId: slot.defaultVariant?.id ?? null,
         leadVariantName: slot.defaultVariant?.variantName ?? null,
         leadComponentKey: slot.defaultVariant?.componentKey ?? null,

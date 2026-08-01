@@ -207,11 +207,24 @@ const ORIGINS = [...new Set([...DEFAULT_ORIGINS, ...CONFIGURED_ORIGINS])];
  */
 const rejectedOrigins = new Set<string>();
 
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && (ORIGINS.includes(origin) || process.env.NODE_ENV !== "production")) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  }
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 app.use(
   cors({
     origin(origin, callback) {
-      // No Origin header: same-origin, curl, a server-side call. Not a CORS
-      // decision to make.
       if (!origin || !ORIGINS.length || ORIGINS.includes(origin)) {
         return callback(null, true);
       }
