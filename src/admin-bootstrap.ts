@@ -261,42 +261,14 @@ export async function bootstrapTemplates() {
       variantIds.set(v.componentKey, row.id);
     }
 
-    const TEMPLATES = [
-      { name: "Radian", description: "Modern engineering and technical institute template featuring bold mastheads.", thumbnailUrl: "/template-brightwood.jpg", lead: { HERO: "hero_academic_masthead", ABOUT: "about_image_beside", COURSES: "courses_card_grid", FACULTY: "faculty_photo_cards", CONTACT: "contact_map_split" } },
-      { name: "Meridian", description: "Elegant arts and sciences college layout focusing on historical legacy.", thumbnailUrl: "/template-evergreen.jpg", lead: { HERO: "hero_split_image", ABOUT: "about_two_column", COURSES: "courses_table", FACULTY: "faculty_circle_grid", CONTACT: "contact_centered" } },
-      { name: "Beacon", description: "Clean medical, nursing, and health sciences template designed for clinical clarity.", thumbnailUrl: "/template-calistoga.jpg", lead: { HERO: "hero_side_panel", ABOUT: "about_quote_lead", COURSES: "courses_accordion", FACULTY: "faculty_roster_list", CONTACT: "contact_dark_panel" } },
-      { name: "Harbour", description: "Dynamic polytechnic, vocational, and management template with high-impact numbers.", thumbnailUrl: "/template-oakwood.jpg", lead: { HERO: "hero_centered", ABOUT: "about_stacked_cards", COURSES: "courses_compact_tiles", FACULTY: "faculty_department_groups", CONTACT: "contact_form_only" } },
-      { name: "Almanac", description: "Prestigious university and heritage campus layout with serif typography.", thumbnailUrl: "/macbook-madras-college.png", lead: { HERO: "hero_stacked_banner", ABOUT: "about_timeline", COURSES: "courses_split_rows", FACULTY: "faculty_overlay_tiles", CONTACT: "contact_full_width_map" } },
-      { name: "Vanguard", description: "Autonomous research university template featuring interactive department showcases.", thumbnailUrl: "/template-brightwood.jpg", lead: { HERO: "hero_split_image", ABOUT: "about_split_panel", COURSES: "courses_card_grid", FACULTY: "faculty_photo_cards", CONTACT: "contact_map_split" } },
-    ];
-
-    for (const t of TEMPLATES) {
-      const template = await prisma.template.upsert({
-        where: { name: t.name },
-        update: { description: t.description, thumbnailUrl: t.thumbnailUrl, isPublished: true },
-        create: { name: t.name, description: t.description, thumbnailUrl: t.thumbnailUrl, isPublished: true },
-      });
-
-      const types = ["HERO", "ABOUT", "COURSES", "FACULTY", "CONTACT"] as const;
-      for (const st of types) {
-        const leadKey = (t.lead as any)[st];
-        const leadVariantId = variantIds.get(leadKey);
-        await prisma.section.upsert({
-          where: { templateId_sectionType: { templateId: template.id, sectionType: st as any } },
-          update: { defaultOrder: types.indexOf(st) + 1, isRequired: st === "HERO" || st === "CONTACT", defaultVariantId: leadVariantId },
-          create: { templateId: template.id, sectionType: st as any, defaultOrder: types.indexOf(st) + 1, isRequired: st === "HERO" || st === "CONTACT", defaultVariantId: leadVariantId },
-        });
-      }
-    }
-
     await prisma.serviceSecret
       .create({
         data: { name: TEMPLATES_INITIALIZED_MARKER, value: new Date().toISOString() },
       })
       .catch(() => {});
 
-    console.log("[bootstrap] Successfully auto-seeded 5 academic templates into database.");
+    console.log("[bootstrap] Successfully initialized theme options and section variants.");
   } catch (err) {
-    console.error("[bootstrap] template auto-seed error:", (err as Error).message);
+    console.error("[bootstrap] reference data seed error:", (err as Error).message);
   }
 }
