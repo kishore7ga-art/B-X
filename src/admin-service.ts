@@ -647,3 +647,40 @@ export async function updateUserStatusForAdmin(
   };
 }
 
+export const updateUserPasswordSchema = z.object({
+  password: z.string().trim().min(1, "Password cannot be empty"),
+});
+
+export async function updateUserPasswordForAdmin(
+  userId: string,
+  input: unknown,
+  actor: AdminSession,
+) {
+  const { password } = updateUserPasswordSchema.parse(input);
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true },
+  });
+
+  if (!user) throw new AuthError("User not found", 404);
+
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash, status: "ACTIVE" },
+  });
+
+  await recordAudit({
+    actor,
+    action: "user.update_password",
+    targetType: "user",
+    targetId: userId,
+    summary: `Updated password for ${user.email}`,
+    metadata: { email: user.email },
+  });
+
+  return { success: true, email: user.email };
+}
+

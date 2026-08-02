@@ -20,6 +20,7 @@ import {
   adminStatus,
   getAdminSession,
   listUsersForAdmin,
+  updateUserPasswordForAdmin,
   updateUserStatusForAdmin,
 } from "@/admin-service";
 import {
@@ -1333,7 +1334,16 @@ app.get("/api/v1/admin/users", async (req, res) => {
 app.patch("/api/v1/admin/users/:id/status", async (req, res) => {
   try {
     const session = await requireAdmin(req);
-    res.json(await updateUserStatusForAdmin(req.params.id, req.body ?? {}, session));
+    res.json(await updateUserStatusForAdmin(req.params.id as string, req.body ?? {}, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.patch("/api/v1/admin/users/:id/password", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
   } catch (error) {
     fail(res, error);
   }
