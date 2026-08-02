@@ -1161,12 +1161,56 @@ app.get("/api/v1/admin/templates/:id", async (req, res) => {
   }
 });
 
-app.patch("/api/v1/admin/templates/:id", async (req, res) => {
+app.patch("/api/v1/admin/templates/:id", templateUpload.any(), async (req, res) => {
   try {
     const session = await requireAdmin(req);
-    res.json(
-      await updateTemplateDetails(req.params.id, req.body ?? {}, session),
-    );
+
+    let code: string | undefined = undefined;
+    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+
+    if (files.length > 0) {
+      const validFiles: Express.Multer.File[] = [];
+      for (const file of files) {
+        const filename = file.originalname.toLowerCase();
+        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+        if (!isValidExt || file.buffer.includes(0)) continue;
+        validFiles.push(file);
+      }
+
+      if (validFiles.length > 0) {
+        if (validFiles.length === 1) {
+          code = validFiles[0]!.buffer.toString("utf-8");
+        } else {
+          const codeBlocks = validFiles.map((file) => {
+            const name = file.originalname || file.filename;
+            const text = file.buffer.toString("utf-8");
+            return `<!-- File: ${name} -->\n${text}`;
+          });
+          code = codeBlocks.join("\n\n");
+        }
+      }
+    } else if (typeof req.body?.code === "string") {
+      code = req.body.code;
+    }
+
+    const isPublishedValue =
+      req.body?.isPublished === undefined
+        ? undefined
+        : req.body.isPublished === "true" || req.body.isPublished === true;
+
+    const payload = {
+      name: req.body?.name || undefined,
+      description: req.body?.description,
+      thumbnailUrl: req.body?.thumbnailUrl,
+      isPublished: isPublishedValue,
+      code,
+      archived:
+        req.body?.archived === undefined
+          ? undefined
+          : req.body.archived === "true" || req.body.archived === true,
+    };
+
+    res.json(await updateTemplateDetails(req.params.id as string, payload, session));
   } catch (error) {
     fail(res, error);
   }

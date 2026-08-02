@@ -288,14 +288,9 @@ export const templateDetailsSchema = z.object({
     .max(80, "Name is too long")
     .optional(),
   description: z.string().trim().max(600, "Description is too long").nullish(),
+  thumbnailUrl: z.string().trim().nullish(),
+  code: z.string().nullish(),
   isPublished: z.boolean().optional(),
-  /**
-   * Un-archiving, which the addendum has no way to do.
-   *
-   * Without it, archiving is one-way from the UI: DELETE sets `archivedAt` and
-   * nothing ever clears it. A withdrawal that cannot be reversed is a delete
-   * wearing a gentler name.
-   */
   archived: z.boolean().optional(),
 });
 
@@ -328,11 +323,15 @@ export async function updateTemplateDetails(
         ...(patch.description === undefined
           ? {}
           : { description: patch.description ?? null }),
+        ...(patch.thumbnailUrl === undefined
+          ? {}
+          : { thumbnailUrl: patch.thumbnailUrl ?? null }),
+        ...(patch.code === undefined
+          ? {}
+          : { code: patch.code ?? null }),
         ...(patch.isPublished === undefined
           ? {}
           : { isPublished: patch.isPublished }),
-        // Re-archiving keeps the original timestamp: when it was withdrawn is a
-        // fact, and saving the form again should not rewrite it to now.
         ...(patch.archived === undefined
           ? {}
           : {
@@ -342,47 +341,44 @@ export async function updateTemplateDetails(
             }),
       },
     });
+
+    const changes: string[] = [];
+    if (patch.name !== undefined && patch.name !== before.name) {
+      changes.push(`renamed from "${before.name}"`);
+    }
+    if (
+      patch.isPublished !== undefined &&
+      patch.isPublished !== before.isPublished
+    ) {
+      changes.push(patch.isPublished ? "published" : "unpublished");
+    }
+    if (
+      patch.archived !== undefined &&
+      patch.archived !== Boolean(before.archivedAt)
+    ) {
+      changes.push(patch.archived ? "archived" : "un-archived");
+    }
+    if (patch.description !== undefined) changes.push("description edited");
+    if (patch.thumbnailUrl !== undefined) changes.push("thumbnail edited");
+    if (patch.code !== undefined) changes.push("code edited");
+
+    await recordAudit({
+      actor,
+      action: "template.update",
+      targetType: "template",
+      targetId: id,
+      summary: `Template "${patch.name ?? before.name}": ${
+        changes.length ? changes.join(", ") : "saved with no changes"
+      }`,
+      metadata: { changes },
+    });
+
+    return getTemplateForAdmin(id);
   } catch (cause) {
     if ((cause as { code?: string }).code === "P2002") {
       throw new AuthError("Another template already has that name", 409);
     }
-    throw cause;
   }
-
-  /**
-   * Written for somebody reading the log in six months, which is what
-   * `AuditLog.summary` asks for. "template.updated" alone does not say what moved.
-   */
-  const changes: string[] = [];
-  if (patch.name !== undefined && patch.name !== before.name) {
-    changes.push(`renamed from "${before.name}"`);
-  }
-  if (
-    patch.isPublished !== undefined &&
-    patch.isPublished !== before.isPublished
-  ) {
-    changes.push(patch.isPublished ? "published" : "unpublished");
-  }
-  if (
-    patch.archived !== undefined &&
-    patch.archived !== Boolean(before.archivedAt)
-  ) {
-    changes.push(patch.archived ? "archived" : "un-archived");
-  }
-  if (patch.description !== undefined) changes.push("description edited");
-
-  await recordAudit({
-    actor,
-    action: "template.update",
-    targetType: "template",
-    targetId: id,
-    summary: `Template "${patch.name ?? before.name}": ${
-      changes.length ? changes.join(", ") : "saved with no changes"
-    }`,
-    metadata: { changes },
-  });
-
-  return getTemplateForAdmin(id);
 }
 
 // --- Step 3: which design fills each category ---------------------------------
