@@ -17,31 +17,31 @@ export const COLLEGE_TYPES = [
     value: "engineering",
     label: "Engineering",
     hint: "Technical institutes, polytechnics",
-    templateName: "Radian",
+    templateName: "College-Website",
   },
   {
     value: "arts_science",
     label: "Arts & Science",
     hint: "Degree colleges, liberal arts",
-    templateName: "Meridian",
+    templateName: "College-Website",
   },
   {
     value: "medical",
     label: "Medical",
     hint: "Medical, nursing, pharmacy",
-    templateName: "Beacon",
+    templateName: "College-Website",
   },
   {
     value: "management",
     label: "Management",
     hint: "Business schools, commerce",
-    templateName: "Almanac",
+    templateName: "College-Website",
   },
   {
     value: "law",
     label: "Law / Other",
     hint: "Law schools, and anything else",
-    templateName: "Harbour",
+    templateName: "College-Website",
   },
 ] as const;
 
@@ -60,10 +60,6 @@ export function collegeType(value: string | null | undefined) {
 
 /**
  * The template a type opens with.
- *
- * Falls back to the last entry rather than throwing: a college carrying a type
- * this build no longer knows about should still get a site, and "Law / Other"
- * is the catch-all by design.
  */
 export function templateNameFor(_value: string | null | undefined): string {
   return "College-Website";

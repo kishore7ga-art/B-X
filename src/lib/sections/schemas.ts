@@ -14,7 +14,7 @@ const url = z.string().trim();
 const text = z.string().trim();
 
 export const heroContentSchema = z.object({
-  collegeName: text.min(1),
+  collegeName: text.default(""),
   tagline: text.default(""),
   intro: text.default(""),
   bannerImageUrl: url.default(""),
@@ -104,11 +104,6 @@ export type SectionContentMap = {
 
 /**
  * Takes a `string`, not a `SectionType`.
- *
- * Section types now arrive over HTTP as well as out of the database, and the
- * enum type is a promise the database keeps and a JSON body does not. Narrowing
- * from the wider type is the point of a guard; requiring the narrow one first
- * made it unusable exactly where the value is genuinely unverified.
  */
 export function isSupportedSectionType(
   value: string,
