@@ -63,54 +63,14 @@ function starterContent(
 /** Creates the default pages and a starter set of sections for a new site. */
 async function provisionStarterSite(
   collegeId: string,
-  collegeName: string,
-  templateSections: TemplateSection[],
+  _collegeName: string,
+  _templateSections: TemplateSection[],
 ) {
-  /*
-   * Every default page, including any the college is missing.
-   *
-   * The guard here used to be `count === 0`, which meant the starter list was
-   * only ever applied to a college that had no pages at all. When the list grew
-   * from four pages to twelve, colleges provisioned under the old list stayed on
-   * four — and the editor and the public nav both offered the other eight, each
-   * one a link to a page the database does not have. `skipDuplicates` leans on
-   * the `(collegeId, slug)` unique index, so re-running this adds what is
-   * missing and leaves edited titles alone.
-   */
   await prisma.page.createMany({
     data: DEFAULT_PAGES.map((page) => ({ collegeId, ...page })),
     skipDuplicates: true,
   });
-
-  const homePage = await prisma.page.findFirst({
-    where: { collegeId },
-    orderBy: { navOrder: "asc" },
-  });
-  if (!homePage) return;
-
-  const library = await variantLibrary();
-
-  let displayOrder = 1;
-  for (const section of templateSections) {
-    const lead = leadVariant(
-      { sectionType: section.sectionType as SectionType, defaultVariantId: section.defaultVariantId },
-      library,
-    );
-    if (!lead) continue;
-    if (!isSupportedSectionType(section.sectionType as never)) continue;
-
-    await prisma.collegeSection.create({
-      data: {
-        collegeId,
-        sectionId: section.id,
-        variantId: lead.id,
-        pageId: homePage.id,
-        displayOrder: displayOrder++,
-        isVisible: true,
-        content: starterContent(section, collegeName) as never,
-      },
-    });
-  }
+  // Left clean and empty — no default template sections populated.
 }
 
 /**
