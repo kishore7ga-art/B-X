@@ -1057,6 +1057,19 @@ export const openApiDocument = {
           ),
         },
       },
+      delete: {
+        tags: ["Admin"],
+        summary: "Delete all templates",
+        description: "Permanently deletes all template records from the database.",
+        security: SESSION_COOKIE,
+        responses: {
+          "200": json(
+            { type: "object", properties: { deletedCount: int } },
+            "Number of templates deleted.",
+          ),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
     },
 
     "/api/v1/admin/library": {

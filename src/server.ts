@@ -50,6 +50,7 @@ import {
 import { docsPage } from "@/docs-page";
 import {
   createTemplate,
+  deleteAllTemplates,
   getTemplateForAdmin,
   libraryVariantsForAdmin,
   listTemplatesForAdmin,
@@ -1044,6 +1045,15 @@ app.get("/api/v1/admin/templates", async (req, res) => {
   try {
     await requireAdmin(req);
     res.json({ templates: await listTemplatesForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete("/api/v1/admin/templates", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await deleteAllTemplates(session));
   } catch (error) {
     fail(res, error);
   }

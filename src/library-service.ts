@@ -652,3 +652,34 @@ export async function retireTemplate(
 
   return { archived: false as const, deleted: true as const };
 }
+
+export async function deleteAllTemplates(actor: AdminSession) {
+  const templates = await prisma.template.findMany({ select: { id: true } });
+  const ids = templates.map((t) => t.id);
+
+  if (ids.length > 0) {
+    await prisma.college.updateMany({
+      where: { templateId: { in: ids } },
+      data: { templateId: null },
+    });
+
+    await prisma.section.deleteMany({
+      where: { templateId: { in: ids } },
+    });
+
+    await prisma.template.deleteMany({
+      where: { id: { in: ids } },
+    });
+  }
+
+  await recordAudit({
+    actor,
+    action: "template.delete_all",
+    targetType: "template",
+    targetId: "all",
+    summary: `Permanently deleted all ${ids.length} template(s) from database`,
+    metadata: { count: ids.length },
+  });
+
+  return { deletedCount: ids.length };
+}
