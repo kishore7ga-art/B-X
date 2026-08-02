@@ -12,6 +12,7 @@
     "start": "node scripts/start.mjs",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
+    "test:security": "node scripts/test-security-headers.mjs",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "check:shared": "node scripts/check-shared-files.mjs",

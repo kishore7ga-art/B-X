@@ -91,6 +91,53 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
 /**
+ * Global Security Headers (Clickjacking, CSP, HSTS, MIME sniffing, Permissions, Referrer)
+ */
+app.use((req, res, next) => {
+  // Finding 1: Clickjacking protection
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+
+  // Finding 2: Content Security Policy
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://api.xite.co.in https://admin.xite.co.in https://admin.meetkishore.in; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://admin.xite.co.in https://admin.meetkishore.in;",
+  );
+
+  // Finding 5: HSTS header
+  if (
+    req.secure ||
+    req.headers["x-forwarded-proto"] === "https" ||
+    process.env.NODE_ENV === "production"
+  ) {
+    res.setHeader(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains; preload",
+    );
+  }
+
+  // Finding 26: MIME sniffing protection
+  res.setHeader("X-Content-Type-Options", "nosniff");
+
+  // Finding 27: Permissions Policy
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=(), fullscreen=(self)",
+  );
+
+  // Finding 28: Referrer Policy
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+
+  // Reject TRACE / TRACK methods globally
+  if (req.method === "TRACE" || req.method === "TRACK") {
+    res.setHeader("Allow", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.status(405).json({ error: "Method Not Allowed" });
+    return;
+  }
+
+  next();
+});
+
+/**
  * How many proxy hops in front of this service may be believed.
  *
  * `req.ip` is whatever Express decides the client is, and with this off it is
@@ -1421,6 +1468,35 @@ app.get("/uploads/:file", async (req, res) => {
   } catch {
     res.status(404).end();
   }
+});
+
+/**
+ * 405 Method Not Allowed handler for registered API endpoints.
+ *
+ * If a request path matches a registered route in Express or OpenAPI, but the requested HTTP verb
+ * is not supported for that path, answer 405 Method Not Allowed with an `Allow` header.
+ */
+app.use((req, res, next) => {
+  const routes = registeredRoutes();
+  const reqPath = req.path;
+
+  const matchingRoutes = routes.filter(({ path: rPath }) => {
+    const regexPattern = "^" + rPath.replace(/:[A-Za-z0-9_]+/g, "[^/]+") + "$";
+    return new RegExp(regexPattern).test(reqPath);
+  });
+
+  if (matchingRoutes.length > 0) {
+    const allowedMethods = [
+      ...new Set(matchingRoutes.map((r) => r.method).concat(["OPTIONS"])),
+    ];
+    if (!allowedMethods.includes(req.method.toUpperCase())) {
+      res.setHeader("Allow", allowedMethods.join(", "));
+      res.status(405).json({ error: "Method Not Allowed" });
+      return;
+    }
+  }
+
+  next();
 });
 
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));
