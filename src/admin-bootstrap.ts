@@ -261,13 +261,49 @@ export async function bootstrapTemplates() {
       variantIds.set(v.componentKey, row.id);
     }
 
+    const template = await prisma.template.upsert({
+      where: { name: "College-Website" },
+      update: {
+        description: "Default official college website template",
+        thumbnailUrl: "/template-brightwood.jpg",
+        isPublished: true,
+      },
+      create: {
+        name: "College-Website",
+        description: "Default official college website template",
+        thumbnailUrl: "/template-brightwood.jpg",
+        isPublished: true,
+      },
+    });
+
+    const types = ["HERO", "ABOUT", "COURSES", "FACULTY", "CONTACT"] as const;
+    for (const st of types) {
+      const leadVariantId = variantIds.get(
+        st === "HERO"
+          ? "hero_centered"
+          : st === "ABOUT"
+          ? "about_two_column"
+          : st === "COURSES"
+          ? "courses_card_grid"
+          : st === "FACULTY"
+          ? "faculty_photo_cards"
+          : "contact_map_split",
+      );
+
+      await prisma.section.upsert({
+        where: { templateId_sectionType: { templateId: template.id, sectionType: st as any } },
+        update: { defaultOrder: types.indexOf(st) + 1, isRequired: st === "HERO" || st === "CONTACT", defaultVariantId: leadVariantId ?? null },
+        create: { templateId: template.id, sectionType: st as any, defaultOrder: types.indexOf(st) + 1, isRequired: st === "HERO" || st === "CONTACT", defaultVariantId: leadVariantId ?? null },
+      });
+    }
+
     await prisma.serviceSecret
       .create({
         data: { name: TEMPLATES_INITIALIZED_MARKER, value: new Date().toISOString() },
       })
       .catch(() => {});
 
-    console.log("[bootstrap] Successfully initialized theme options and section variants.");
+    console.log("[bootstrap] Successfully initialized College-Website default template and theme options.");
   } catch (err) {
     console.error("[bootstrap] reference data seed error:", (err as Error).message);
   }

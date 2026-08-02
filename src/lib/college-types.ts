@@ -65,11 +65,8 @@ export function collegeType(value: string | null | undefined) {
  * this build no longer knows about should still get a site, and "Law / Other"
  * is the catch-all by design.
  */
-export function templateNameFor(value: string | null | undefined): string {
-  return (
-    collegeType(value)?.templateName ??
-    COLLEGE_TYPES[COLLEGE_TYPES.length - 1].templateName
-  );
+export function templateNameFor(_value: string | null | undefined): string {
+  return "College-Website";
 }
 
 /**
