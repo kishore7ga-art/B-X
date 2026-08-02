@@ -172,12 +172,27 @@ export async function bootstrapAdmin() {
   }
 }
 
+const TEMPLATES_INITIALIZED_MARKER = "templates_initial_seed_done";
+
 export async function bootstrapTemplates() {
   try {
-    const templateCount = await prisma.template.count();
-    if (templateCount > 0) return;
+    const marker = await prisma.serviceSecret
+      .findUnique({ where: { name: TEMPLATES_INITIALIZED_MARKER } })
+      .catch(() => null);
 
-    console.log("[bootstrap] 0 templates found in database. Auto-seeding reference templates...");
+    if (marker) return;
+
+    const templateCount = await prisma.template.count();
+    if (templateCount > 0) {
+      await prisma.serviceSecret
+        .create({
+          data: { name: TEMPLATES_INITIALIZED_MARKER, value: new Date().toISOString() },
+        })
+        .catch(() => {});
+      return;
+    }
+
+    console.log("[bootstrap] First-time setup: 0 templates found in database. Seeding initial reference templates...");
 
     const PALETTES = [
       { name: "Academic Blue", colors: { primary: "#1E3A8A", secondary: "#3B82F6", accent: "#F59E0B", dark: "#0F172A", light: "#F8FAFC" } },
@@ -273,6 +288,12 @@ export async function bootstrapTemplates() {
         });
       }
     }
+
+    await prisma.serviceSecret
+      .create({
+        data: { name: TEMPLATES_INITIALIZED_MARKER, value: new Date().toISOString() },
+      })
+      .catch(() => {});
 
     console.log("[bootstrap] Successfully auto-seeded 5 academic templates into database.");
   } catch (err) {

@@ -76,12 +76,19 @@ export async function getEditorPage(
 
   if (!college) return null;
 
-  const offerableTemplate =
+  let offerableTemplate =
     college.template &&
     college.template.isPublished &&
     college.template.archivedAt === null
       ? college.template
       : null;
+
+  if (!offerableTemplate) {
+    offerableTemplate = await prisma.template.findFirst({
+      where: OFFERABLE,
+      include: { sections: { orderBy: { defaultOrder: "asc" } } },
+    });
+  }
 
   const currentPage = pageSlug
     ? college.pages.find((page) => page.slug === pageSlug)
