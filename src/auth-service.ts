@@ -282,10 +282,13 @@ export async function login(input: { email: string; password: string }) {
   const parsed = credentialsSchema.safeParse(input);
   if (!parsed.success) throw new AuthError("Enter your email and password");
 
-  const user = await prisma.user.findUnique({
-    where: { email: parsed.data.email },
+  const emailLower = parsed.data.email.trim().toLowerCase();
+
+  let user = await prisma.user.findUnique({
+    where: { email: emailLower },
     select: {
       id: true,
+      email: true,
       passwordHash: true,
       collegeId: true,
       status: true,
@@ -293,11 +296,24 @@ export async function login(input: { email: string; password: string }) {
     },
   });
 
+  if (!user) {
+    user = await prisma.user.findFirst({
+      where: { email: { equals: emailLower, mode: "insensitive" } },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        collegeId: true,
+        status: true,
+        college: { select: { subdomain: true, templateId: true } },
+      },
+    });
+  }
+
   // One message for both failures — which emails exist is not public.
   const invalid = new AuthError("Incorrect email or password", 401);
 
   if (!user) {
-    // Comparable work for a missing user, so absence isn't obvious from timing.
     await bcrypt.compare(parsed.data.password, `$2a$12$${"x".repeat(53)}`);
     throw invalid;
   }
@@ -306,17 +322,6 @@ export async function login(input: { email: string; password: string }) {
     throw invalid;
   }
 
-  /**
-   * Checked after the password, not before, and that ordering is the point.
-   *
-   * Before it, anyone could learn that a given address exists and has been
-   * deactivated without knowing its password — the enumeration this function
-   * refuses two checks above. After it, only somebody who has already proved they
-   * own the account learns anything, and what they learn is the one thing they
-   * need: this is not a password problem, so stop trying to fix it like one.
-   *
-   * 403 rather than 401: the credentials were right. The answer is no anyway.
-   */
   if (user.status !== "ACTIVE") {
     throw new AuthError(
       "This account has been deactivated. Contact your administrator.",
@@ -324,12 +329,34 @@ export async function login(input: { email: string; password: string }) {
     );
   }
 
+  let college = user.college;
+  let collegeId = user.collegeId;
+
+  if (!college) {
+    const seed = subdomainSeed(user.email);
+    const subdomain = await freeSubdomain(prisma, seed);
+    const newCollege = await prisma.college.create({
+      data: {
+        name: `${seed} college`,
+        subdomain,
+        status: "DRAFT",
+      },
+      select: { id: true, subdomain: true, templateId: true },
+    });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { collegeId: newCollege.id },
+    });
+    college = { subdomain: newCollege.subdomain, templateId: newCollege.templateId };
+    collegeId = newCollege.id;
+  }
+
   return {
     token: await mintSessionToken({
       userId: user.id,
-      collegeId: user.collegeId,
+      collegeId,
     }),
-    subdomain: user.college.subdomain,
-    next: destinationFor(user.college),
+    subdomain: college.subdomain,
+    next: destinationFor(college),
   };
 }

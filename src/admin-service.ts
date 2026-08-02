@@ -666,10 +666,15 @@ export async function updateUserPasswordForAdmin(
   if (!user) throw new AuthError("User not found", 404);
 
   const passwordHash = await bcrypt.hash(password, 12);
+  const normalizedEmail = user.email.trim().toLowerCase();
 
   await prisma.user.update({
     where: { id: userId },
-    data: { passwordHash, status: "ACTIVE" },
+    data: {
+      email: normalizedEmail,
+      passwordHash,
+      status: "ACTIVE",
+    },
   });
 
   await recordAudit({
@@ -677,10 +682,10 @@ export async function updateUserPasswordForAdmin(
     action: "user.update_password",
     targetType: "user",
     targetId: userId,
-    summary: `Updated password for ${user.email}`,
-    metadata: { email: user.email },
+    summary: `Updated password for ${normalizedEmail}`,
+    metadata: { email: normalizedEmail },
   });
 
-  return { success: true, email: user.email };
+  return { success: true, email: normalizedEmail };
 }
 
