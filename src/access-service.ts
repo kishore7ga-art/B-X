@@ -12,6 +12,7 @@ import {
 } from "@/auth-service";
 import { prisma } from "@/db";
 import { verifyGoogleIdToken } from "@/google-identity";
+import { subdomainFromName } from "@/lib/college-types";
 
 /**
  * Asking for access, before there is an account to ask with.
@@ -239,10 +240,14 @@ const hashToken = (raw: string) =>
  * Returns the raw token exactly once, to its caller, and never again — there is
  * no way to read it back out of the database.
  */
-export async function approveAccessRequest(id: string, actor: AdminSession) {
+export async function approveAccessRequest(
+  id: string,
+  actor: AdminSession,
+  customPassword?: string,
+) {
   const request = await prisma.accessRequest.findUnique({
     where: { id },
-    select: { id: true, name: true, email: true, status: true },
+    select: { id: true, name: true, email: true, organization: true, status: true },
   });
 
   if (!request) throw new AuthError("That request no longer exists", 404);
@@ -250,38 +255,64 @@ export async function approveAccessRequest(id: string, actor: AdminSession) {
     throw new AuthError(`That request was already ${request.status.toLowerCase()}`, 409);
   }
 
-  /**
-   * Refused here rather than discovered at activation.
-   *
-   * `users.email` is unique, so an invite sent to an address that already has an
-   * account cannot be redeemed — activation would hit a constraint violation
-   * after the person clicked the link, which is the worst moment to find out and
-   * blames them for our bookkeeping. The admin is told now, while it is still a
-   * decision.
-   */
-  const taken = await prisma.user.findUnique({
-    where: { email: request.email },
-    select: { id: true },
-  });
-  if (taken) {
-    throw new AuthError(
-      `${request.email} already has an account — no invite was sent`,
-      409,
-    );
-  }
-
   const rawToken = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
 
-  /**
-   * `updateMany` with the status in the filter, not `update` by id.
-   *
-   * Two admins clicking Approve on the same row is a real thing in a panel with
-   * a list that does not refresh itself. `update` would run twice and mint two
-   * tokens, the second silently replacing the first — so the invite in the
-   * earlier email stops working and nobody learns why. This writes only while
-   * the row is still PENDING, so exactly one caller wins and the other is told.
-   */
+  // Immediately create or activate user account on the spot
+  const passToUse = customPassword?.trim() || "college123";
+  const passwordHash = await bcrypt.hash(passToUse, 12);
+
+  let user = await prisma.user.findUnique({
+    where: { email: request.email },
+  });
+
+  if (!user) {
+    const orgName = request.organization?.trim() || request.name?.trim() || "College";
+    let college = await prisma.college.findFirst({
+      where: { name: orgName },
+      select: { id: true },
+    });
+
+    if (!college) {
+      const baseSubdomain = subdomainFromName(orgName);
+      let candidate = baseSubdomain;
+      for (let suffix = 0; suffix < 50; suffix++) {
+        candidate = suffix === 0 ? baseSubdomain : `${baseSubdomain}-${suffix + 1}`;
+        const taken = await prisma.college.findUnique({
+          where: { subdomain: candidate },
+          select: { id: true },
+        });
+        if (!taken) break;
+      }
+
+      college = await prisma.college.create({
+        data: {
+          name: orgName,
+          subdomain: candidate,
+          status: "DRAFT",
+        },
+        select: { id: true },
+      });
+    }
+
+    user = await prisma.user.create({
+      data: {
+        email: request.email,
+        passwordHash,
+        collegeId: college.id,
+        status: "ACTIVE",
+      },
+    });
+  } else {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        status: "ACTIVE",
+        passwordHash,
+      },
+    });
+  }
+
   const { count } = await prisma.accessRequest.updateMany({
     where: { id, status: "PENDING" },
     data: {
@@ -291,6 +322,7 @@ export async function approveAccessRequest(id: string, actor: AdminSession) {
       reviewedByEmail: actor.email,
       inviteTokenHash: hashToken(rawToken),
       inviteTokenExpiresAt: expiresAt,
+      createdUserId: user.id,
     },
   });
 
@@ -303,11 +335,11 @@ export async function approveAccessRequest(id: string, actor: AdminSession) {
     action: "access_request.approve",
     targetType: "access_request",
     targetId: id,
-    summary: `Approved access for ${request.email} and issued a 48-hour invite`,
-    metadata: { email: request.email, expiresAt: expiresAt.toISOString() },
+    summary: `Approved access for ${request.email} and created user account on the spot`,
+    metadata: { email: request.email, userId: user.id, expiresAt: expiresAt.toISOString() },
   });
 
-  return { email: request.email, name: request.name, rawToken, expiresAt };
+  return { email: request.email, name: request.name, rawToken, expiresAt, user };
 }
 
 /**

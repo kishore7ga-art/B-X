@@ -1285,9 +1285,11 @@ app.get("/api/v1/admin/access-requests", async (req, res) => {
 app.post("/api/v1/admin/access-requests/:id/approve", async (req, res) => {
   try {
     const session = await requireAdmin(req);
-    const { email, name, rawToken, expiresAt } = await approveAccessRequest(
-      req.params.id,
+    const password = typeof req.body?.password === "string" ? req.body.password : undefined;
+    const { email, name, rawToken, expiresAt, user } = await approveAccessRequest(
+      req.params.id as string,
       session,
+      password,
     );
 
     const delivery = await sendActivationEmail({
@@ -1297,11 +1299,10 @@ app.post("/api/v1/admin/access-requests/:id/approve", async (req, res) => {
       expiresAt,
     });
 
-    // Never the token. The panel gets what it needs to redraw the row and to
-    // tell the operator whether anything actually left the building.
     res.json({
       approved: true,
       email,
+      userId: user.id,
       expiresAt: expiresAt.toISOString(),
       delivered: delivery.delivered,
       ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
