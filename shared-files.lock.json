@@ -1,8 +1,8 @@
 {
-  "prisma/schema.prisma": "d9648832e4eb7182",
-  "prisma/seed.ts": "c00b89102eae24b4",
+  "prisma/schema.prisma": "121b26cde1f02703",
+  "prisma/seed.ts": "ebed60a0678f4b89",
   "src/lib/sections/schemas.ts": "fa7844e50bfdb14b",
-  "src/lib/sections/defaults.ts": "9f6d66490373734a",
+  "src/lib/sections/defaults.ts": "281e296fc4a798e7",
   "src/lib/sections/personalize.ts": "d1841d119215d7b0",
   "src/lib/college-types.ts": "cedbaf82871115ce",
   "src/lib/json-stable.ts": "6141a2d81b86d2fc",

@@ -16,10 +16,27 @@ export function defaultContentFor(
   if (sectionType === SectionType.HERO) {
     return parseSectionContent(SectionType.HERO, {
       collegeName,
-      tagline: "Your college tagline",
-      intro: "A short introduction to your institution.",
+      tagline: "",
+      intro: "",
     });
   }
 
   return parseSectionContent(sectionType, {});
+}
+
+export function sanitizeSectionContent(
+  sectionType: string,
+  content: unknown,
+): unknown {
+  if (
+    sectionType === SectionType.HERO &&
+    content &&
+    typeof content === "object"
+  ) {
+    const h = { ...(content as Record<string, unknown>) };
+    if (h.tagline === "Your college tagline") h.tagline = "";
+    if (h.intro === "A short introduction to your institution.") h.intro = "";
+    return h;
+  }
+  return content;
 }

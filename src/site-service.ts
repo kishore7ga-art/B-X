@@ -1,4 +1,5 @@
 import { prisma } from "@/db";
+import { sanitizeSectionContent } from "@/lib/sections/defaults";
 import { OFFERABLE } from "@/library-service";
 
 /**
@@ -199,7 +200,7 @@ export async function getSitePage(
       variantName: row.variant.variantName,
       displayOrder: row.displayOrder,
       isVisible: row.isVisible,
-      content: row.content,
+      content: sanitizeSectionContent(row.section.sectionType, row.content),
     })),
     /** True when this render is a draft shown to its own college. */
     isOwnerPreview,

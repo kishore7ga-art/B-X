@@ -4,6 +4,7 @@ import type {
   EditorPagePayload,
 } from "@/lib/api-contract";
 import { isSupportedSectionType } from "@/lib/sections/schemas";
+import { sanitizeSectionContent } from "@/lib/sections/defaults";
 import { OFFERABLE } from "@/library-service";
 import { variantLibrary } from "@/variant-library";
 
@@ -118,7 +119,7 @@ export async function getEditorPage(
       variantName: row.variant.variantName,
       displayOrder: row.displayOrder,
       isVisible: row.isVisible,
-      content: row.content,
+      content: sanitizeSectionContent(row.section.sectionType, row.content),
       lastSavedAt: row.lastSavedAt?.toISOString() ?? null,
       // Every design of this type, from the shared library — which is what the
       // old per-slot include was already trying to approximate.
