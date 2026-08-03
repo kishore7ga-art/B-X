@@ -5,7 +5,6 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { createPool } from "../src/lib/db-pool";
 import { SectionType } from "../src/generated/prisma/enums";
-import type { SupportedSectionType } from "../src/lib/sections/schemas";
 
 // Same cloud-tuned pool the app uses, so seeding works against a managed
 // database (TLS) as well as local Postgres.
@@ -192,7 +191,7 @@ async function seedReferenceData() {
   );
 
   for (const librarySpec of VARIANT_LIBRARY) {
-    const sectionType = librarySpec.sectionType as SupportedSectionType;
+    const sectionType = librarySpec.sectionType as SectionType;
     for (const [index, variant] of librarySpec.variants.entries()) {
       await prisma.sectionVariant.upsert({
         where: { componentKey: variant.componentKey },
