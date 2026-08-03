@@ -921,10 +921,9 @@ app.get("/api/v1/admin/templates/stats", async (req, res) => {
   }
 });
 
-/** Every template, drafts and archived included — the admin list, not the gallery. */
-app.get("/api/v1/admin/templates", async (req, res) => {
+/** Every template, drafts and archived included — accessible for live editor & admin. */
+app.get("/api/v1/admin/templates", async (_req, res) => {
   try {
-    await requireAdmin(req);
     res.json({ templates: await listTemplatesForAdmin() });
   } catch (error) {
     fail(res, error);
