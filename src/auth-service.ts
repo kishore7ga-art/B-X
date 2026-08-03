@@ -275,7 +275,7 @@ export function destinationFor(college: {
   subdomain: string;
   templateId: string | null;
 }) {
-  return college.templateId ? `/editor/${college.subdomain}` : "/onboarding";
+  return `/editor/${college.subdomain}`;
 }
 
 export async function login(input: { email: string; password: string }) {
