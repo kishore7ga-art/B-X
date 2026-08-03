@@ -41,13 +41,6 @@ import {
   login,
   mintSessionToken,
 } from "@/auth-service";
-import { prisma } from "@/db";
-import {
-  cycleTemplate,
-  getTemplatePreview,
-  startWithDesign,
-  startWithDesignSchema,
-} from "@/design-service";
 import { docsPage } from "@/docs-page";
 import {
   createTemplate,
@@ -61,28 +54,8 @@ import {
   updateTemplateSlots,
 } from "@/library-service";
 import { mailerConfigured, sendActivationEmail } from "@/mailer";
-import {
-  buildSiteForType,
-  completeOnboarding,
-  onboardingSchema,
-} from "@/onboarding-service";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
-import {
-  getSitePage,
-  getTemplateDetail,
-  listTemplates,
-} from "@/site-service";
-import { getCollege, getEditorPage } from "@/editor-service";
-import {
-  BadRequest,
-  listHistory,
-  NotFound,
-  restoreSchema,
-  restoreVersion,
-  saveContent,
-  saveSchema,
-} from "@/sections-service";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
@@ -819,99 +792,6 @@ app.get("/docs", (_req, res) => {
  * Draft visibility is the one access rule here, and it is enforced inside
  * `getSitePage` against whatever session the caller happens to have.
  */
-app.get("/api/v1/templates", async (_req, res) => {
-  try {
-    res.json({ templates: await listTemplates() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.get("/api/v1/templates/:templateId", async (req, res) => {
-  try {
-    const detail = await getTemplateDetail(req.params.templateId);
-    if (!detail) {
-      res.status(404).json({ error: "No such template" });
-      return;
-    }
-    res.json(detail);
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.get("/api/v1/sites/:subdomain", async (req, res) => {
-  try {
-    // A session is optional here and only ever widens what is visible: without
-    // one you see published sites, with one you also see your own draft.
-    const session = await getSession(req.headers.cookie);
-    const page = typeof req.query.page === "string" ? req.query.page : undefined;
-
-    const data = await getSitePage(
-      req.params.subdomain,
-      page,
-      session?.collegeId ?? null,
-    );
-
-    if (!data) {
-      res.status(404).json({ error: "Not found" });
-      return;
-    }
-
-    res.json(data);
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-// --- Editor reads -------------------------------------------------------------
-
-/**
- * Who the caller is, as far as the guarded pages are concerned.
- *
- * 204 rather than 404 for a session whose college has since been deleted: the
- * request was understood and answered, there simply is no college. A 404 here
- * would be indistinguishable from asking for the wrong URL.
- */
-app.get("/api/v1/me", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const college = await getCollege(session.collegeId);
-    if (!college) {
-      res.status(204).end();
-      return;
-    }
-    res.json({ college });
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.get("/api/v1/editor/:subdomain", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const page =
-      typeof req.query.page === "string" ? req.query.page : undefined;
-
-    const data = await getEditorPage(req.params.subdomain, page);
-    if (!data) {
-      res.status(404).json({ error: "Not found" });
-      return;
-    }
-
-    // The tenant boundary, enforced where the data is rather than trusted to
-    // the caller: a session may only read its own college's editor.
-    if (data.college.id !== session.collegeId) {
-      res.status(403).json({ error: "Not your college" });
-      return;
-    }
-
-    res.json(data);
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
 // --- Admin panel --------------------------------------------------------------
 
 /**
@@ -1344,119 +1224,6 @@ app.patch("/api/v1/admin/users/:id/password", async (req, res) => {
   try {
     const session = await requireAdmin(req);
     res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-// --- Onboarding and design ----------------------------------------------------
-
-/**
- * Every one of these is a write scoped to the caller's own college.
- *
- * The tenant comes from the session and never from the body — there is no
- * collegeId parameter to tamper with, which is why none of them needs an
- * ownership check beyond being signed in.
- */
-app.post("/api/v1/onboarding", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const input = onboardingSchema.parse(req.body);
-    res.json(await completeOnboarding(session.collegeId, input));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.post("/api/v1/onboarding/build", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    res.json(await buildSiteForType(session.collegeId));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.post("/api/v1/design", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const input = startWithDesignSchema.parse(req.body);
-    res.json(await startWithDesign(session.collegeId, input));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.post("/api/v1/design/cycle", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    res.json(await cycleTemplate(session.collegeId));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-/**
- * What a template would look like on this college, without writing anything.
- *
- * Behind a session and scoped to the caller's own college: it renders that
- * college's name and theme into the preview, so it is their data even though
- * nothing is saved.
- */
-app.get("/api/v1/sites/:subdomain/preview", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const templateId =
-      typeof req.query.template === "string" ? req.query.template : undefined;
-    if (!templateId) {
-      res.status(400).json({ error: "template query parameter is required" });
-      return;
-    }
-
-    const college = await getCollege(session.collegeId);
-    if (!college || college.subdomain !== req.params.subdomain) {
-      res.status(403).json({ error: "Not your college" });
-      return;
-    }
-
-    const data = await getTemplatePreview(req.params.subdomain, templateId);
-    if (!data) {
-      res.status(404).json({ error: "Not found" });
-      return;
-    }
-
-    res.json(data);
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-// --- Sections ---------------------------------------------------------------
-
-app.get("/api/v1/sections/:id", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    res.json({ versions: await listHistory(req.params.id, session.collegeId) });
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.patch("/api/v1/sections/:id", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const input = saveSchema.parse(req.body);
-    res.json(await saveContent(req.params.id, session.collegeId, input));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.post("/api/v1/sections/:id", async (req, res) => {
-  try {
-    const session = await requireSession(req);
-    const { versionId } = restoreSchema.parse(req.body);
-    res.json(await restoreVersion(req.params.id, session.collegeId, versionId));
   } catch (error) {
     fail(res, error);
   }

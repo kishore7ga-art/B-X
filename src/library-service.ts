@@ -4,8 +4,7 @@ import sanitizeHtml from "sanitize-html";
 import { type AdminSession, recordAudit } from "@/admin-service";
 import { AuthError } from "@/auth-service";
 import { prisma } from "@/db";
-import type { SectionType } from "@/generated/prisma/enums";
-import { BadRequest, NotFound } from "@/sections-service";
+import { BadRequest, NotFound } from "@/errors";
 
 export function sanitizeTemplateCode(rawCode: string): string {
   return sanitizeHtml(rawCode, {

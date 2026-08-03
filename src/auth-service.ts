@@ -271,11 +271,11 @@ export async function provisionCollegeAndUser(
  * design. An adopted college may already have a template, which is why this is
  * computed rather than a constant.
  */
-export function destinationFor(college: {
+export function destinationFor(_college: {
   subdomain: string;
   templateId: string | null;
 }) {
-  return `/editor/${college.subdomain}`;
+  return "/";
 }
 
 export async function login(input: { email: string; password: string }) {
