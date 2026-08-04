@@ -18,6 +18,7 @@ import {
   adminOverview,
   adminSites,
   adminStatus,
+  deleteUserForAdmin,
   getAdminSession,
   listUsersForAdmin,
   updateUserPasswordForAdmin,
@@ -1306,6 +1307,15 @@ app.patch("/api/v1/admin/users/:id/password", async (req, res) => {
   try {
     const session = await requireAdmin(req);
     res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete("/api/v1/admin/users/:id", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await deleteUserForAdmin(req.params.id as string, session));
   } catch (error) {
     fail(res, error);
   }

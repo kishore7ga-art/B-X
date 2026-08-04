@@ -1290,6 +1290,19 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/admin/users/{id}": {
+      delete: {
+        tags: ["Admin"],
+        summary: "Delete user account and college tenant",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        responses: {
+          "200": json({ type: "object" }, "User account deleted."),
+          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
+        },
+      },
+    },
+
 
 
     "/api/uploads": {

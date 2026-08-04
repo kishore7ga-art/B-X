@@ -689,3 +689,43 @@ export async function updateUserPasswordForAdmin(
   return { success: true, email: normalizedEmail };
 }
 
+export async function deleteUserForAdmin(userId: string, actor: AdminSession) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, collegeId: true },
+  });
+
+  if (!user) throw new AuthError("User not found", 404);
+
+  const userEmail = user.email;
+
+  // Delete user record
+  await prisma.user.delete({
+    where: { id: userId },
+  });
+
+  // Clean up college if no remaining users
+  if (user.collegeId) {
+    const remaining = await prisma.user.count({ where: { collegeId: user.collegeId } });
+    if (remaining === 0) {
+      await prisma.college.delete({ where: { id: user.collegeId } }).catch(() => {});
+    }
+  }
+
+  // Clean up access requests for this email so they can submit fresh requests
+  await prisma.accessRequest.deleteMany({
+    where: { email: userEmail },
+  }).catch(() => {});
+
+  await recordAudit({
+    actor,
+    action: "user.delete",
+    targetType: "user",
+    targetId: userId,
+    summary: `Deleted user account ${userEmail}`,
+    metadata: { email: userEmail },
+  });
+
+  return { success: true, email: userEmail };
+}
+
