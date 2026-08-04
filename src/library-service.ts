@@ -1,5 +1,6 @@
 import { z } from "zod";
 import sanitizeHtml from "sanitize-html";
+import type { SectionType } from "@/generated/prisma/enums";
 
 import { type AdminSession, recordAudit } from "@/admin-service";
 import { AuthError } from "@/auth-service";

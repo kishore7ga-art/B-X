@@ -1252,31 +1252,6 @@ export const openApiDocument = {
       },
     },
 
-    "/api/v1/admin/users": {
-      get: {
-        tags: ["Admin"],
-        summary: "List all users for admin",
-        security: SESSION_COOKIE,
-        responses: {
-          "200": json({ type: "object", properties: { users: { type: "array" } } }, "Users list."),
-          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
-        },
-      },
-    },
-
-    "/api/v1/admin/users/{id}/status": {
-      patch: {
-        tags: ["Admin"],
-        summary: "Update user status for admin",
-        security: SESSION_COOKIE,
-        parameters: [{ name: "id", in: "path", required: true, schema: str }],
-        responses: {
-          "200": json({ type: "object" }, "User status updated."),
-          ...errors([401, "Not signed in."], [503, "Admin panel not configured."]),
-        },
-      },
-    },
-
     "/api/v1/admin/users/{id}/password": {
       patch: {
         tags: ["Admin"],
