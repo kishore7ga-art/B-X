@@ -58,6 +58,10 @@ import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
 import { BadRequest, NotFound } from "@/errors";
 import { prisma } from "@/db";
+import {
+  getDefaultWebsiteConfig,
+  updateDefaultWebsiteConfig,
+} from "@/default-website-service";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
@@ -952,6 +956,33 @@ app.get("/api/v1/admin/sites", async (req, res) => {
   try {
     await requireAdmin(req);
     res.json({ sites: await adminSites() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/default-website", async (_req, res) => {
+  try {
+    res.json(await getDefaultWebsiteConfig());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get("/api/v1/admin/default-website", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await getDefaultWebsiteConfig());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.put("/api/v1/admin/default-website", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    const updated = await updateDefaultWebsiteConfig(req.body ?? {});
+    res.json(updated);
   } catch (error) {
     fail(res, error);
   }

@@ -279,6 +279,38 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/default-website": {
+      get: {
+        tags: ["Templates"],
+        summary: "Platform default website structure",
+        description: "Returns the admin-configured default website structure for all pages.",
+        responses: {
+          200: { description: "The default website layout and sections." },
+        },
+      },
+    },
+
+    "/api/v1/admin/default-website": {
+      get: {
+        tags: ["Admin"],
+        summary: "Get default website configuration",
+        description: "Returns the platform default website page & section configuration for Super Admin.",
+        responses: {
+          200: { description: "Default website configuration." },
+          401: { description: "Admin authentication required." },
+        },
+      },
+      put: {
+        tags: ["Admin"],
+        summary: "Update default website configuration",
+        description: "Updates the platform default website structure across all pages.",
+        responses: {
+          200: { description: "Updated default website configuration." },
+          401: { description: "Admin authentication required." },
+        },
+      },
+    },
+
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
