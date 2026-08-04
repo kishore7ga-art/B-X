@@ -56,6 +56,8 @@ import {
 import { mailerConfigured, sendActivationEmail } from "@/mailer";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
+import { BadRequest, NotFound } from "@/errors";
+import { prisma } from "@/db";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
@@ -659,6 +661,56 @@ app.post("/api/v1/auth/login", async (req, res) => {
  * Reinstate it the day sessions become revocable server-side, which is the day
  * it would actually do something.
  */
+
+// --- Current user (college) ---------------------------------------------------
+
+/**
+ * Returns the college that owns the current session.
+ *
+ * The frontend calls this on every guarded page to verify the session is live
+ * and fetch the college's current state. Without it, getCurrentCollege() in
+ * xite-F falls through and redirects back to /login after every sign-in.
+ */
+app.get("/api/v1/me", async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie);
+    if (!session) {
+      res.status(401).json({ error: "Not signed in" });
+      return;
+    }
+
+    const college = await prisma.college.findUnique({
+      where: { id: session.collegeId },
+      select: {
+        id: true,
+        name: true,
+        subdomain: true,
+        customDomain: true,
+        templateId: true,
+        themePaletteId: true,
+        themeFontId: true,
+        status: true,
+        collegeType: true,
+        isDemo: true,
+        createdAt: true,
+      },
+    });
+
+    if (!college) {
+      res.status(404).json({ error: "College not found" });
+      return;
+    }
+
+    res.json({
+      college: {
+        ...college,
+        createdAt: college.createdAt.toISOString(),
+      },
+    });
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
 // --- Access requests ----------------------------------------------------------
 

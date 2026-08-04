@@ -234,6 +234,51 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/me": {
+      get: {
+        tags: ["Auth"],
+        summary: "Current college",
+        description:
+          "Returns the college that owns the current session cookie. " +
+          "Called by the frontend on every guarded page to verify the " +
+          "session is live and fetch the college's current state.\n\n" +
+          "401 when no valid session cookie is present.",
+        responses: {
+          200: {
+            description: "The signed-in college.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["college"],
+                  properties: {
+                    college: {
+                      type: "object",
+                      required: ["id", "name", "subdomain", "status", "isDemo", "createdAt"],
+                      properties: {
+                        id: { type: "string" },
+                        name: { type: "string" },
+                        subdomain: { type: "string" },
+                        customDomain: { type: "string", nullable: true },
+                        templateId: { type: "string", nullable: true },
+                        themePaletteId: { type: "string", nullable: true },
+                        themeFontId: { type: "string", nullable: true },
+                        status: { type: "string" },
+                        collegeType: { type: "string", nullable: true },
+                        isDemo: { type: "boolean" },
+                        createdAt: { type: "string", format: "date-time" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: "Not signed in." },
+        },
+      },
+    },
+
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
