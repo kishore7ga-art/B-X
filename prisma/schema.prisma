@@ -477,6 +477,7 @@ model AccessRequest {
   /// and the address is not an account until activation makes it one. Uniqueness
   /// is enforced where it means something — on `users.email`.
   email        String
+  passwordHash String?             @map("password_hash")
   organization String?
   message      String?
   status       AccessRequestStatus @default(PENDING)

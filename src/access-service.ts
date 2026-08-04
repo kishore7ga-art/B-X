@@ -46,6 +46,11 @@ export const accessRequestSchema = z.object({
     .trim()
     .toLowerCase()
     .pipe(z.email("Enter a valid email")),
+  password: z
+    .string()
+    .trim()
+    .min(4, "Password must be at least 4 characters")
+    .optional(),
   organization: z
     .string()
     .trim()
@@ -82,18 +87,24 @@ const orNull = (value: string | undefined) => (value ? value : null);
  * to be confused about why they cannot get in — an admin can see it and decide.
  */
 export async function submitAccessRequest(input: unknown) {
-  const { name, email, organization, message } = accessRequestSchema.parse(input);
+  const { name, email, password, organization, message } = accessRequestSchema.parse(input);
 
   const pending = await prisma.accessRequest.findFirst({
     where: { email, status: "PENDING" },
     select: { id: true },
   });
 
+  let passwordHash: string | null = null;
+  if (password && password.trim()) {
+    passwordHash = await bcrypt.hash(password.trim(), 12);
+  }
+
   if (!pending) {
     await prisma.accessRequest.create({
       data: {
         name,
         email,
+        passwordHash,
         organization: orNull(organization),
         message: orNull(message),
       },
@@ -247,7 +258,7 @@ export async function approveAccessRequest(
 ) {
   const request = await prisma.accessRequest.findUnique({
     where: { id },
-    select: { id: true, name: true, email: true, organization: true, status: true },
+    select: { id: true, name: true, email: true, passwordHash: true, organization: true, status: true },
   });
 
   if (!request) throw new AuthError("That request no longer exists", 404);
@@ -258,9 +269,18 @@ export async function approveAccessRequest(
   const rawToken = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
 
-  // Immediately create or activate user account on the spot
-  const passToUse = customPassword?.trim() || "college123";
-  const passwordHash = await bcrypt.hash(passToUse, 12);
+  // Determine user password hash:
+  // 1. If Admin provided a custom password, hash it.
+  // 2. Else if user set their password during access request, use request.passwordHash.
+  // 3. Otherwise fall back to bcrypt hash of "college123".
+  let passwordHash: string;
+  if (customPassword && customPassword.trim()) {
+    passwordHash = await bcrypt.hash(customPassword.trim(), 12);
+  } else if (request.passwordHash) {
+    passwordHash = request.passwordHash;
+  } else {
+    passwordHash = await bcrypt.hash("college123", 12);
+  }
 
   let user = await prisma.user.findUnique({
     where: { email: request.email },
