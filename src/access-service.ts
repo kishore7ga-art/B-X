@@ -62,38 +62,42 @@ export async function submitAccessRequest(input: unknown) {
 
   const { name, email, password, organization, message } = parsed.data;
 
-  const pending = await prisma.accessRequest.findFirst({
-    where: { email, status: "PENDING" },
-    select: { id: true },
-  });
+  try {
+    const pending = await prisma.accessRequest.findFirst({
+      where: { email, status: "PENDING" },
+      select: { id: true },
+    });
 
-  let passwordHash: string | null = null;
-  if (password && password.trim()) {
-    passwordHash = await bcrypt.hash(password.trim(), 12);
-  }
-
-  if (!pending) {
-    try {
-      await prisma.accessRequest.create({
-        data: {
-          name,
-          email,
-          passwordHash,
-          organization: orNull(organization),
-          message: orNull(message),
-        },
-      });
-    } catch (dbErr) {
-      console.warn("[access-request] passwordHash column fallback invoked:", dbErr);
-      await prisma.accessRequest.create({
-        data: {
-          name,
-          email,
-          organization: orNull(organization),
-          message: orNull(message),
-        },
-      });
+    let passwordHash: string | null = null;
+    if (password && password.trim()) {
+      passwordHash = await bcrypt.hash(password.trim(), 12);
     }
+
+    if (!pending) {
+      try {
+        await prisma.accessRequest.create({
+          data: {
+            name,
+            email,
+            passwordHash,
+            organization: orNull(organization),
+            message: orNull(message),
+          },
+        });
+      } catch (createErr) {
+        console.warn("[access-request] Primary create with passwordHash failed, attempting fallback:", createErr);
+        await prisma.accessRequest.create({
+          data: {
+            name,
+            email,
+            organization: orNull(organization),
+            message: orNull(message),
+          },
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[access-request] Database operation encountered error:", err);
   }
 
   return { received: true as const };
