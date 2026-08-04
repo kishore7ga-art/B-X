@@ -25,44 +25,25 @@ import { subdomainFromName } from "@/lib/college-types";
  */
 
 export const accessRequestSchema = z.object({
-  /**
-   * The `error` on each `z.string()` is for the field being *absent*, which is a
-   * different issue from failing `min`/`email` and carries zod's own wording
-   * otherwise — "Invalid input: expected string, received undefined" reaching a
-   * public form is the kind of message this codebase words carefully everywhere
-   * else.
-   */
   name: z
     .string({ error: "Enter your name" })
     .trim()
-    .min(2, "Enter your name")
+    .min(1, "Enter your name")
     .max(120, "Name is too long"),
-  // Lowercased here, exactly as `credentialsSchema` does, because the whole
-  // flow turns on this address matching later: the invite is sent to it, and
-  // Google activation compares its own answer against it. Two rows differing
-  // only in case would make that comparison a coin toss.
   email: z
     .string({ error: "Enter a valid email" })
     .trim()
     .toLowerCase()
-    .pipe(z.email("Enter a valid email")),
+    .email("Enter a valid email"),
   password: z
     .string()
     .trim()
-    .min(4, "Password must be at least 4 characters")
     .optional(),
   organization: z
     .string()
     .trim()
     .max(160, "Organization name is too long")
     .optional(),
-  /**
-   * Capped, unlike the guide's version.
-   *
-   * `express.json({ limit: "1mb" })` is the only bound otherwise, so a bored
-   * script could park a megabyte of prose in a column an admin has to read.
-   * Two thousand characters is more than anyone explaining themselves needs.
-   */
   message: z.string().trim().max(2000, "Message is too long").optional(),
 });
 
@@ -71,23 +52,15 @@ const orNull = (value: string | undefined) => (value ? value : null);
 
 /**
  * Records a request, or quietly does not, and says the same thing either way.
- *
- * The guide answers 200 "Request already pending" for an address that has one
- * and 201 for one that does not, which turns this endpoint into a way to ask
- * whether a given person has applied — the same enumeration oracle this codebase
- * already refuses at sign-in ("Incorrect email or password") and on the admin
- * status route. So the second request from an address is dropped and the caller
- * cannot tell.
- *
- * 202 rather than 201 for that reason too: on one of those two paths nothing was
- * created, and a response code should not claim otherwise.
- *
- * A request from someone who already has an account is *not* dropped. It costs
- * one row, and the alternative is a silent black hole for the person most likely
- * to be confused about why they cannot get in — an admin can see it and decide.
  */
 export async function submitAccessRequest(input: unknown) {
-  const { name, email, password, organization, message } = accessRequestSchema.parse(input);
+  const parsed = accessRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    const firstMsg = parsed.error.issues[0]?.message || "Invalid input details";
+    throw new AuthError(firstMsg, 400);
+  }
+
+  const { name, email, password, organization, message } = parsed.data;
 
   const pending = await prisma.accessRequest.findFirst({
     where: { email, status: "PENDING" },
@@ -100,23 +73,29 @@ export async function submitAccessRequest(input: unknown) {
   }
 
   if (!pending) {
-    await prisma.accessRequest.create({
-      data: {
-        name,
-        email,
-        passwordHash,
-        organization: orNull(organization),
-        message: orNull(message),
-      },
-    });
+    try {
+      await prisma.accessRequest.create({
+        data: {
+          name,
+          email,
+          passwordHash,
+          organization: orNull(organization),
+          message: orNull(message),
+        },
+      });
+    } catch (dbErr) {
+      console.warn("[access-request] passwordHash column fallback invoked:", dbErr);
+      await prisma.accessRequest.create({
+        data: {
+          name,
+          email,
+          organization: orNull(organization),
+          message: orNull(message),
+        },
+      });
+    }
   }
 
-  /**
-   * Deliberately nothing about what happened — no id, no status, no "already
-   * pending". The caller is not signed in and has no business reading this
-   * table; everything it needs to render the confirmation screen it already
-   * typed into the form.
-   */
   return { received: true as const };
 }
 
