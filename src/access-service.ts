@@ -265,8 +265,10 @@ export async function approveAccessRequest(
     passwordHash = await bcrypt.hash("college123", 12);
   }
 
+  const cleanEmail = request.email.trim().toLowerCase();
+
   let user = await prisma.user.findUnique({
-    where: { email: request.email },
+    where: { email: cleanEmail },
   });
 
   if (!user) {
@@ -300,7 +302,7 @@ export async function approveAccessRequest(
 
     user = await prisma.user.create({
       data: {
-        email: request.email,
+        email: cleanEmail,
         passwordHash,
         collegeId: college.id,
         status: "ACTIVE",
