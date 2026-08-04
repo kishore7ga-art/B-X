@@ -275,15 +275,15 @@ const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
   ],
 };
 
-/** Ensure service_secrets or system table holds default website config */
+/** Ensure service_secrets table holds default website config */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   try {
     const { rows } = await pool.query(
-      "SELECT secret_value FROM service_secrets WHERE secret_name = $1",
+      "SELECT value FROM service_secrets WHERE name = $1",
       ["DEFAULT_WEBSITE_CONFIG"]
     );
-    if (rows.length > 0 && rows[0].secret_value) {
-      const parsed = JSON.parse(rows[0].secret_value);
+    if (rows.length > 0 && rows[0].value) {
+      const parsed = JSON.parse(rows[0].value);
       if (parsed && Array.isArray(parsed.pages)) {
         return parsed as DefaultWebsiteConfig;
       }
@@ -299,9 +299,9 @@ export async function updateDefaultWebsiteConfig(
 ): Promise<DefaultWebsiteConfig> {
   const jsonStr = JSON.stringify(config);
   await pool.query(
-    `INSERT INTO service_secrets (id, secret_name, secret_value, created_at, updated_at)
-     VALUES (gen_random_uuid(), $1, $2, NOW(), NOW())
-     ON CONFLICT (secret_name) DO UPDATE SET secret_value = $2, updated_at = NOW()`,
+    `INSERT INTO service_secrets (name, value, created_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (name) DO UPDATE SET value = $2`,
     ["DEFAULT_WEBSITE_CONFIG", jsonStr]
   );
   return config;
