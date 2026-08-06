@@ -471,7 +471,33 @@ async function requestForToken(rawToken: string) {
   // "not valid" is the honest answer for a link that has already been used.
   if (!request) throw INVALID_INVITE;
   if (request.status !== "APPROVED") throw INVALID_INVITE;
-  if (request.createdUserId) throw INVALID_INVITE;
+
+  if (request.createdUserId) {
+    const createdUser = await prisma.user.findUnique({
+      where: { id: request.createdUserId },
+      select: { id: true, status: true, passwordHash: true },
+    });
+
+    if (
+      createdUser &&
+      (createdUser.status === "ACTIVE" || Boolean(createdUser.passwordHash))
+    ) {
+      return {
+        id: request.id,
+        name: request.name,
+        email: request.email,
+        status: request.status,
+        inviteTokenExpiresAt: request.inviteTokenExpiresAt,
+        createdUserId: request.createdUserId,
+        valid: true as const,
+        hasPassword: Boolean(createdUser.passwordHash),
+        alreadyActive: true as const,
+      };
+    }
+
+    throw INVALID_INVITE;
+  }
+
   if (
     !request.inviteTokenExpiresAt ||
     request.inviteTokenExpiresAt.getTime() <= Date.now()
@@ -479,7 +505,12 @@ async function requestForToken(rawToken: string) {
     throw EXPIRED_INVITE;
   }
 
-  return request;
+  return {
+    ...request,
+    valid: true as const,
+    hasPassword: false,
+    alreadyActive: false as const,
+  };
 }
 
 /**
@@ -649,5 +680,11 @@ export async function activateWithGoogle(input: unknown) {
 export async function inviteSummary(rawToken: unknown) {
   const token = tokenSchema.parse(rawToken);
   const request = await requestForToken(token);
-  return { email: request.email, name: request.name };
+  return {
+    valid: request.valid,
+    email: request.email,
+    name: request.name,
+    hasPassword: request.hasPassword,
+    alreadyActive: request.alreadyActive,
+  };
 }
