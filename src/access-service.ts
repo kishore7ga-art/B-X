@@ -128,11 +128,10 @@ export const listQuerySchema = z.object({
     .default("ALL"),
 });
 
-const REVIEW_FIELDS = {
+const BASE_REVIEW_FIELDS = {
   id: true,
   name: true,
   email: true,
-  passwordHash: true,
   organization: true,
   message: true,
   status: true,
@@ -141,6 +140,11 @@ const REVIEW_FIELDS = {
   reviewedByEmail: true,
   inviteTokenExpiresAt: true,
   createdUserId: true,
+} as const;
+
+const REVIEW_FIELDS_WITH_PASSWORD = {
+  ...BASE_REVIEW_FIELDS,
+  passwordHash: true,
 } as const;
 
 export type AccessRequestRow = {
@@ -173,11 +177,21 @@ export async function listAccessRequests(query: unknown): Promise<AccessRequestR
 
   const whereClause = status === "ALL" ? {} : { status };
 
-  const rows = await prisma.accessRequest.findMany({
-    where: whereClause,
-    orderBy: { createdAt: "desc" },
-    select: REVIEW_FIELDS,
-  });
+  let rows: any[] = [];
+  try {
+    rows = await prisma.accessRequest.findMany({
+      where: whereClause,
+      orderBy: { createdAt: "desc" },
+      select: REVIEW_FIELDS_WITH_PASSWORD,
+    });
+  } catch (err) {
+    console.warn("[access-request] findMany with passwordHash failed, falling back to base fields:", err);
+    rows = await prisma.accessRequest.findMany({
+      where: whereClause,
+      orderBy: { createdAt: "desc" },
+      select: BASE_REVIEW_FIELDS,
+    });
+  }
 
   const existing = rows.length
     ? new Set(
@@ -233,10 +247,18 @@ export async function approveAccessRequest(
   actor: AdminSession,
   customPassword?: string,
 ) {
-  const request = await prisma.accessRequest.findUnique({
-    where: { id },
-    select: { id: true, name: true, email: true, passwordHash: true, organization: true, status: true },
-  });
+  let request: any = null;
+  try {
+    request = await prisma.accessRequest.findUnique({
+      where: { id },
+      select: { id: true, name: true, email: true, passwordHash: true, organization: true, status: true },
+    });
+  } catch {
+    request = await prisma.accessRequest.findUnique({
+      where: { id },
+      select: { id: true, name: true, email: true, organization: true, status: true },
+    });
+  }
 
   if (!request) throw new AuthError("That request no longer exists", 404);
   if (request.status !== "PENDING") {
