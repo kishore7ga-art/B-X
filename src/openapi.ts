@@ -1121,8 +1121,8 @@ export const openApiDocument = {
             required: false,
             schema: {
               type: "string",
-              enum: ["PENDING", "APPROVED", "REJECTED"],
-              default: "PENDING",
+              enum: ["ALL", "PENDING", "APPROVED", "REJECTED"],
+              default: "ALL",
             },
           },
         ],

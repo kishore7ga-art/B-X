@@ -61,10 +61,11 @@ export async function submitAccessRequest(input: unknown) {
   }
 
   const { name, email, password, organization, message } = parsed.data;
+  const cleanEmail = email.trim().toLowerCase();
 
   try {
     const pending = await prisma.accessRequest.findFirst({
-      where: { email, status: "PENDING" },
+      where: { email: cleanEmail, status: "PENDING" },
       select: { id: true },
     });
 
@@ -73,12 +74,23 @@ export async function submitAccessRequest(input: unknown) {
       passwordHash = await bcrypt.hash(password.trim(), 12);
     }
 
-    if (!pending) {
+    if (pending) {
+      await prisma.accessRequest.update({
+        where: { id: pending.id },
+        data: {
+          name,
+          ...(passwordHash ? { passwordHash } : {}),
+          organization: orNull(organization),
+          message: orNull(message),
+          createdAt: new Date(),
+        },
+      });
+    } else {
       try {
         await prisma.accessRequest.create({
           data: {
             name,
-            email,
+            email: cleanEmail,
             passwordHash,
             organization: orNull(organization),
             message: orNull(message),
@@ -89,7 +101,7 @@ export async function submitAccessRequest(input: unknown) {
         await prisma.accessRequest.create({
           data: {
             name,
-            email,
+            email: cleanEmail,
             organization: orNull(organization),
             message: orNull(message),
           },
@@ -109,33 +121,18 @@ export async function submitAccessRequest(input: unknown) {
 const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 
 export const listQuerySchema = z.object({
-  /**
-   * Validated against the enum rather than passed through.
-   *
-   * The guide reads `req.query.status` and hands it to Prisma, which throws on
-   * anything that is not an enum member — a 500 and a stack trace for what is
-   * really a typo in a query string. `PENDING` by default because that is the
-   * only list with work in it.
-   */
   status: z
-    .enum(["PENDING", "APPROVED", "REJECTED"], {
-      error: "status must be PENDING, APPROVED or REJECTED",
+    .enum(["ALL", "PENDING", "APPROVED", "REJECTED"], {
+      error: "status must be ALL, PENDING, APPROVED or REJECTED",
     })
-    .default("PENDING"),
+    .default("ALL"),
 });
 
-/**
- * Never leaves this module.
- *
- * The stored value is a hash and the raw token exists only between minting and
- * the email that carries it. Selecting it explicitly everywhere would work
- * until somebody wrote `select: undefined` and shipped the column to a browser,
- * so the read path names its columns and this is not among them.
- */
 const REVIEW_FIELDS = {
   id: true,
   name: true,
   email: true,
+  passwordHash: true,
   organization: true,
   message: true,
   status: true,
@@ -150,6 +147,7 @@ export type AccessRequestRow = {
   id: string;
   name: string;
   email: string;
+  hasPassword?: boolean;
   organization: string | null;
   message: string | null;
   status: "PENDING" | "APPROVED" | "REJECTED";
@@ -173,19 +171,14 @@ export type AccessRequestRow = {
 export async function listAccessRequests(query: unknown): Promise<AccessRequestRow[]> {
   const { status } = listQuerySchema.parse(query);
 
+  const whereClause = status === "ALL" ? {} : { status };
+
   const rows = await prisma.accessRequest.findMany({
-    where: { status },
+    where: whereClause,
     orderBy: { createdAt: "desc" },
     select: REVIEW_FIELDS,
   });
 
-  /**
-   * One query for every address on the page rather than one per row.
-   *
-   * The list is short today and this would be invisible either way; it is
-   * written this way because the N+1 version is the kind that stops being
-   * invisible without anybody changing it.
-   */
   const existing = rows.length
     ? new Set(
         (
@@ -203,6 +196,7 @@ export async function listAccessRequests(query: unknown): Promise<AccessRequestR
     id: row.id,
     name: row.name,
     email: row.email,
+    hasPassword: Boolean(row.passwordHash),
     organization: row.organization,
     message: row.message,
     status: row.status,
