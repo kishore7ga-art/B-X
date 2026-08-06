@@ -166,38 +166,48 @@ export type TemplateRow = {
  * each naming the library design it leads with via `defaultVariantId`.
  */
 export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
-  const templates = await prisma.template.findMany({
-    orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      thumbnailUrl: true,
-      code: true,
-      isPublished: true,
-      archivedAt: true,
-      createdAt: true,
-      createdByEmail: true,
-      _count: { select: { colleges: true } },
-      sections: {
-        orderBy: { defaultOrder: "asc" },
-        select: {
-          id: true,
-          sectionType: true,
-          defaultOrder: true,
-          isRequired: true,
-          defaultVariant: {
-            select: { id: true, variantName: true, componentKey: true },
-          },
-          _count: { select: { collegeSections: true } },
+  const selectBase = {
+    id: true,
+    name: true,
+    description: true,
+    thumbnailUrl: true,
+    isPublished: true,
+    archivedAt: true,
+    createdAt: true,
+    createdByEmail: true,
+    _count: { select: { colleges: true } },
+    sections: {
+      orderBy: { defaultOrder: "asc" as const },
+      select: {
+        id: true,
+        sectionType: true,
+        defaultOrder: true,
+        isRequired: true,
+        defaultVariant: {
+          select: { id: true, variantName: true, componentKey: true },
         },
+        _count: { select: { collegeSections: true } },
       },
     },
-  });
+  };
 
-  return templates.map((template) => {
+  let templates: any[] = [];
+  try {
+    templates = await prisma.template.findMany({
+      orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
+      select: { ...selectBase, code: true },
+    });
+  } catch (err) {
+    console.warn("[templates] findMany with code column failed, falling back to base fields:", err);
+    templates = await prisma.template.findMany({
+      orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
+      select: selectBase,
+    });
+  }
+
+  return templates.map((template: any) => {
     const collegeSections = (template.sections ?? []).reduce(
-      (sum, slot) => sum + (slot._count?.collegeSections ?? 0),
+      (sum: number, slot: any) => sum + (slot._count?.collegeSections ?? 0),
       0,
     );
 
@@ -226,7 +236,7 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
       colleges: template._count?.colleges ?? 0,
       collegeSections,
       deletable: (template._count?.colleges ?? 0) === 0 && collegeSections === 0,
-      slots: (template.sections ?? []).map((slot) => ({
+      slots: (template.sections ?? []).map((slot: any) => ({
         slotId: slot.id,
         sectionType: slot.sectionType,
         order: slot.defaultOrder,
