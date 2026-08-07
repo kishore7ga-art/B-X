@@ -288,6 +288,14 @@ export const openApiDocument = {
           200: { description: "The default website layout and sections." },
         },
       },
+      put: {
+        tags: ["Templates"],
+        summary: "Update platform default website structure",
+        description: "Updates the admin-configured default website structure for all pages.",
+        responses: {
+          200: { description: "Updated default website configuration." },
+        },
+      },
     },
 
     "/api/v1/admin/default-website": {
@@ -596,7 +604,6 @@ export const openApiDocument = {
         },
       },
     },
-
 
     "/api/v1/admin/auth/login": {
       post: {
@@ -1277,8 +1284,6 @@ export const openApiDocument = {
         },
       },
     },
-
-
 
     "/api/uploads": {
       post: {
