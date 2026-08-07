@@ -880,7 +880,7 @@ async function requireAdmin(req: express.Request) {
  * Guessing an admin password is worth more than guessing a college's, so this
  * is tighter than the login limiter and keyed separately.
  */
-app.post("/api/v1/admin/auth/login", async (req, res) => {
+const handleAdminLogin = async (req: express.Request, res: express.Response) => {
   try {
     if (rateLimit("adminLogin", req)) {
       res.status(429).json({ error: "Too many attempts. Try again later." });
@@ -897,7 +897,11 @@ app.post("/api/v1/admin/auth/login", async (req, res) => {
   } catch (error) {
     fail(res, error);
   }
-});
+};
+
+app.post("/api/v1/admin/auth/login", handleAdminLogin);
+app.post("/api/v1/admin/login", handleAdminLogin);
+app.post("/api/v1/auth/admin/login", handleAdminLogin);
 
 app.get("/api/v1/admin/status", async (_req, res) => {
   try {

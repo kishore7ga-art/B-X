@@ -640,6 +640,28 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/admin/login": {
+      post: {
+        tags: ["Admin"],
+        summary: "Sign in as Super Admin (Alias)",
+        security: [],
+        requestBody: body(adminLoginSchema),
+        responses: {
+          "200": json({ type: "object" }, "Signed in; admin cookie set."),
+        },
+      },
+    },
+    "/api/v1/auth/admin/login": {
+      post: {
+        tags: ["Admin"],
+        summary: "Sign in as Super Admin (Alias)",
+        security: [],
+        requestBody: body(adminLoginSchema),
+        responses: {
+          "200": json({ type: "object" }, "Signed in; admin cookie set."),
+        },
+      },
+    },
     "/api/v1/admin/status": {
       get: {
         tags: ["Admin"],
