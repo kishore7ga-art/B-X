@@ -535,14 +535,7 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
     );
     if (rows.length > 0 && rows[0].value) {
       const parsed = JSON.parse(rows[0].value);
-      if (parsed && Array.isArray(parsed.pages)) {
-        const homePage = parsed.pages.find((p: any) => p.slug === "/home");
-        // Auto-upgrade DB record if home page has fewer than 19 default sections
-        if (!homePage || !homePage.sections || homePage.sections.length < 19) {
-          console.log("Auto-migrating DB default website config to 19 sections...");
-          await updateDefaultWebsiteConfig(INITIAL_DEFAULT_WEBSITE);
-          return INITIAL_DEFAULT_WEBSITE;
-        }
+      if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
         return parsed as DefaultWebsiteConfig;
       }
     }
