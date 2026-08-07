@@ -21,16 +21,11 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 const SHARED = [
   "prisma/schema.prisma",
   "prisma/seed.ts",
-  "src/lib/sections/schemas.ts",
-  "src/lib/sections/defaults.ts",
-  "src/lib/sections/personalize.ts",
   "src/lib/college-types.ts",
   "src/lib/json-stable.ts",
   "src/lib/db-pool.ts",
-  "src/lib/auth/demo.ts",
   "src/lib/auth/cookie-domain.ts",
   "src/lib/api-contract.ts",
-  "src/lib/site/starter.ts",
 ];
 
 const MANIFEST = "shared-files.lock.json";

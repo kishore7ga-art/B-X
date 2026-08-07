@@ -61,7 +61,8 @@ export function collegeType(value: string | null | undefined) {
 /**
  * The template a type opens with.
  */
-export function templateNameFor(_value: string | null | undefined): string {
+export function templateNameFor(_value?: string | null): string {
+  void _value;
   return "College-Website";
 }
 

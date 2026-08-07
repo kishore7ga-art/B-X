@@ -1,14 +1,9 @@
 {
   "prisma/schema.prisma": "d7af38a046589bd2",
   "prisma/seed.ts": "c2e7507546ebc884",
-  "src/lib/sections/schemas.ts": "3121f4a9463ab900",
-  "src/lib/sections/defaults.ts": "281e296fc4a798e7",
-  "src/lib/sections/personalize.ts": "d1841d119215d7b0",
-  "src/lib/college-types.ts": "5ce8b64726f06c15",
+  "src/lib/college-types.ts": "258c644e2ca9a664",
   "src/lib/json-stable.ts": "6141a2d81b86d2fc",
   "src/lib/db-pool.ts": "12620a9a504fdd73",
-  "src/lib/auth/demo.ts": "afbec0f31c6edcd5",
   "src/lib/auth/cookie-domain.ts": "a2914b8049d9ff6b",
-  "src/lib/api-contract.ts": "842b52e5aa6168e2",
-  "src/lib/site/starter.ts": "8dfb79c605fb7141"
+  "src/lib/api-contract.ts": "842b52e5aa6168e2"
 }
