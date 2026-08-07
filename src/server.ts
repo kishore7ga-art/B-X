@@ -899,108 +899,94 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
   }
 };
 
-app.post("/api/v1/admin/auth/login", handleAdminLogin);
-app.post("/api/v1/admin/login", handleAdminLogin);
-app.post("/api/v1/auth/admin/login", handleAdminLogin);
+app.post(
+  ["/api/v1/admin/auth/login", "/api/admin/auth/login", "/admin/auth/login", "/api/v1/admin/login", "/api/admin/login", "/admin/login"],
+  handleAdminLogin,
+);
 
-app.get("/api/v1/admin/status", async (_req, res) => {
-  try {
-    res.json(await adminStatus());
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.post("/api/v1/admin/auth/logout", (req, res) => {
-  // Same attributes it was set with, or the browser keeps the original.
-  const { maxAge: _drop, ...options } = adminCookieOptions(
-    req.headers.origin,
-    requestHost(req),
-  );
-  res.clearCookie(ADMIN_COOKIE_NAME, options);
-  res.json({ ok: true });
-});
-
-/**
- * Who is signed in, or nobody.
- *
- * The one admin route that is not a protected resource: it is the question the
- * panel asks before it knows whether it may ask anything else, and "nobody" is a
- * real answer to it rather than a refusal. It used to go through `requireAdmin`
- * and answer 401, which both clients already handled correctly — and which put a
- * red `GET /api/v1/admin/me 401 (Unauthorized)` in the console of every visitor
- * who was simply not logged in yet. A panel that looks broken every time it
- * loads gets debugged instead of used; this one was, more than once.
- *
- * 200 with `admin: null` says the same thing without the alarm. Callers read
- * `payload.admin` either way, so nothing downstream changes. A deployment that
- * genuinely cannot run the admin surface still answers 503 — that one is a
- * refusal, and it should look like one.
- */
-app.get("/api/v1/admin/me", async (req, res) => {
-  try {
-    if (!(await adminConfigured())) {
-      throw new AuthError("Admin panel is not configured on this deployment", 503);
+app.get(
+  ["/api/v1/admin/status", "/api/admin/status", "/admin/status"],
+  async (_req, res) => {
+    try {
+      res.json(await adminStatus());
+    } catch (error) {
+      fail(res, error);
     }
-    res.json({ admin: (await getAdminSession(req.headers.cookie)) ?? null });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+  },
+);
 
-app.get("/api/v1/admin/overview", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json(await adminOverview());
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.post(
+  ["/api/v1/admin/auth/logout", "/api/admin/auth/logout", "/admin/auth/logout"],
+  (req, res) => {
+    const { maxAge: _drop, ...options } = adminCookieOptions(
+      req.headers.origin,
+      requestHost(req),
+    );
+    res.clearCookie(ADMIN_COOKIE_NAME, options);
+    res.json({ ok: true });
+  },
+);
 
-app.get("/api/v1/admin/sites", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json({ sites: await adminSites() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/me", "/api/admin/me", "/admin/me"],
+  async (req, res) => {
+    try {
+      if (!(await adminConfigured())) {
+        throw new AuthError("Admin panel is not configured on this deployment", 503);
+      }
+      res.json({ admin: (await getAdminSession(req.headers.cookie)) ?? null });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.get("/api/v1/default-website", async (_req, res) => {
-  try {
-    res.json(await getDefaultWebsiteConfig());
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json(await adminOverview());
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.put("/api/v1/default-website", async (req, res) => {
-  try {
-    const updated = await updateDefaultWebsiteConfig(req.body ?? {});
-    res.json(updated);
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites"],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json({ sites: await adminSites() });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.get("/api/v1/admin/default-website", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json(await getDefaultWebsiteConfig());
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"],
+  async (_req, res) => {
+    try {
+      res.json(await getDefaultWebsiteConfig());
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.put("/api/v1/admin/default-website", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    const updated = await updateDefaultWebsiteConfig(req.body ?? {});
-    res.json(updated);
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.put(
+  ["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"],
+  async (req, res) => {
+    try {
+      const updated = await updateDefaultWebsiteConfig(req.body ?? {});
+      res.json(updated);
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 /**
  * Registered before `/templates/:id` would be, and that ordering is load-bearing.
