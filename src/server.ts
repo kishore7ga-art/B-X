@@ -970,6 +970,15 @@ app.get("/api/v1/default-website", async (_req, res) => {
   }
 });
 
+app.put("/api/v1/default-website", async (req, res) => {
+  try {
+    const updated = await updateDefaultWebsiteConfig(req.body ?? {});
+    res.json(updated);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 app.get("/api/v1/admin/default-website", async (req, res) => {
   try {
     await requireAdmin(req);
