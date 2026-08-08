@@ -30,19 +30,32 @@ const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
           title: "Navbar / Header",
           sectionType: "navbar",
           sortOrder: 0,
-          code: `<header style="background: #0d1527; color: #ffffff; padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box; border-bottom: 1px solid rgba(255,255,255,0.1);">
+          code: `<header style="background: #0d1527; color: #ffffff; padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box; border-bottom: 1px solid rgba(255,255,255,0.1); position: relative;">
     <div style="display: flex; align-items: center; gap: 12px;">
       <div style="width: 40px; height: 40px; border-radius: 10px; background: #2563eb; color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px;">🎓</div>
-      <span style="font-size: 20px; font-weight: 900; color: #ffffff;">GREENFIELD UNIVERSITY</span>
+      <span style="font-size: 20px; font-weight: 900; color: #ffffff; white-space: nowrap;">GREENFIELD UNIVERSITY</span>
     </div>
-    <nav style="display: flex; gap: 24px; font-size: 14px; font-weight: 700;">
-      <a href="#about" style="color: #cbd5e1; text-decoration: none;">About</a>
-      <a href="#courses" style="color: #cbd5e1; text-decoration: none;">Academics</a>
-      <a href="#admissions" style="color: #cbd5e1; text-decoration: none;">Admissions</a>
-      <a href="#placements" style="color: #cbd5e1; text-decoration: none;">Placements</a>
-      <a href="#contact" style="color: #cbd5e1; text-decoration: none;">Contact</a>
+    <nav class="desktop-nav-links" style="display: flex; gap: 24px; font-size: 14px; font-weight: 700;">
+      <a href="#about" style="color: #cbd5e1; text-decoration: none; white-space: nowrap;">About</a>
+      <a href="#courses" style="color: #cbd5e1; text-decoration: none; white-space: nowrap;">Academics</a>
+      <a href="#admissions" style="color: #cbd5e1; text-decoration: none; white-space: nowrap;">Admissions</a>
+      <a href="#placements" style="color: #cbd5e1; text-decoration: none; white-space: nowrap;">Placements</a>
+      <a href="#contact" style="color: #cbd5e1; text-decoration: none; white-space: nowrap;">Contact</a>
     </nav>
-    <a href="#apply" style="background: #2563eb; color: #ffffff; padding: 10px 24px; border-radius: 10px; font-size: 13px; font-weight: 800; text-decoration: none;">Apply Now</a>
+    <a href="#apply" class="desktop-apply-btn" style="background: #2563eb; color: #ffffff; padding: 10px 24px; border-radius: 10px; font-size: 13px; font-weight: 800; text-decoration: none; white-space: nowrap;">Apply Now</a>
+    <button class="hamburger-toggle-btn" style="display: none; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #ffffff; padding: 8px 14px; border-radius: 8px; font-size: 20px; cursor: pointer; align-items: center; justify-content: center;" aria-label="Toggle Navigation Menu">
+      ☰
+    </button>
+    <div class="mobile-drawer-menu" style="display: none; width: 100%; background: #0b1120; border-top: 1px solid rgba(255,255,255,0.1); padding: 16px 20px; margin-top: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+      <nav style="display: flex; flex-direction: column; gap: 12px; font-size: 15px; font-weight: 700;">
+        <a href="#about" style="color: #cbd5e1; text-decoration: none; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">About</a>
+        <a href="#courses" style="color: #cbd5e1; text-decoration: none; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">Academics</a>
+        <a href="#admissions" style="color: #cbd5e1; text-decoration: none; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">Admissions</a>
+        <a href="#placements" style="color: #cbd5e1; text-decoration: none; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">Placements</a>
+        <a href="#contact" style="color: #cbd5e1; text-decoration: none; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">Contact</a>
+        <a href="#apply" style="background: #2563eb; color: #ffffff; padding: 10px; border-radius: 8px; text-align: center; margin-top: 8px; font-weight: 800; text-decoration: none;">Apply Now</a>
+      </nav>
+    </div>
   </header>`,
         },
         {
@@ -536,6 +549,9 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
     if (rows.length > 0 && rows[0].value) {
       const parsed = JSON.parse(rows[0].value);
       if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
+        if (parsed.pages[0]?.sections[0]) {
+          parsed.pages[0].sections[0].code = INITIAL_DEFAULT_WEBSITE.pages[0].sections[0].code;
+        }
         return parsed as DefaultWebsiteConfig;
       }
     }
