@@ -549,9 +549,6 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
     if (rows.length > 0 && rows[0].value) {
       const parsed = JSON.parse(rows[0].value);
       if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-        if (parsed.pages[0]?.sections[0]) {
-          parsed.pages[0].sections[0].code = INITIAL_DEFAULT_WEBSITE.pages[0].sections[0].code;
-        }
         return parsed as DefaultWebsiteConfig;
       }
     }
