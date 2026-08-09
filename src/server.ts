@@ -1093,6 +1093,7 @@ app.post("/api/v1/admin/templates", templateUpload.any(), async (req, res) => {
 
     const payload = {
       name: req.body?.name,
+      category: req.body?.category || undefined,
       description: req.body?.description || undefined,
       thumbnailUrl: req.body?.thumbnailUrl || undefined,
       isPublished: isPublishedValue,
