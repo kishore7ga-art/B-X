@@ -199,10 +199,12 @@ const DEFAULT_ORIGINS = [
   "https://xite.co.in",
   "https://www.xite.co.in",
   "https://admin.xite.co.in",
+  "https://api.xite.co.in",
   "https://admin.meetkishore.in",
   "https://api.meetkishore.in",
   "https://meetkishore.in",
   "https://www.meetkishore.in",
+  "https://editor.meetkishore.in",
   // The dev servers: xite-F on 3000/3001, the admin panel's Vite on 5174.
   "http://localhost:3000",
   "http://localhost:3001",
@@ -210,13 +212,6 @@ const DEFAULT_ORIGINS = [
   "http://localhost:5174",
 ];
 
-/**
- * What the deployment named, separately from what is built in.
- *
- * `appUrl()` below reads this rather than the merged list: an activation link has
- * to point at the frontend *this* deployment serves, and the first built-in
- * default is production's address even when the process is running on a laptop.
- */
 const CONFIGURED_ORIGINS = (process.env.CORS_ORIGINS ?? "")
   .split(",")
   .map((o) => o.trim().replace(/\/+$/, ""))
@@ -224,23 +219,28 @@ const CONFIGURED_ORIGINS = (process.env.CORS_ORIGINS ?? "")
 
 const ORIGINS = [...new Set([...DEFAULT_ORIGINS, ...CONFIGURED_ORIGINS])];
 
-/**
- * Says so when it turns an origin away.
- *
- * A rejected origin is answered by *omitting* a header, so the only evidence is
- * in the caller's console and it names nothing actionable — "No
- * 'Access-Control-Allow-Origin' header is present" is true of a misconfigured
- * allow-list and of a server that is not running. Nothing reached this log at
- * all, which is the wrong way round: the list is here.
- *
- * Once per origin, because a panel that cannot authenticate retries.
- */
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (ORIGINS.includes(origin)) return true;
+  const url = origin.toLowerCase();
+  if (
+    url.endsWith(".meetkishore.in") ||
+    url.endsWith(".xite.co.in") ||
+    url.endsWith(".vercel.app") ||
+    url.includes("localhost") ||
+    url.includes("127.0.0.1")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 const rejectedOrigins = new Set<string>();
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && (ORIGINS.includes(origin) || process.env.NODE_ENV !== "production")) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
+  if (isAllowedOrigin(origin)) {
+    if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
@@ -255,11 +255,11 @@ app.use((req, res, next) => {
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || !ORIGINS.length || ORIGINS.includes(origin)) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
 
-      if (!rejectedOrigins.has(origin)) {
+      if (origin && !rejectedOrigins.has(origin)) {
         rejectedOrigins.add(origin);
         console.warn(
           `[api] CORS rejected ${origin}. CORS_ORIGINS allows: ` +
