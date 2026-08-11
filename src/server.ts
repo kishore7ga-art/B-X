@@ -206,6 +206,7 @@ const DEFAULT_ORIGINS = [
   // The dev servers: xite-F on 3000/3001, the admin panel's Vite on 5174.
   "http://localhost:3000",
   "http://localhost:3001",
+  "http://localhost:3002",
   "http://localhost:5174",
 ];
 
@@ -299,6 +300,24 @@ app.use((req, res, next) => {
       `[api] ${req.method} ${req.path} → ${res.statusCode} (${Date.now() - startedAt}ms)`,
     );
   });
+  next();
+});
+
+/**
+ * Redirect non-API frontend route requests (e.g. /editor/*, /site/*, /preview/*)
+ * made directly to the backend port (4000) to the frontend app URL (3000).
+ */
+app.use((req, res, next) => {
+  if (
+    req.path.startsWith("/editor") ||
+    req.path.startsWith("/site") ||
+    req.path.startsWith("/preview") ||
+    req.path.startsWith("/login") ||
+    req.path.startsWith("/signup")
+  ) {
+    const frontendBase = appUrl();
+    return res.redirect(307, `${frontendBase}${req.originalUrl}`);
+  }
   next();
 });
 
@@ -985,6 +1004,41 @@ app.put(
     } catch (error) {
       fail(res, error);
     }
+  },
+);
+
+/** Editor API endpoint & direct browser redirect handler */
+app.get(
+  ["/api/v1/editor/:subdomain", "/api/editor/:subdomain", "/editor/:subdomain/data"],
+  async (req, res) => {
+    try {
+      const rawSub = req.params.subdomain;
+      const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "mec" : "mec";
+      const config = await getDefaultWebsiteConfig();
+      const college = await prisma.college.findUnique({ where: { subdomain } }).catch(() => null);
+      res.json({
+        college: college ?? {
+          id: "open-access-id",
+          name: "MEC ENGINEERING COLLEGE",
+          subdomain,
+          status: "PUBLISHED",
+        },
+        config,
+        pages: config.pages,
+      });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+app.get(
+  ["/editor/:subdomain", "/editor"],
+  (req, res) => {
+    const rawSub = req.params.subdomain;
+    const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "mec" : "mec";
+    const target = `${appUrl()}/editor/${subdomain}`;
+    res.redirect(302, target);
   },
 );
 
