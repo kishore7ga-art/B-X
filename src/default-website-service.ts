@@ -539,7 +539,7 @@ const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
   ],
 };
 
-/** Ensure service_secrets table holds default website config with ALL 19 sections */
+/** Ensure service_secrets table holds default website config with ALL sections and pages */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   try {
     const { rows } = await pool.query(
@@ -549,7 +549,14 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
     if (rows.length > 0 && rows[0].value) {
       const parsed = JSON.parse(rows[0].value);
       if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-        return parsed as DefaultWebsiteConfig;
+        const existingSlugs = new Set(parsed.pages.map((p: any) => p.slug));
+        const mergedPages = [...parsed.pages];
+        INITIAL_DEFAULT_WEBSITE.pages.forEach((initPage) => {
+          if (!existingSlugs.has(initPage.slug)) {
+            mergedPages.push(initPage);
+          }
+        });
+        return { pages: mergedPages };
       }
     }
   } catch (err) {
