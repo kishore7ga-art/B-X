@@ -46,13 +46,22 @@ export async function bootstrapAdmin() {
     const existing = await AdminUser.findOne({ email });
 
     if (!existing) {
-      await AdminUser.create({
-        email,
-        passwordHash: await bcrypt.hash(password, 12),
-        role: "SUPER_ADMIN",
-      });
-      lastOutcome = "created";
-      console.log(`[admin] created Super Admin: ${email}`);
+      try {
+        await AdminUser.create({
+          email,
+          passwordHash: await bcrypt.hash(password, 12),
+          role: "SUPER_ADMIN",
+        });
+        lastOutcome = "created";
+        console.log(`[admin] created Super Admin: ${email}`);
+      } catch (err: any) {
+        if (err?.code === 11000) {
+          lastOutcome = "matched";
+          console.log(`[admin] ${email} already exists.`);
+        } else {
+          throw err;
+        }
+      }
     } else if (await bcrypt.compare(password, existing.passwordHash)) {
       lastOutcome = "matched";
       console.log(`[admin] ${email} already has this password.`);
