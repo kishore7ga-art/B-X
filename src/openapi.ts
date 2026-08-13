@@ -298,6 +298,28 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/my-website": {
+      get: {
+        tags: ["Tenant Data"],
+        summary: "Get logged-in college website structure",
+        description: "Returns the per-college website configuration, seeding from default template if first visit.",
+        responses: {
+          200: { description: "The per-college website layout and sections." },
+          401: { description: "Not authenticated." },
+        },
+      },
+      put: {
+        tags: ["Tenant Data"],
+        summary: "Update logged-in college website structure",
+        description: "Updates the per-college website configuration for the active user session.",
+        responses: {
+          200: { description: "Updated college website configuration." },
+          400: { description: "Invalid configuration structure." },
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
     "/api/v1/admin/default-website": {
       get: {
         tags: ["Admin"],
