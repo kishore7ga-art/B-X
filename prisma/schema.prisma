@@ -92,9 +92,10 @@ model College {
   themePalette ThemePalette? @relation(fields: [themePaletteId], references: [id], onDelete: SetNull)
   themeFont    ThemeFont?    @relation(fields: [themeFontId], references: [id], onDelete: SetNull)
 
-  sections CollegeSection[]
-  pages    Page[]
-  users    User[]
+  sections      CollegeSection[]
+  pages         Page[]
+  users         User[]
+  websiteConfig CollegeWebsiteConfig?
 
   @@map("colleges")
 }
@@ -545,4 +546,26 @@ model ServiceSecret {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("service_secrets")
+}
+
+/// Per-college website layout — the full pages+sections config that the user
+/// editor reads and writes. Seeded from the global DEFAULT_WEBSITE_CONFIG once
+/// (on first access), then owned entirely by the college.
+///
+/// Keeping it here rather than in service_secrets means:
+/// • A college's content cannot accidentally be overwritten by an admin editing
+///   the template, because the two rows are unrelated.
+/// • The admin's template stays a template — it only touches new colleges.
+/// • Cascade delete: removing a College cleans up its config with it.
+model CollegeWebsiteConfig {
+  id        String   @id @default(cuid())
+  collegeId String   @unique @map("college_id")
+  /// Full DefaultWebsiteConfig JSON: { pages: [ { slug, title, sections: [...] } ] }
+  config    Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  college College @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+
+  @@map("college_website_configs")
 }

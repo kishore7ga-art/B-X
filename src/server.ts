@@ -1007,6 +1007,84 @@ app.put(
   },
 );
 
+/**
+ * Per-College Website Config — the user editor reads and writes here.
+ *
+ * GET returns this college's saved layout. If the college has never been
+ * here before (no row in college_website_configs), it seeds a fresh copy from
+ * the global admin template so the user starts with the admin's default, and
+ * then the two are independent forever after. Admin edits to the default
+ * template cannot reach into an existing college's config.
+ *
+ * PUT saves the full config back only to this college's row. The global
+ * DEFAULT_WEBSITE_CONFIG in service_secrets is never touched.
+ *
+ * Both routes require an active user session — a college must be logged in.
+ */
+app.get("/api/v1/my-website", async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    const collegeId = session.collegeId;
+
+    // Look for an existing per-college config row.
+    const existing = await prisma.collegeWebsiteConfig
+      .findUnique({ where: { collegeId } })
+      .catch(() => null);
+
+    if (existing && existing.config) {
+      res.json(existing.config);
+      return;
+    }
+
+    // First visit — seed from the global admin template.
+    const template = await getDefaultWebsiteConfig();
+
+    // Deep-clone so mutations by one college can't reach another.
+    const seeded = JSON.parse(JSON.stringify(template));
+
+    await prisma.collegeWebsiteConfig.upsert({
+      where: { collegeId },
+      update: { config: seeded },
+      create: { collegeId, config: seeded },
+    });
+
+    res.json(seeded);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.put("/api/v1/my-website", async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    const collegeId = session.collegeId;
+    const body = req.body ?? {};
+
+    if (!body.pages || !Array.isArray(body.pages)) {
+      res.status(400).json({ error: "Invalid config: pages array required" });
+      return;
+    }
+
+    const saved = await prisma.collegeWebsiteConfig.upsert({
+      where: { collegeId },
+      update: { config: body },
+      create: { collegeId, config: body },
+    });
+
+    res.json(saved.config);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 /** Editor API endpoint & direct browser redirect handler */
 app.get(
   ["/api/v1/editor/:subdomain", "/api/editor/:subdomain", "/editor/:subdomain/data"],
