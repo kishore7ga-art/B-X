@@ -1,6 +1,6 @@
 import { jwtVerify } from "jose";
 
-import { prisma } from "@/db";
+import { College } from "@/models";
 
 const COOKIE_NAME = "college_session";
 
@@ -23,23 +23,19 @@ function secretKey() {
 const AUTH_DISABLED = process.env.AUTH_DISABLED !== "false";
 
 async function openAccessCollege() {
-  // isDemo excluded: the seeded showcases are older than any real college, so
-  // "oldest" alone would hand a visitor a demo site to edit.
-  const existing = await prisma.college.findFirst({
-    where: { isDemo: false },
-    orderBy: { createdAt: "asc" },
-  });
+  const existing = await College.findOne({ isDemo: false }).sort({ createdAt: 1 });
   if (existing) return existing;
 
-  return prisma.college.upsert({
-    where: { subdomain: process.env.OPEN_ACCESS_SUBDOMAIN || "main" },
-    update: {},
-    create: {
-      name: process.env.OPEN_ACCESS_COLLEGE_NAME || "My College",
-      subdomain: process.env.OPEN_ACCESS_SUBDOMAIN || "main",
-      status: "DRAFT",
-    },
-  });
+  const subdomain = process.env.OPEN_ACCESS_SUBDOMAIN || "greenfield";
+  const name = process.env.OPEN_ACCESS_COLLEGE_NAME || "Greenfield University";
+
+  const upserted = await College.findOneAndUpdate(
+    { subdomain },
+    { $setOnInsert: { name, subdomain, status: "DRAFT" } },
+    { upsert: true, new: true }
+  );
+
+  return upserted;
 }
 
 /** Parses the session cookie off a raw Cookie header. */

@@ -58,7 +58,8 @@ import { mailerConfigured, sendActivationEmail } from "@/mailer";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
 import { BadRequest, NotFound } from "@/errors";
-import { prisma } from "@/db";
+import { connectDB, mongoose } from "@/db";
+import { College, Template } from "@/models";
 import {
   getDefaultWebsiteConfig,
   updateDefaultWebsiteConfig,
@@ -511,14 +512,16 @@ function configPresence() {
 app.get("/api/health", async (_req, res) => {
   const startedAt = Date.now();
   try {
-    await prisma.$queryRawUnsafe("SELECT 1");
+    const isConnected = mongoose.connection.readyState === 1;
+    if (!isConnected) throw new Error("MongoDB connection state is not connected");
+
     res.json({
       status: "ok",
       service: "backend",
       instance: hostname(),
       config: configPresence(),
       database: "connected",
-      templates: await prisma.template.count().catch(() => null),
+      templates: await Template.countDocuments().catch(() => null),
       /**
        * Whether an approval can actually reach anybody.
        *
@@ -703,22 +706,9 @@ app.get("/api/v1/me", async (req, res) => {
       return;
     }
 
-    const college = await prisma.college.findUnique({
-      where: { id: session.collegeId },
-      select: {
-        id: true,
-        name: true,
-        subdomain: true,
-        customDomain: true,
-        templateId: true,
-        themePaletteId: true,
-        themeFontId: true,
-        status: true,
-        collegeType: true,
-        isDemo: true,
-        createdAt: true,
-      },
-    });
+    const college = await College.findById(session.collegeId).select(
+      "id name subdomain customDomain templateId themePaletteId themeFontId status collegeType isDemo createdAt"
+    );
 
     if (!college) {
       res.status(404).json({ error: "College not found" });
@@ -782,7 +772,7 @@ app.get("/api/v1/activate", async (req, res) => {
       return;
     }
 
-    res.json(await inviteSummary(req.query.token));
+    res.json(await inviteSummary(String(req.query.token ?? "")));
   } catch (error) {
     fail(res, error);
   }
@@ -831,10 +821,9 @@ app.post("/api/v1/activate/google", async (req, res) => {
       return;
     }
 
-    const { token, userId, collegeId, subdomain, next } =
-      await activateWithGoogle(req.body ?? {});
+    const { token, subdomain, next } = await activateWithGoogle(req.body ?? {});
     res.cookie(COOKIE_NAME, token, cookieOptions(requestHost(req)));
-    res.json({ sessionToken: token, userId, collegeId, subdomain, next });
+    res.json({ sessionToken: token, subdomain, next });
   } catch (error) {
     fail(res, error);
   }
@@ -1029,28 +1018,21 @@ app.get("/api/v1/my-website", async (req, res) => {
       return;
     }
     const collegeId = session.collegeId;
+    const college = await College.findById(collegeId);
 
-    // Look for an existing per-college config row.
-    const existing = await prisma.collegeWebsiteConfig
-      .findUnique({ where: { collegeId } })
-      .catch(() => null);
-
-    if (existing && existing.config) {
-      res.json(existing.config);
+    if (college && college.websiteConfig && college.websiteConfig.pages && college.websiteConfig.pages.length > 0) {
+      res.json(college.websiteConfig);
       return;
     }
 
-    // First visit — seed from the global admin template.
+    // First visit — seed from global admin template.
     const template = await getDefaultWebsiteConfig();
-
-    // Deep-clone so mutations by one college can't reach another.
     const seeded = JSON.parse(JSON.stringify(template));
 
-    await prisma.collegeWebsiteConfig.upsert({
-      where: { collegeId },
-      update: { config: seeded },
-      create: { collegeId, config: seeded },
-    });
+    if (college) {
+      college.websiteConfig = seeded;
+      await college.save();
+    }
 
     res.json(seeded);
   } catch (error) {
@@ -1073,13 +1055,16 @@ app.put("/api/v1/my-website", async (req, res) => {
       return;
     }
 
-    const saved = await prisma.collegeWebsiteConfig.upsert({
-      where: { collegeId },
-      update: { config: body },
-      create: { collegeId, config: body },
-    });
+    const college = await College.findById(collegeId);
+    if (!college) {
+      res.status(404).json({ error: "College not found" });
+      return;
+    }
 
-    res.json(saved.config);
+    college.websiteConfig = body;
+    await college.save();
+
+    res.json(college.websiteConfig);
   } catch (error) {
     fail(res, error);
   }
@@ -1092,8 +1077,23 @@ app.get(
     try {
       const rawSub = req.params.subdomain;
       const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "mec" : "mec";
-      const config = await getDefaultWebsiteConfig();
-      const college = await prisma.college.findUnique({ where: { subdomain } }).catch(() => null);
+      const college = await College.findOne({ subdomain }).catch(() => null);
+
+      if (college && college.websiteConfig && college.websiteConfig.pages && college.websiteConfig.pages.length > 0) {
+        res.json({
+          college: {
+            id: college.id,
+            name: college.name,
+            subdomain: college.subdomain,
+            status: college.status,
+          },
+          config: college.websiteConfig,
+          pages: college.websiteConfig.pages,
+        });
+        return;
+      }
+
+      const defaultConfig = await getDefaultWebsiteConfig();
       res.json({
         college: college ?? {
           id: "open-access-id",
@@ -1101,8 +1101,8 @@ app.get(
           subdomain,
           status: "PUBLISHED",
         },
-        config,
-        pages: config.pages,
+        config: defaultConfig,
+        pages: defaultConfig.pages,
       });
     } catch (error) {
       fail(res, error);
@@ -1657,11 +1657,15 @@ function verifyDocs() {
   throw new Error("Undocumented routes — add them to src/openapi.ts");
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`[api] xite backend listening on :${PORT}`);
   console.log(`[api] CORS origins: ${ORIGINS.length ? ORIGINS.join(", ") : "(any)"}`);
   console.log(`[api] docs: /docs`);
-  // After listen, so a slow database cannot delay the port opening.
-  void bootstrapAdmin();
+  try {
+    await connectDB();
+    await bootstrapAdmin();
+  } catch (err) {
+    console.error("[api] Database startup error:", err);
+  }
   verifyDocs();
 });

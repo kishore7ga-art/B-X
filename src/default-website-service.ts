@@ -1,4 +1,4 @@
-import { pool } from "@/db";
+import { SystemSecret } from "@/models";
 
 export type DefaultWebsiteSection = {
   id: string;
@@ -539,15 +539,12 @@ const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
   ],
 };
 
-/** Ensure service_secrets table holds default website config with ALL sections and pages */
+/** Ensure system_secrets collection holds default website config with ALL sections and pages */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   try {
-    const { rows } = await pool.query(
-      "SELECT value FROM service_secrets WHERE name = $1",
-      ["DEFAULT_WEBSITE_CONFIG"]
-    );
-    if (rows.length > 0 && rows[0].value) {
-      const parsed = JSON.parse(rows[0].value);
+    const secret = await SystemSecret.findOne({ name: "DEFAULT_WEBSITE_CONFIG" });
+    if (secret && secret.value) {
+      const parsed = typeof secret.value === "string" ? JSON.parse(secret.value) : secret.value;
       if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
         const existingSlugs = new Set(parsed.pages.map((p: any) => p.slug));
         const mergedPages = [...parsed.pages];
@@ -560,7 +557,7 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
       }
     }
   } catch (err) {
-    console.error("Error reading default website config from DB:", err);
+    console.error("Error reading default website config from MongoDB:", err);
   }
 
   // Force seed database if record missing
@@ -574,12 +571,10 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
 export async function updateDefaultWebsiteConfig(
   config: DefaultWebsiteConfig
 ): Promise<DefaultWebsiteConfig> {
-  const jsonStr = JSON.stringify(config);
-  await pool.query(
-    `INSERT INTO service_secrets (name, value, created_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (name) DO UPDATE SET value = $2`,
-    ["DEFAULT_WEBSITE_CONFIG", jsonStr]
+  await SystemSecret.findOneAndUpdate(
+    { name: "DEFAULT_WEBSITE_CONFIG" },
+    { name: "DEFAULT_WEBSITE_CONFIG", value: config },
+    { upsert: true, new: true }
   );
   return config;
 }
