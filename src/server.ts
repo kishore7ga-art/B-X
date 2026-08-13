@@ -720,10 +720,11 @@ app.get("/api/v1/me", async (req, res) => {
       return;
     }
 
+    const collegeObj = college.toObject();
     res.json({
       college: {
-        ...college,
-        createdAt: college.createdAt.toISOString(),
+        ...collegeObj,
+        createdAt: college.createdAt ? college.createdAt.toISOString() : new Date().toISOString(),
       },
     });
   } catch (error) {
