@@ -146,6 +146,7 @@ export async function approveAccessRequest(
   actor: AdminSession,
   customPassword?: string
 ) {
+  if (!mongoose.Types.ObjectId.isValid(id)) throw new AuthError("That request no longer exists", 404);
   const request = await AccessRequest.findById(id);
   if (!request) throw new AuthError("That request no longer exists", 404);
   if (request.status !== "PENDING") {
@@ -236,6 +237,7 @@ export async function approveAccessRequest(
 }
 
 export async function rejectAccessRequest(id: string, actor: AdminSession) {
+  if (!mongoose.Types.ObjectId.isValid(id)) throw new AuthError("That request no longer exists", 404);
   const request = await AccessRequest.findById(id);
   if (!request) throw new AuthError("That request no longer exists", 404);
   if (request.status !== "PENDING") {

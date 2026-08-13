@@ -505,7 +505,12 @@ const CONFIG_KEYS = [
 
 function configPresence() {
   return Object.fromEntries(
-    CONFIG_KEYS.map((key) => [key, Boolean(process.env[key]?.trim())]),
+    CONFIG_KEYS.map((key) => {
+      if (key === "DATABASE_URL") {
+        return [key, Boolean((process.env.DATABASE_URL || process.env.MONGODB_URI)?.trim())];
+      }
+      return [key, Boolean(process.env[key]?.trim())];
+    }),
   );
 }
 

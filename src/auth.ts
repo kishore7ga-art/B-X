@@ -51,12 +51,15 @@ function readCookie(header: string | undefined, name: string) {
 export async function getSession(
   cookieHeader: string | undefined,
 ): Promise<Session | null> {
-  if (AUTH_DISABLED) {
+  const sessionData = await readSession(cookieHeader);
+  if (sessionData) return sessionData.session;
+
+  if (process.env.AUTH_DISABLED === "true") {
     const college = await openAccessCollege();
     return { userId: `open-access:${college.id}`, collegeId: college.id };
   }
 
-  return (await readSession(cookieHeader))?.session ?? null;
+  return null;
 }
 
 /**

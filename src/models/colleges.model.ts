@@ -91,7 +91,7 @@ const CollegeSchema = new Schema<ICollege>(
   {
     name: { type: String, required: true, trim: true },
     subdomain: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
-    customDomain: { type: String, sparse: true, unique: true, lowercase: true, trim: true, default: null },
+    customDomain: { type: String, sparse: true, unique: true, lowercase: true, trim: true, default: undefined },
     templateId: { type: String, default: null },
     themePaletteId: { type: String, default: null },
     themeFontId: { type: String, default: null },
