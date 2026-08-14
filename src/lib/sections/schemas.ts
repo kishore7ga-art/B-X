@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { SectionType } from "@/generated/prisma/enums";
+import { SectionType } from "./types";
 
 /**
  * Zod schema per section type for the `college_sections.content` JSONB column.
