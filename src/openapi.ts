@@ -259,6 +259,52 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/ai/generate-section": {
+      post: {
+        tags: ["AI"],
+        summary: "Generate AI Section",
+        description: "Generates custom themed homepage sections from user prompts.",
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  prompt: str,
+                  sectionType: str,
+                  subdomain: str,
+                },
+                required: ["prompt"],
+              },
+            },
+          },
+        },
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                section: {
+                  type: "object",
+                  properties: {
+                    id: str,
+                    title: str,
+                    sectionType: str,
+                    code: str,
+                    sortOrder: int,
+                    subdomain: str,
+                  },
+                },
+              },
+            },
+            "Generated AI section object.",
+          ),
+          ...errors([400, "Invalid prompt or parameters."]),
+        },
+      },
+    },
 
     "/api/v1/me": {
       get: {

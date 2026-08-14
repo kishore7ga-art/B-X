@@ -64,6 +64,7 @@ import {
   getDefaultWebsiteConfig,
   updateDefaultWebsiteConfig,
 } from "@/default-website-service";
+import { generateAiSection } from "@/ai-service";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
@@ -801,6 +802,20 @@ app.post("/api/v1/access-requests", async (req, res) => {
     }
 
     res.status(202).json(await submitAccessRequest(req.body ?? {}));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * AI-Assisted Section Generation Endpoint.
+ *
+ * Allows college administrators to generate custom themed homepage sections from prompts.
+ */
+app.post("/api/v1/ai/generate-section", async (req, res) => {
+  try {
+    const result = await generateAiSection(req.body ?? {});
+    res.json(result);
   } catch (error) {
     fail(res, error);
   }
