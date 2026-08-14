@@ -924,12 +924,14 @@ app.post(
     "/api/v1/auth/admin/login",
     "/api/auth/admin/login",
     "/auth/admin/login",
+    /\/admin.*login/,
+    /\/auth\/admin.*/,
   ],
   handleAdminLogin,
 );
 
 app.get(
-  ["/api/v1/admin/status", "/api/admin/status", "/admin/status"],
+  ["/api/v1/admin/status", "/api/admin/status", "/admin/status", /\/admin.*status/],
   async (_req, res) => {
     try {
       res.json(await adminStatus());
