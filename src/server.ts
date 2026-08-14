@@ -957,7 +957,7 @@ app.get(
 );
 
 app.post(
-  ["/api/v1/admin/auth/logout", "/api/admin/auth/logout", "/admin/auth/logout"],
+  ["/api/v1/admin/auth/logout", "/api/admin/auth/logout", "/admin/auth/logout", /\/admin.*logout/],
   (req, res) => {
     const { maxAge: _drop, ...options } = adminCookieOptions(
       req.headers.origin,
@@ -969,7 +969,7 @@ app.post(
 );
 
 app.get(
-  ["/api/v1/admin/me", "/api/admin/me", "/admin/me"],
+  ["/api/v1/admin/me", "/api/admin/me", "/admin/me", /\/admin.*me/],
   async (req, res) => {
     try {
       if (!(await adminConfigured())) {
@@ -983,7 +983,7 @@ app.get(
 );
 
 app.get(
-  ["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"],
+  ["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview", /\/admin.*overview/],
   async (req, res) => {
     try {
       await requireAdmin(req);
@@ -995,7 +995,7 @@ app.get(
 );
 
 app.get(
-  ["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites"],
+  ["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites", /\/admin.*sites/],
   async (req, res) => {
     try {
       await requireAdmin(req);
