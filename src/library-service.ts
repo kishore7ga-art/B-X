@@ -59,6 +59,7 @@ export async function templateStats(): Promise<TemplateStats> {
 export type TemplateRow = {
   id: string;
   name: string;
+  category?: string | null;
   description: string | null;
   thumbnailUrl: string | null;
   code: string | null;
@@ -99,6 +100,7 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
     return {
       id: template.id,
       name: template.name,
+      category: template.category ?? null,
       description: template.description ?? null,
       thumbnailUrl: template.thumbnailUrl ?? null,
       code: template.code ?? null,
@@ -278,6 +280,7 @@ export const createTemplateSchema = z.object({
     .trim()
     .min(2, "Name is too short")
     .max(80, "Name is too long"),
+  category: z.string().trim().nullish(),
   description: z.string().trim().max(600, "Description is too long").optional(),
   thumbnailUrl: z.string().trim().optional(),
   code: z.string().optional(),
@@ -296,6 +299,7 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
 
   const created = await Template.create({
     name: data.name,
+    category: data.category ?? null,
     description: data.description ?? null,
     thumbnailUrl: data.thumbnailUrl ?? null,
     code: sanitizedCode,

@@ -145,16 +145,72 @@ export async function bootstrapTemplates() {
       await ThemeFont.findOneAndUpdate({ name: f.name }, f, { upsert: true });
     }
 
-    await Template.findOneAndUpdate(
-      { name: "College-Website" },
+    const INITIAL_SECTION_TEMPLATES = [
       {
         name: "College-Website",
+        category: "header",
         description: "Default official college website template",
         thumbnailUrl: "/template-brightwood.jpg",
         isPublished: true,
       },
-      { upsert: true }
-    );
+      {
+        name: "Header Navigation 1",
+        category: "header",
+        description: "Dark Navy modern header",
+        code: `<header style="background: #0d1527; color: #ffffff; padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box;"><div style="display: flex; align-items: center; gap: 12px;"><div style="width: 40px; height: 40px; border-radius: 10px; background: #2563eb; color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px;">🎓</div><span style="font-size: 20px; font-weight: 900; color: #ffffff;">CAMPUS PORTAL</span></div><nav style="display: flex; gap: 24px; font-size: 14px; font-weight: 700;"><a href="#about" style="color: #cbd5e1; text-decoration: none;">About</a><a href="#courses" style="color: #cbd5e1; text-decoration: none;">Academics</a><a href="#admissions" style="color: #cbd5e1; text-decoration: none;">Admissions</a><a href="#placements" style="color: #cbd5e1; text-decoration: none;">Placements</a><a href="#contact" style="color: #cbd5e1; text-decoration: none;">Contact</a></nav><a href="#apply" style="background: #2563eb; color: #ffffff; padding: 10px 24px; border-radius: 10px; font-size: 13px; font-weight: 800; text-decoration: none;">Apply Now</a></header>`,
+        isPublished: true,
+      },
+      {
+        name: "Header Navigation 2 - Seoul National University",
+        category: "header",
+        description: "Seoul National University Translucent Gold Header",
+        code: `<header style="width: 100%; min-height: 120px; display: flex; align-items: center; justify-content: center; padding: 20px 40px; position: relative; background: linear-gradient(rgba(18, 22, 33, 0.90), rgba(18, 22, 33, 0.90)), url('https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=1200&auto=format&fit=crop') center/cover no-repeat; border-top: 1px solid rgba(255, 255, 255, 0.25); border-bottom: 1.5px solid rgba(212, 175, 55, 0.7); box-sizing: border-box;"><div style="width: 100%; max-width: 1400px; display: flex; align-items: center; justify-content: space-between; gap: 35px; box-sizing: border-box;"><ul style="display: flex; align-items: center; list-style: none; gap: 35px; margin: 0; padding: 0;"><li><a href="#academics" style="color: #ffffff; text-decoration: none; font-size: 13.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">ACADEMICS</a></li><li><a href="#research" style="color: #ffffff; text-decoration: none; font-size: 13.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">RESEARCH</a></li><li><a href="#admissions" style="color: #ffffff; text-decoration: none; font-size: 13.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">ADMISSIONS</a></li></ul><a href="#" style="display: flex; align-items: center; gap: 14px; text-decoration: none; color: #ffffff;"><svg style="height: 52px; width: auto; fill: #ffffff; flex-shrink: 0;" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M32 4L8 16v18c0 14.5 10.2 26.2 24 30 13.8-3.8 24-15.5 24-30V16L32 4zm0 6.2l18 9v14.8c0 11.6-8.1 21-18 24.1-9.9-3.1-18-12.5-18-24.1V19.2l18-9z"/><path d="M32 20a10 10 0 100 20 10 10 0 000-20zm0 4a6 6 0 110 12 6 6 0 010-12z"/></svg><div style="display: flex; flex-direction: column; text-align: left;"><span style="font-size: 22px; font-weight: 400; letter-spacing: 2.5px; line-height: 1; font-family: Georgia, serif; color: #ffffff;">SEOUL</span><span style="font-size: 10px; letter-spacing: 1.5px; font-weight: 600; margin-top: 4px; color: #d4af37; line-height: 1.2;">NATIONAL<br />UNIVERSITY</span></div></a><ul style="display: flex; align-items: center; list-style: none; gap: 35px; margin: 0; padding: 0;"><li><a href="#snu-now" style="color: #ffffff; text-decoration: none; font-size: 13.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">SNU NOW</a></li><li><a href="#campus-life" style="color: #ffffff; text-decoration: none; font-size: 13.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">CAMPUS LIFE</a></li><li><a href="#about-snu" style="color: #ffffff; text-decoration: none; font-size: 13.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;">ABOUT SNU</a></li></ul></div></header>`,
+        isPublished: true,
+      },
+      {
+        name: "Hero Banner 1",
+        category: "hero",
+        description: "Centered Admissions Hero",
+        code: `<section style="background: #ffffff; color: #0f172a; padding: 90px 24px; text-align: center; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box;"><div style="max-width: 960px; margin: 0 auto;"><span style="background: #ffe4e6; border: 1px solid #f43f5e; color: #e11d48; padding: 6px 20px; border-radius: 9999px; font-size: 12px; font-weight: 800;">ADMISSIONS OPEN 2026-2027</span><h1 style="font-size: 56px; font-weight: 900; margin-top: 24px; color: #0f172a;">Empowering Minds, Shaping Tomorrow's Leaders</h1><p style="font-size: 18px; color: #64748b; margin-top: 20px;">Join a world-class academic community dedicated to innovation, groundbreaking research, and personal growth.</p><div style="margin-top: 36px; display: flex; justify-content: center; gap: 16px;"><a href="#apply" style="background: #ef4444; color: #ffffff; padding: 14px 36px; border-radius: 12px; font-weight: 800; text-decoration: none;">Apply Online</a></div></div></section>`,
+        isPublished: true,
+      },
+      {
+        name: "Upcoming Campus Events 1",
+        category: "events",
+        description: "Calendar Cards Layout",
+        code: `<section style="background: #ffffff; color: #0f172a; padding: 80px 24px; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box;"><div style="max-width: 1000px; margin: 0 auto;"><div style="text-align: center;"><span style="color: #2563eb; font-size: 12px; font-weight: 900; text-transform: uppercase;">CAMPUS CALENDAR</span><h2 style="font-size: 36px; font-weight: 900; margin-top: 8px;">Upcoming Events & Conferences</h2></div><div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px;"><div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 24px; border-radius: 16px;"><div style="font-size: 12px; font-weight: 900; color: #ef4444;">MARCH 15, 2026</div><h4 style="font-size: 18px; font-weight: 900; margin-top: 8px;">International Tech Symposium</h4><p style="font-size: 13px; color: #64748b; margin-top: 6px;">Keynote sessions by global AI pioneers.</p></div><div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 24px; border-radius: 16px;"><div style="font-size: 12px; font-weight: 900; color: #2563eb;">APRIL 02, 2026</div><h4 style="font-size: 18px; font-weight: 900; margin-top: 8px;">Annual Cultural Fest 2026</h4><p style="font-size: 13px; color: #64748b; margin-top: 6px;">Music concerts, dance competitions & expo.</p></div><div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 24px; border-radius: 16px;"><div style="font-size: 12px; font-weight: 900; color: #10b981;">MAY 10, 2026</div><h4 style="font-size: 18px; font-weight: 900; margin-top: 8px;">National Placement Fair</h4><p style="font-size: 13px; color: #64748b; margin-top: 6px;">On-campus recruitment by 200+ MNCs.</p></div></div></div></section>`,
+        isPublished: true,
+      },
+      {
+        name: "Placement & Top Recruiters 1",
+        category: "placements",
+        description: "3 Metric Box Placement Banner",
+        code: `<section style="background: #0f172a; color: #ffffff; padding: 80px 24px; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box;"><div style="max-width: 1000px; margin: 0 auto; text-align: center;"><span style="color: #38bdf8; font-size: 12px; font-weight: 900; text-transform: uppercase;">CAREER PLACEMENTS</span><h2 style="font-size: 38px; font-weight: 900; margin-top: 8px; color: #ffffff;">Placement Records & Top Recruiters</h2><div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px;"><div style="background: #1e293b; padding: 32px; border-radius: 20px; border: 1px solid #334155;"><h3 style="font-size: 40px; font-weight: 900; color: #38bdf8; margin: 0;">₹52 LPA</h3><p style="font-size: 13px; color: #94a3b8; font-weight: 700; margin-top: 8px;">Highest National Package</p></div><div style="background: #1e293b; padding: 32px; border-radius: 20px; border: 1px solid #334155;"><h3 style="font-size: 40px; font-weight: 900; color: #38bdf8; margin: 0;">₹12.4 LPA</h3><p style="font-size: 13px; color: #94a3b8; font-weight: 700; margin-top: 8px;">Average Campus Salary</p></div><div style="background: #1e293b; padding: 32px; border-radius: 20px; border: 1px solid #334155;"><h3 style="font-size: 40px; font-weight: 900; color: #38bdf8; margin: 0;">450+</h3><p style="font-size: 13px; color: #94a3b8; font-weight: 700; margin-top: 8px;">Recruiting Partners</p></div></div></div></section>`,
+        isPublished: true,
+      },
+      {
+        name: "Courses / Program 1",
+        category: "courses",
+        description: "Degree Cards Layout",
+        code: `<section style="background: #ffffff; color: #0f172a; padding: 80px 24px; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box;"><div style="max-width: 1100px; margin: 0 auto;"><div style="text-align: center;"><span style="color: #2563eb; font-size: 12px; font-weight: 900; text-transform: uppercase;">ACADEMIC DEGREES</span><h2 style="font-size: 36px; font-weight: 900; margin-top: 8px;">Explore Our Degree Programs</h2></div><div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 48px;"><div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 28px; border-radius: 20px;"><h3 style="font-size: 18px; font-weight: 900; color: #0f172a;">B.Tech Computer Science</h3><p style="font-size: 13px; color: #64748b; margin-top: 8px;">4 Years Undergraduate Degree in AI, ML & Software Systems.</p><a href="#apply" style="color: #2563eb; font-size: 13px; font-weight: 800; text-decoration: none; display: inline-block; margin-top: 16px;">View Curriculum →</a></div><div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 28px; border-radius: 20px;"><h3 style="font-size: 18px; font-weight: 900; color: #0f172a;">M.Tech Data Science</h3><p style="font-size: 13px; color: #64748b; margin-top: 8px;">2 Years Postgraduate Specialization in Big Data Analytics.</p><a href="#apply" style="color: #2563eb; font-size: 13px; font-weight: 800; text-decoration: none; display: inline-block; margin-top: 16px;">View Curriculum →</a></div><div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 28px; border-radius: 20px;"><h3 style="font-size: 18px; font-weight: 900; color: #0f172a;">MBA Business Analytics</h3><p style="font-size: 13px; color: #64748b; margin-top: 8px;">2 Years Management Program in Finance, Marketing & Operations.</p><a href="#apply" style="color: #2563eb; font-size: 13px; font-weight: 800; text-decoration: none; display: inline-block; margin-top: 16px;">View Curriculum →</a></div></div></div></section>`,
+        isPublished: true,
+      },
+      {
+        name: "Footer 1",
+        category: "footer",
+        description: "Dark Multi-column Footer",
+        code: `<footer style="background: #090d16; color: #94a3b8; padding: 60px 40px 30px 40px; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.08);"><div style="max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 40px;"><div><div style="font-size: 20px; font-weight: 900; color: #ffffff;">CAMPUS PORTAL</div><p style="font-size: 13px; color: #64748b; margin-top: 12px;">NIRF Top Ranked Autonomous College of Engineering.</p></div><div><div style="font-size: 13px; font-weight: 900; color: #ffffff;">Quick Links</div><div style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 13px;"><a href="#about" style="color: #94a3b8; text-decoration: none;">About Us</a><a href="#courses" style="color: #94a3b8; text-decoration: none;">Academics</a></div></div><div><div style="font-size: 13px; font-weight: 900; color: #ffffff;">Admissions</div><div style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 13px;"><a href="#apply" style="color: #94a3b8; text-decoration: none;">Apply Online</a></div></div><div><div style="font-size: 13px; font-weight: 900; color: #ffffff;">Address</div><p style="font-size: 12px; color: #64748b; margin-top: 12px;">Grand Trunk Road, Tech City, India</p></div></div><div style="max-width: 1100px; margin: 40px auto 0 auto; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); text-align: center; font-size: 12px; color: #64748b;">© 2026 Campus Portal. All rights reserved.</div></footer>`,
+        isPublished: true,
+      },
+    ];
+
+    for (const item of INITIAL_SECTION_TEMPLATES) {
+      await Template.findOneAndUpdate(
+        { name: item.name },
+        item,
+        { upsert: true }
+      );
+    }
 
     await SystemSecret.findOneAndUpdate(
       { name: TEMPLATES_INITIALIZED_MARKER },
@@ -162,7 +218,7 @@ export async function bootstrapTemplates() {
       { upsert: true }
     );
 
-    console.log("[bootstrap] Successfully initialized College-Website default template and theme options.");
+    console.log(`[bootstrap] Successfully initialized ${INITIAL_SECTION_TEMPLATES.length} reference templates and theme options.`);
   } catch (err) {
     console.error("[bootstrap] reference data seed error:", (err as Error).message);
   }

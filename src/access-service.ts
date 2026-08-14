@@ -45,7 +45,7 @@ export async function submitAccessRequest(input: unknown) {
 
     let passwordHash: string | null = null;
     if (password && password.trim()) {
-      passwordHash = await bcrypt.hash(password.trim(), 10);
+      passwordHash = await bcrypt.hash(password.trim(), 8);
     }
 
     const orgName = organization || name;

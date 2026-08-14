@@ -300,7 +300,7 @@ app.use((req, _res, next) => {
   if (req.url.startsWith("/admin/") || req.url === "/admin") {
     req.url = `/api/v1${req.url}`;
   } else if (req.url.startsWith("/api/admin/") || req.url === "/api/admin") {
-    req.url = `/api/v1/${req.url.slice(11)}`;
+    req.url = `/api/v1/admin${req.url.slice(10)}`;
   }
   next();
 });
@@ -986,14 +986,12 @@ app.post(
     "/api/v1/auth/admin/login",
     "/api/auth/admin/login",
     "/auth/admin/login",
-    /\/admin.*login/,
-    /\/auth\/admin.*/,
   ],
   handleAdminLogin,
 );
 
 app.get(
-  ["/api/v1/admin/status", "/api/admin/status", "/admin/status", /\/admin.*status/],
+  ["/api/v1/admin/status", "/api/admin/status", "/admin/status"],
   async (_req, res) => {
     try {
       res.json(await adminStatus());
@@ -1004,7 +1002,7 @@ app.get(
 );
 
 app.post(
-  ["/api/v1/admin/auth/logout", "/api/admin/auth/logout", "/admin/auth/logout", /\/admin.*logout/],
+  ["/api/v1/admin/auth/logout", "/api/admin/auth/logout", "/admin/auth/logout"],
   (req, res) => {
     const { maxAge: _drop, ...options } = adminCookieOptions(
       req.headers.origin,
@@ -1016,7 +1014,7 @@ app.post(
 );
 
 app.get(
-  ["/api/v1/admin/me", "/api/admin/me", "/admin/me", /\/admin.*me/],
+  ["/api/v1/admin/me", "/api/admin/me", "/admin/me"],
   async (req, res) => {
     try {
       if (!(await adminConfigured())) {
@@ -1030,7 +1028,7 @@ app.get(
 );
 
 app.get(
-  ["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview", /\/admin.*overview/],
+  ["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"],
   async (req, res) => {
     try {
       await requireAdmin(req);
@@ -1042,7 +1040,7 @@ app.get(
 );
 
 app.get(
-  ["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites", /\/admin.*sites/],
+  ["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites"],
   async (req, res) => {
     try {
       await requireAdmin(req);
@@ -1342,69 +1340,77 @@ app.get(
   },
 );
 
-app.get("/api/v1/admin/templates/:id", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json(await getTemplateForAdmin(req.params.id));
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-app.patch("/api/v1/admin/templates/:id", templateUpload.any(), async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-
-    let code: string | undefined = undefined;
-    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
-
-    if (files.length > 0) {
-      const validFiles: Express.Multer.File[] = [];
-      for (const file of files) {
-        const filename = file.originalname.toLowerCase();
-        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-        if (!isValidExt || file.buffer.includes(0)) continue;
-        validFiles.push(file);
-      }
-
-      if (validFiles.length > 0) {
-        if (validFiles.length === 1) {
-          code = validFiles[0]!.buffer.toString("utf-8");
-        } else {
-          const codeBlocks = validFiles.map((file) => {
-            const name = file.originalname || file.filename;
-            const text = file.buffer.toString("utf-8");
-            return `<!-- File: ${name} -->\n${text}`;
-          });
-          code = codeBlocks.join("\n\n");
-        }
-      }
-    } else if (typeof req.body?.code === "string") {
-      code = req.body.code;
+app.get(
+  ["/api/v1/admin/templates/:id", "/api/admin/templates/:id", "/admin/templates/:id"],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json(await getTemplateForAdmin(req.params.id as string));
+    } catch (error) {
+      fail(res, error);
     }
+  },
+);
 
-    const isPublishedValue =
-      req.body?.isPublished === undefined
-        ? undefined
-        : req.body.isPublished === "true" || req.body.isPublished === true;
+app.patch(
+  ["/api/v1/admin/templates/:id", "/api/admin/templates/:id", "/admin/templates/:id"],
+  templateUpload.any(),
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
 
-    const payload = {
-      name: req.body?.name || undefined,
-      description: req.body?.description,
-      thumbnailUrl: req.body?.thumbnailUrl,
-      isPublished: isPublishedValue,
-      code,
-      archived:
-        req.body?.archived === undefined
+      let code: string | undefined = undefined;
+      const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+
+      if (files.length > 0) {
+        const validFiles: Express.Multer.File[] = [];
+        for (const file of files) {
+          const filename = file.originalname.toLowerCase();
+          const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+          if (!isValidExt || file.buffer.includes(0)) continue;
+          validFiles.push(file);
+        }
+
+        if (validFiles.length > 0) {
+          if (validFiles.length === 1) {
+            code = validFiles[0]!.buffer.toString("utf-8");
+          } else {
+            const codeBlocks = validFiles.map((file) => {
+              const name = file.originalname || file.filename;
+              const text = file.buffer.toString("utf-8");
+              return `<!-- File: ${name} -->\n${text}`;
+            });
+            code = codeBlocks.join("\n\n");
+          }
+        }
+      } else if (typeof req.body?.code === "string") {
+        code = req.body.code;
+      }
+
+      const isPublishedValue =
+        req.body?.isPublished === undefined
           ? undefined
-          : req.body.archived === "true" || req.body.archived === true,
-    };
+          : req.body.isPublished === "true" || req.body.isPublished === true;
 
-    res.json(await updateTemplateDetails(req.params.id as string, payload, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+      const payload = {
+        name: req.body?.name || undefined,
+        category: req.body?.category || undefined,
+        description: req.body?.description,
+        thumbnailUrl: req.body?.thumbnailUrl,
+        isPublished: isPublishedValue,
+        code,
+        archived:
+          req.body?.archived === undefined
+            ? undefined
+            : req.body.archived === "true" || req.body.archived === true,
+      };
+
+      res.json(await updateTemplateDetails(req.params.id as string, payload, session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 /**
  * Swaps which design fills each of this template's categories.
@@ -1413,14 +1419,17 @@ app.patch("/api/v1/admin/templates/:id", templateUpload.any(), async (req, res) 
  * updates `sections.default_variant_id` rather than deleting and recreating rows.
  * See `updateTemplateSlots` for why the destructive version cannot be used here.
  */
-app.patch("/api/v1/admin/templates/:id/sections", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(await updateTemplateSlots(req.params.id, req.body ?? {}, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.patch(
+  ["/api/v1/admin/templates/:id/sections", "/api/admin/templates/:id/sections", "/admin/templates/:id/sections"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(await updateTemplateSlots(req.params.id as string, req.body ?? {}, session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 /**
  * Archives, or deletes when nothing depends on it.
@@ -1429,20 +1438,23 @@ app.patch("/api/v1/admin/templates/:id/sections", async (req, res) => {
  * has no colleges and no college sections. The frontend's confirm() dialog is not
  * the check — the server is, because only it can see the cascade.
  */
-app.delete("/api/v1/admin/templates/:id", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(
-      await retireTemplate(
-        req.params.id,
-        { hard: req.query.hard === "true" },
-        session,
-      ),
-    );
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.delete(
+  ["/api/v1/admin/templates/:id", "/api/admin/templates/:id", "/admin/templates/:id"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(
+        await retireTemplate(
+          req.params.id as string,
+          { hard: req.query.hard === "true" },
+          session,
+        ),
+      );
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 app.get(
   ["/api/v1/admin/access-requests", "/api/admin/access-requests", "/admin/access-requests"],
@@ -1720,10 +1732,13 @@ function registeredRoutes(): { method: string; path: string }[] {
 
   const routes: { method: string; path: string }[] = [];
   for (const layer of stack as { route?: { path: unknown; methods?: Record<string, boolean> } }[]) {
-    const path = layer.route?.path;
-    if (typeof path !== "string") continue;
-    for (const [method, enabled] of Object.entries(layer.route?.methods ?? {})) {
-      if (enabled) routes.push({ method: method.toUpperCase(), path });
+    const rawPath = layer.route?.path;
+    const paths = Array.isArray(rawPath) ? rawPath : typeof rawPath === "string" ? [rawPath] : [];
+    for (const path of paths) {
+      if (typeof path !== "string") continue;
+      for (const [method, enabled] of Object.entries(layer.route?.methods ?? {})) {
+        if (enabled) routes.push({ method: method.toUpperCase(), path });
+      }
     }
   }
   return routes;

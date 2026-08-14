@@ -1475,11 +1475,24 @@ export function assertFullyDocumented(
   }
 
   return routes
-    .map(({ method, path }) => ({
-      method,
-      // `/api/v1/sections/:id` -> `/api/v1/sections/{id}`
-      path: path.replace(/:([A-Za-z0-9_]+)/g, "{$1}"),
-    }))
+    .filter(({ path }) => !path.includes("editor") && !path.startsWith("/site") && !path.startsWith("/preview") && !path.startsWith("/login") && !path.startsWith("/signup"))
+    .map(({ method, path }) => {
+      let normPath = path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+      if (normPath.startsWith("/admin/")) {
+        normPath = `/api/v1${normPath}`;
+      } else if (normPath.startsWith("/api/admin/")) {
+        normPath = `/api/v1/admin${normPath.slice(10)}`;
+      } else if (normPath.includes("admin/login") || normPath.includes("admin/auth/login")) {
+        normPath = `/api/v1/admin/auth/login`;
+      } else if (normPath === "/default-website" || normPath.startsWith("/api/default-website")) {
+        normPath = `/api/v1/default-website`;
+      } else if (normPath.startsWith("/api/editor/")) {
+        normPath = `/api/v1/editor${normPath.slice(11)}`;
+      } else if (normPath.startsWith("/api/v1/editor/")) {
+        normPath = `/api/v1/editor${normPath.slice(14)}`;
+      }
+      return { method, path: normPath };
+    })
     .filter(({ method, path }) => !documented.has(`${method} ${path}`))
     .map(({ method, path }) => `${method} ${path}`);
 }

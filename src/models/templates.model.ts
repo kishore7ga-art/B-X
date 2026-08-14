@@ -13,6 +13,7 @@ export interface ITemplateSlot {
 export interface ITemplate extends Document {
   id: string;
   name: string;
+  category?: string | null;
   description?: string | null;
   thumbnailUrl?: string | null;
   demoUrl?: string | null;
@@ -42,6 +43,7 @@ const TemplateSlotSchema = new Schema<ITemplateSlot>(
 const TemplateSchema = new Schema<ITemplate>(
   {
     name: { type: String, required: true, unique: true, trim: true },
+    category: { type: String, default: null },
     description: { type: String, default: null },
     thumbnailUrl: { type: String, default: null },
     demoUrl: { type: String, default: null },
