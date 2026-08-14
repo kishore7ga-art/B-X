@@ -1160,32 +1160,41 @@ app.get(
  * captures the literal string "stats" as an id and answers 404 for the stats call.
  * It costs nothing to get right here and is confusing to diagnose later.
  */
-app.get("/api/v1/admin/templates/stats", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json(await templateStats());
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats", /\/admin.*templates\/stats/],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json(await templateStats());
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 /** Every template, drafts and archived included — accessible for live editor & admin. */
-app.get("/api/v1/admin/templates", async (_req, res) => {
-  try {
-    res.json({ templates: await listTemplatesForAdmin() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"],
+  async (_req, res) => {
+    try {
+      res.json({ templates: await listTemplatesForAdmin() });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.delete("/api/v1/admin/templates", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(await deleteAllTemplates(session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.delete(
+  ["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(await deleteAllTemplates(session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 const templateUpload = multer({
   storage: multer.memoryStorage(),
@@ -1206,80 +1215,85 @@ const ALLOWED_CODE_EXTENSIONS = [
   ".css",
 ];
 
-app.post("/api/v1/admin/templates", templateUpload.any(), async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
+app.post(
+  ["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"],
+  templateUpload.any(),
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
 
-    let code: string | undefined = undefined;
+      let code: string | undefined = undefined;
 
-    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+      const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
 
-    if (files.length > 0) {
-      const validFiles: Express.Multer.File[] = [];
+      if (files.length > 0) {
+        const validFiles: Express.Multer.File[] = [];
 
-      for (const file of files) {
-        const filename = file.originalname.toLowerCase();
-        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-        if (!isValidExt) continue;
+        for (const file of files) {
+          const filename = file.originalname.toLowerCase();
+          const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+          if (!isValidExt) continue;
 
-        // Skip binary files (inspect for null bytes)
-        if (file.buffer.includes(0)) continue;
+          if (file.buffer.includes(0)) continue;
 
-        validFiles.push(file);
+          validFiles.push(file);
+        }
+
+        if (validFiles.length === 0) {
+          res.status(400).json({
+            error:
+              "No valid text or code files found in the upload. Allowed extensions: .html, .blade.php, .jsx, .vue, .css, .txt",
+          });
+          return;
+        }
+
+        if (validFiles.length === 1) {
+          code = validFiles[0]!.buffer.toString("utf-8");
+        } else {
+          const codeBlocks = validFiles.map((file) => {
+            const name = file.originalname || file.filename;
+            const text = file.buffer.toString("utf-8");
+            return `<!-- File: ${name} -->\n${text}`;
+          });
+          code = codeBlocks.join("\n\n");
+        }
+      } else if (typeof req.body?.code === "string") {
+        code = req.body.code;
       }
 
-      if (validFiles.length === 0) {
-        res.status(400).json({
-          error:
-            "No valid text or code files found in the upload. Allowed extensions: .html, .blade.php, .jsx, .vue, .css, .txt",
-        });
-        return;
-      }
+      const isPublishedValue =
+        req.body?.isPublished === undefined
+          ? true
+          : req.body.isPublished === "true" || req.body.isPublished === true;
 
-      if (validFiles.length === 1) {
-        code = validFiles[0]!.buffer.toString("utf-8");
-      } else {
-        // Stitch multiple folder files together
-        const codeBlocks = validFiles.map((file) => {
-          const name = file.originalname || file.filename;
-          const text = file.buffer.toString("utf-8");
-          return `<!-- File: ${name} -->\n${text}`;
-        });
-        code = codeBlocks.join("\n\n");
-      }
-    } else if (typeof req.body?.code === "string") {
-      code = req.body.code;
+      const payload = {
+        name: req.body?.name,
+        category: req.body?.category || undefined,
+        description: req.body?.description || undefined,
+        thumbnailUrl: req.body?.thumbnailUrl || undefined,
+        isPublished: isPublishedValue,
+        code,
+      };
+
+      res.status(201).json(await createTemplate(payload, session));
+    } catch (error) {
+      fail(res, error);
     }
-
-    const isPublishedValue =
-      req.body?.isPublished === undefined
-        ? true
-        : req.body.isPublished === "true" || req.body.isPublished === true;
-
-    const payload = {
-      name: req.body?.name,
-      category: req.body?.category || undefined,
-      description: req.body?.description || undefined,
-      thumbnailUrl: req.body?.thumbnailUrl || undefined,
-      isPublished: isPublishedValue,
-      code,
-    };
-
-    res.status(201).json(await createTemplate(payload, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+  },
+);
 
 /** The design library, for the edit screen's per-slot dropdowns. */
-app.get("/api/v1/admin/library", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json({ variants: await libraryVariantsForAdmin() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/library", "/api/admin/library", "/admin/library"],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json({ variants: await libraryVariantsForAdmin() });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 app.get("/api/v1/admin/templates/:id", async (req, res) => {
   try {
@@ -1383,108 +1397,113 @@ app.delete("/api/v1/admin/templates/:id", async (req, res) => {
   }
 });
 
-app.get("/api/v1/admin/access-requests", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json({ requests: await listAccessRequests(req.query) });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/access-requests", "/api/admin/access-requests", "/admin/access-requests"],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json({ requests: await listAccessRequests(req.query) });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 /**
  * Approves a request and sends the invite.
- *
- * The raw token exists in this handler and nowhere else — it is minted by
- * `approveAccessRequest`, handed to `sendActivationEmail`, and never stored,
- * returned or logged in production.
- *
- * **`delivered: false` is a 200, not a failure**, and that is a deliberate
- * choice worth stating. By the time a send is attempted the row is already
- * APPROVED and the token already minted; throwing here would answer 500 to an
- * admin whose approval *did* happen, and the retry they would reasonably try
- * next answers 409. So the approval is reported as what it is, with whether the
- * email arrived alongside it, and the panel says so.
- *
- * That leaves a real gap: an approval whose email bounced has a live invite
- * nobody received and no way to resend it. The fix is a resend endpoint that
- * re-mints against an already-approved row; until that exists the activation URL
- * is recoverable outside production from the log, and not at all inside it.
  */
-app.post("/api/v1/admin/access-requests/:id/approve", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    const password = typeof req.body?.password === "string" ? req.body.password : undefined;
-    const { email, name, rawToken, expiresAt, user } = await approveAccessRequest(
-      req.params.id as string,
-      session,
-      password,
-    );
+app.post(
+  ["/api/v1/admin/access-requests/:id/approve", "/api/admin/access-requests/:id/approve", "/admin/access-requests/:id/approve"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      const password = typeof req.body?.password === "string" ? req.body.password : undefined;
+      const { email, name, rawToken, expiresAt, user } = await approveAccessRequest(
+        req.params.id as string,
+        session,
+        password,
+      );
 
-    const delivery = await sendActivationEmail({
-      to: email,
-      name,
-      activationUrl: `${appUrl()}/activate?token=${rawToken}`,
-      expiresAt,
-    });
+      const delivery = await sendActivationEmail({
+        to: email,
+        name,
+        activationUrl: `${appUrl()}/activate?token=${rawToken}`,
+        expiresAt,
+      });
 
-    res.json({
-      approved: true,
-      email,
-      userId: user.id,
-      expiresAt: expiresAt.toISOString(),
-      delivered: delivery.delivered,
-      ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
-    });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+      res.json({
+        approved: true,
+        email,
+        userId: user.id,
+        expiresAt: expiresAt.toISOString(),
+        delivered: delivery.delivered,
+        ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
+      });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.post("/api/v1/admin/access-requests/:id/reject", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(await rejectAccessRequest(req.params.id, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.post(
+  ["/api/v1/admin/access-requests/:id/reject", "/api/admin/access-requests/:id/reject", "/admin/access-requests/:id/reject"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(await rejectAccessRequest(req.params.id as string, session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.get("/api/v1/admin/users", async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json({ users: await listUsersForAdmin() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.get(
+  ["/api/v1/admin/users", "/api/admin/users", "/admin/users"],
+  async (req, res) => {
+    try {
+      await requireAdmin(req);
+      res.json({ users: await listUsersForAdmin() });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.patch("/api/v1/admin/users/:id/status", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(await updateUserStatusForAdmin(req.params.id as string, req.body ?? {}, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.patch(
+  ["/api/v1/admin/users/:id/status", "/api/admin/users/:id/status", "/admin/users/:id/status"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(await updateUserStatusForAdmin(req.params.id as string, req.body ?? {}, session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.patch("/api/v1/admin/users/:id/password", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.patch(
+  ["/api/v1/admin/users/:id/password", "/api/admin/users/:id/password", "/admin/users/:id/password"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
-app.delete("/api/v1/admin/users/:id", async (req, res) => {
-  try {
-    const session = await requireAdmin(req);
-    res.json(await deleteUserForAdmin(req.params.id as string, session));
-  } catch (error) {
-    fail(res, error);
-  }
-});
+app.delete(
+  ["/api/v1/admin/users/:id", "/api/admin/users/:id", "/admin/users/:id"],
+  async (req, res) => {
+    try {
+      const session = await requireAdmin(req);
+      res.json(await deleteUserForAdmin(req.params.id as string, session));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
 
 // --- Uploads ----------------------------------------------------------------
 
