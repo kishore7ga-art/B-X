@@ -19,11 +19,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const SHARED = [
-  "prisma/schema.prisma",
-  "prisma/seed.ts",
   "src/lib/college-types.ts",
   "src/lib/json-stable.ts",
-  "src/lib/db-pool.ts",
   "src/lib/auth/cookie-domain.ts",
   "src/lib/api-contract.ts",
 ];
