@@ -9,7 +9,7 @@ import {
   destinationFor,
   mintSessionToken,
 } from "@/auth-service";
-import { AccessRequest, College } from "@/models";
+import { AccessRequest, College, AuditLog } from "@/models";
 import { subdomainFromName } from "@/lib/college-types";
 
 export const accessRequestSchema = z.object({
@@ -67,6 +67,12 @@ export async function submitAccessRequest(input: unknown) {
         status: "PENDING",
       });
     }
+
+    await AuditLog.create({
+      action: "ACCESS_REQUEST_CREATED",
+      tenantId: reqSubdomain,
+      details: { email: cleanEmail, organization: orgName },
+    }).catch(() => null);
   } catch (err) {
     console.error("[access-request] Database operation encountered error:", err);
   }
@@ -222,7 +228,15 @@ export async function approveAccessRequest(
   request.activationToken = hashToken(rawToken);
   request.activationTokenExpiresAt = expiresAt;
   request.createdCollegeId = college.id;
+  request.createdUserId = userId;
   await request.save();
+
+  await AuditLog.create({
+    action: "TENANT_APPROVED",
+    tenantId: college.subdomain,
+    actorId: actor.email,
+    details: { email: cleanEmail, collegeId: college.id },
+  }).catch(() => null);
 
   await recordAudit({
     actor,
@@ -350,6 +364,12 @@ export async function activateWithPassword(input: unknown) {
 
   request.activationToken = null;
   await request.save();
+
+  await AuditLog.create({
+    action: "ACTIVATION_COMPLETED",
+    tenantId: college.subdomain,
+    details: { email: cleanEmail, collegeId: college.id },
+  }).catch(() => null);
 
   const sessionToken = await mintSessionToken({
     userId,

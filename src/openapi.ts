@@ -233,6 +233,32 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/system/flow-health": {
+      get: {
+        tags: ["Service"],
+        summary: "Operational heartbeat for CUJ flow",
+        description: "Single operational heartbeat for CUJ-001 (XITE Critical User Journey 6-step flow).",
+        security: [],
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                accessRequest: str,
+                approval: str,
+                activation: str,
+                authentication: str,
+                editorPersistence: str,
+                livePublishing: str,
+                e2eSuite: str,
+                timestamp: str,
+              },
+            },
+            "Flow health status.",
+          ),
+        },
+      },
+    },
 
     "/api/v1/me": {
       get: {

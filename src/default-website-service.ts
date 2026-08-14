@@ -1,4 +1,4 @@
-import { SystemSecret } from "@/models";
+import { SystemSecret, AuditLog } from "@/models";
 
 export type DefaultWebsiteSection = {
   id: string;
@@ -576,5 +576,12 @@ export async function updateDefaultWebsiteConfig(
     { name: "DEFAULT_WEBSITE_CONFIG", value: config },
     { upsert: true, new: true }
   );
+
+  await AuditLog.create({
+    action: "EDITOR_CONFIG_UPDATED",
+    tenantId: "system",
+    details: { pagesCount: config.pages?.length || 0 },
+  }).catch(() => null);
+
   return config;
 }
