@@ -1,3 +1,4 @@
+// Dokploy Deployment Trigger: 2026-08-14
 import "dotenv/config";
 
 import { randomUUID } from "node:crypto";
