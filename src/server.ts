@@ -914,7 +914,17 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
 };
 
 app.post(
-  ["/api/v1/admin/auth/login", "/api/admin/auth/login", "/admin/auth/login", "/api/v1/admin/login", "/api/admin/login", "/admin/login"],
+  [
+    "/api/v1/admin/auth/login",
+    "/api/admin/auth/login",
+    "/admin/auth/login",
+    "/api/v1/admin/login",
+    "/api/admin/login",
+    "/admin/login",
+    "/api/v1/auth/admin/login",
+    "/api/auth/admin/login",
+    "/auth/admin/login",
+  ],
   handleAdminLogin,
 );
 
