@@ -1480,10 +1480,14 @@ export function assertFullyDocumented(
       let normPath = path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
       if (normPath.startsWith("/admin/")) {
         normPath = `/api/v1${normPath}`;
+      } else if (normPath.startsWith("/v1/admin/")) {
+        normPath = `/api${normPath}`;
       } else if (normPath.startsWith("/api/admin/")) {
         normPath = `/api/v1/admin${normPath.slice(10)}`;
       } else if (normPath.includes("admin/login") || normPath.includes("admin/auth/login")) {
         normPath = `/api/v1/admin/auth/login`;
+      } else if (normPath === "/status" || normPath.endsWith("/admin/status")) {
+        normPath = `/api/v1/admin/status`;
       } else if (normPath === "/default-website" || normPath.startsWith("/api/default-website")) {
         normPath = `/api/v1/default-website`;
       } else if (normPath.startsWith("/api/editor/")) {

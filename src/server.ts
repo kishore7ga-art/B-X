@@ -297,10 +297,30 @@ app.use(
  * a reverse proxy (Nginx, Traefik, Cloudflare) stripped /api or /api/v1 prefixes.
  */
 app.use((req, _res, next) => {
-  if (req.url.startsWith("/admin/") || req.url === "/admin") {
-    req.url = `/api/v1${req.url}`;
-  } else if (req.url.startsWith("/api/admin/") || req.url === "/api/admin") {
-    req.url = `/api/v1/admin${req.url.slice(10)}`;
+  let url = req.url || "/";
+  if (!url.startsWith("/")) url = "/" + url;
+
+  const [pathname, search] = url.split("?");
+  const queryStr = search ? `?${search}` : "";
+
+  if (pathname.startsWith("/v1/admin/")) {
+    req.url = `/api${pathname}${queryStr}`;
+  } else if (pathname.startsWith("/v1/")) {
+    req.url = `/api${pathname}${queryStr}`;
+  } else if (pathname.startsWith("/admin/") || pathname === "/admin") {
+    req.url = `/api/v1${pathname}${queryStr}`;
+  } else if (pathname.startsWith("/api/admin/") || pathname === "/api/admin") {
+    req.url = `/api/v1/admin${pathname.slice(10)}${queryStr}`;
+  } else if (
+    pathname === "/status" ||
+    pathname === "/overview" ||
+    pathname === "/sites" ||
+    pathname.startsWith("/templates") ||
+    pathname.startsWith("/access-requests") ||
+    pathname.startsWith("/users") ||
+    pathname.startsWith("/library")
+  ) {
+    req.url = `/api/v1/admin${pathname}${queryStr}`;
   }
   next();
 });
@@ -991,10 +1011,11 @@ app.post(
 );
 
 app.get(
-  ["/api/v1/admin/status", "/api/admin/status", "/admin/status"],
+  ["/api/v1/admin/status", "/api/admin/status", "/admin/status", "/v1/admin/status", "/status"],
   async (_req, res) => {
     try {
-      res.json(await adminStatus());
+      const info = await adminStatus();
+      res.json({ status: "ok", ...info });
     } catch (error) {
       fail(res, error);
     }
