@@ -3,7 +3,7 @@
  *
  * These shapes crossed the network as hand-written mirrors: the backend built a
  * response and the frontend declared, separately, what it expected to receive.
- * Nothing connected the two. Adding a field to a Prisma `select`, or a value to
+ * Nothing connected the two. Adding a field to a Mongoose query response, or a value to
  * the save-trigger list, compiled cleanly in both repos and broke at runtime in
  * whichever one was not updated — the same failure the nine copied files
  * already have a checksum guarding, minus the guard.

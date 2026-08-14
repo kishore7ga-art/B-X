@@ -2,5 +2,5 @@
   "src/lib/college-types.ts": "258c644e2ca9a664",
   "src/lib/json-stable.ts": "6141a2d81b86d2fc",
   "src/lib/auth/cookie-domain.ts": "a2914b8049d9ff6b",
-  "src/lib/api-contract.ts": "842b52e5aa6168e2"
+  "src/lib/api-contract.ts": "26cfe8a4e0d50fea"
 }
