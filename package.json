@@ -12,6 +12,8 @@
     "start": "node scripts/start.mjs",
     "typecheck": "tsc --noEmit",
     "test:security": "node scripts/test-security-headers.mjs",
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "test:benchmark": "node scripts/benchmark-performance.mjs",
     "seed": "node scripts/seed-mongodb.mjs",
     "check:shared": "node scripts/check-shared-files.mjs",
     "prebuild": "node scripts/check-shared-files.mjs",
