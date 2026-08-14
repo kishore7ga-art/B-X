@@ -275,6 +275,21 @@ app.use(
 );
 
 /**
+ * Global Route Normalizer Middleware.
+ *
+ * Guarantees that admin and API requests work seamlessly regardless of whether
+ * a reverse proxy (Nginx, Traefik, Cloudflare) stripped /api or /api/v1 prefixes.
+ */
+app.use((req, _res, next) => {
+  if (req.url.startsWith("/admin/") || req.url === "/admin") {
+    req.url = `/api/v1${req.url}`;
+  } else if (req.url.startsWith("/api/admin/") || req.url === "/api/admin") {
+    req.url = `/api/v1/${req.url.slice(11)}`;
+  }
+  next();
+});
+
+/**
  * Where the app lives, for links this service puts in an email.
  *
  * An activation link has to point at the *frontend* — it opens a page, not an
