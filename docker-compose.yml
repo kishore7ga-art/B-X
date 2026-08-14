@@ -1,80 +1,30 @@
-# XITE backend — API + database.
-#
-# Owns the schema: this is the only service that runs `prisma migrate deploy`.
-# The frontend (kishore7ga-art/xite-F) must not, or two containers race the
-# same database and a migration lands half applied.
+# XITE backend — Express API Service with MongoDB Mongoose persistence.
 
 services:
   api:
     build:
       context: .
     restart: unless-stopped
-    # Not published to the host. Dokploy's Traefik reaches it over the Docker
-    # network — set the port to 4000 in the Domains tab.
     expose:
       - "4000"
-    # Ordering only, deliberately not `condition: service_healthy`.
-    #
-    # Waiting for a healthy database means that if Postgres never becomes
-    # healthy, the API never starts at all -- and Traefik answers 502, which
-    # says nothing about why. scripts/start.mjs already retries migrations with
-    # backoff and serves anyway on purpose, for exactly this reason: an API
-    # that answers "database unreachable, here is the reason" is diagnosable
-    # from a browser, and a 502 is not diagnosable from anywhere.
-    depends_on:
-      - db
     environment:
       NODE_ENV: production
       PORT: 4000
-      # Nested interpolation inside a :- default is not expanded by every
-      # Compose version; when it is not, this arrives empty and the API reports
-      # a missing URL while the dashboard plainly shows a password. Passed
-      # through plainly instead, and scripts/start.mjs rebuilds it from
-      # POSTGRES_PASSWORD when it comes through empty.
       DATABASE_URL: ${DATABASE_URL:-}
+      MONGODB_URI: ${MONGODB_URI:-}
       SESSION_SECRET: ${SESSION_SECRET}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      AUTH_DISABLED: ${AUTH_DISABLED:-false}
-      # Exact origins, never "*": the session cookie rides on these requests and
-      # browsers refuse a wildcard alongside credentials.
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in,https://admin.meetkishore.in,https://api.meetkishore.in}
       SEED_ON_START: ${SEED_ON_START:-true}
     volumes:
       - uploads:/app/public/uploads
     networks:
       dokploy-network:
-        # Fixed name so the frontend, a separate compose project with its own
-        # prefix, can find this container at a predictable address.
         aliases:
           - xite-api
-
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: collegeadmin
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: college_saas
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U collegeadmin -d college_saas"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    networks:
-      dokploy-network:
-        # The one database. The frontend renders pages with Server Components
-        # that query Prisma directly, so it needs the database too -- what this
-        # service owns is the *schema*, not exclusive access.
-        aliases:
-          - xite-db
 
 networks:
   dokploy-network:
     external: true
 
 volumes:
-  db_data:
   uploads:
