@@ -995,82 +995,418 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
   }
 };
 
-app.post(
-  [
-    "/api/v1/admin/auth/login",
-    "/api/admin/auth/login",
-    "/admin/auth/login",
-    "/api/v1/admin/login",
-    "/api/admin/login",
-    "/admin/login",
-    "/api/v1/auth/admin/login",
-    "/api/auth/admin/login",
-    "/auth/admin/login",
-  ],
-  handleAdminLogin,
-);
+const templateUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
-app.get(
-  ["/api/v1/admin/status", "/api/admin/status", "/admin/status", "/v1/admin/status", "/status"],
-  async (_req, res) => {
-    try {
-      const info = await adminStatus();
-      res.json({ status: "ok", ...info });
-    } catch (error) {
-      fail(res, error);
+const ALLOWED_CODE_EXTENSIONS = [
+  ".html",
+  ".htm",
+  ".blade.php",
+  ".jsx",
+  ".vue",
+  ".txt",
+  ".php",
+  ".js",
+  ".tsx",
+  ".ts",
+  ".css",
+];
+
+const adminRouter = express.Router();
+
+adminRouter.get("/status", async (_req, res) => {
+  try {
+    const info = await adminStatus();
+    res.json({ status: "ok", ...info });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.post(["/login", "/auth/login"], handleAdminLogin);
+
+adminRouter.post(["/logout", "/auth/logout"], (req, res) => {
+  const { maxAge: _drop, ...options } = adminCookieOptions(
+    req.headers.origin,
+    requestHost(req),
+  );
+  res.clearCookie(ADMIN_COOKIE_NAME, options);
+  res.json({ ok: true });
+});
+
+adminRouter.get("/me", async (req, res) => {
+  try {
+    if (!(await adminConfigured())) {
+      throw new AuthError("Admin panel is not configured on this deployment", 503);
     }
-  },
-);
+    res.json({ admin: (await getAdminSession(req.headers.cookie)) ?? null });
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
-app.post(
-  ["/api/v1/admin/auth/logout", "/api/admin/auth/logout", "/admin/auth/logout"],
-  (req, res) => {
-    const { maxAge: _drop, ...options } = adminCookieOptions(
-      req.headers.origin,
-      requestHost(req),
-    );
-    res.clearCookie(ADMIN_COOKIE_NAME, options);
-    res.json({ ok: true });
-  },
-);
+adminRouter.get("/overview", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await adminOverview());
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
-app.get(
-  ["/api/v1/admin/me", "/api/admin/me", "/admin/me"],
-  async (req, res) => {
-    try {
-      if (!(await adminConfigured())) {
-        throw new AuthError("Admin panel is not configured on this deployment", 503);
+adminRouter.get("/sites", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ sites: await adminSites() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/default-website", async (_req, res) => {
+  try {
+    res.json(await getDefaultWebsiteConfig());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.put("/default-website", async (req, res) => {
+  try {
+    res.json(await updateDefaultWebsiteConfig(req.body ?? {}));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/templates/stats", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await templateStats());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/templates", async (_req, res) => {
+  try {
+    res.json({ templates: await listTemplatesForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.delete("/templates", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await deleteAllTemplates(session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.post("/templates", templateUpload.any(), async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    let code: string | undefined = undefined;
+    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+    if (files.length > 0) {
+      const validFiles: Express.Multer.File[] = [];
+      for (const file of files) {
+        const filename = file.originalname.toLowerCase();
+        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+        if (!isValidExt || file.buffer.includes(0)) continue;
+        validFiles.push(file);
       }
-      res.json({ admin: (await getAdminSession(req.headers.cookie)) ?? null });
-    } catch (error) {
-      fail(res, error);
+      if (validFiles.length === 0) {
+        res.status(400).json({ error: "No valid text or code files found in upload." });
+        return;
+      }
+      code = validFiles.length === 1 ? validFiles[0]!.buffer.toString("utf-8") : validFiles.map((f) => `<!-- File: ${f.originalname || f.filename} -->\n${f.buffer.toString("utf-8")}`).join("\n\n");
+    } else if (typeof req.body?.code === "string") {
+      code = req.body.code;
     }
-  },
+    const isPublishedValue = req.body?.isPublished === undefined ? true : req.body.isPublished === "true" || req.body.isPublished === true;
+    const payload = {
+      name: req.body?.name,
+      category: req.body?.category || undefined,
+      description: req.body?.description || undefined,
+      thumbnailUrl: req.body?.thumbnailUrl || undefined,
+      isPublished: isPublishedValue,
+      code,
+    };
+    res.status(201).json(await createTemplate(payload, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/templates/:id", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await getTemplateForAdmin(req.params.id as string));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.patch("/templates/:id", templateUpload.any(), async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    let code: string | undefined = undefined;
+    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+    if (files.length > 0) {
+      const validFiles: Express.Multer.File[] = [];
+      for (const file of files) {
+        const filename = file.originalname.toLowerCase();
+        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+        if (!isValidExt || file.buffer.includes(0)) continue;
+        validFiles.push(file);
+      }
+      if (validFiles.length > 0) {
+        code = validFiles.length === 1 ? validFiles[0]!.buffer.toString("utf-8") : validFiles.map((f) => `<!-- File: ${f.originalname || f.filename} -->\n${f.buffer.toString("utf-8")}`).join("\n\n");
+      }
+    } else if (typeof req.body?.code === "string") {
+      code = req.body.code;
+    }
+    const isPublishedValue = req.body?.isPublished === undefined ? undefined : req.body.isPublished === "true" || req.body.isPublished === true;
+    const payload = {
+      name: req.body?.name || undefined,
+      category: req.body?.category || undefined,
+      description: req.body?.description,
+      thumbnailUrl: req.body?.thumbnailUrl,
+      isPublished: isPublishedValue,
+      code,
+      archived: req.body?.archived === undefined ? undefined : req.body.archived === "true" || req.body.archived === true,
+    };
+    res.json(await updateTemplateDetails(req.params.id as string, payload, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.patch("/templates/:id/sections", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await updateTemplateSlots(req.params.id as string, req.body ?? {}, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.delete("/templates/:id", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await retireTemplate(req.params.id as string, { hard: req.query.hard === "true" }, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/access-requests", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ requests: await listAccessRequests(req.query) });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.post("/access-requests/:id/approve", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    const password = typeof req.body?.password === "string" ? req.body.password : undefined;
+    const { email, name, rawToken, expiresAt, user } = await approveAccessRequest(
+      req.params.id as string,
+      session,
+      password,
+    );
+    const delivery = await sendActivationEmail({
+      to: email,
+      name,
+      activationUrl: `${appUrl()}/activate?token=${rawToken}`,
+      expiresAt,
+    });
+    res.json({
+      approved: true,
+      email,
+      userId: user.id,
+      expiresAt: expiresAt.toISOString(),
+      delivered: delivery.delivered,
+      ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
+    });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.post("/access-requests/:id/reject", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await rejectAccessRequest(req.params.id as string, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/users", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ users: await listUsersForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.patch("/users/:id/status", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await updateUserStatusForAdmin(req.params.id as string, req.body ?? {}, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.patch("/users/:id/password", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.delete("/users/:id", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await deleteUserForAdmin(req.params.id as string, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.get("/library", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ variants: await libraryVariantsForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+// Mount adminRouter on all possible admin path prefixes
+app.use(
+  [
+    "/api/v1/admin",
+    "/api/admin",
+    "/v1/admin",
+    "/admin",
+  ],
+  adminRouter,
 );
 
-app.get(
-  ["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json(await adminOverview());
-    } catch (error) {
-      fail(res, error);
+// Fallback direct endpoint registrations for legacy route compatibility
+app.post(["/api/v1/admin/auth/login", "/api/admin/auth/login", "/admin/auth/login", "/api/v1/admin/login", "/api/admin/login", "/admin/login"], handleAdminLogin);
+app.get(["/api/v1/admin/status", "/api/admin/status", "/admin/status", "/v1/admin/status", "/status"], async (_req, res) => {
+  try {
+    const info = await adminStatus();
+    res.json({ status: "ok", ...info });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.get(["/api/v1/admin/me", "/api/admin/me", "/admin/me", "/v1/admin/me"], async (req, res) => {
+  try {
+    if (!(await adminConfigured())) {
+      throw new AuthError("Admin panel is not configured on this deployment", 503);
     }
-  },
-);
-
-app.get(
-  ["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites"],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json({ sites: await adminSites() });
-    } catch (error) {
-      fail(res, error);
+    res.json({ admin: (await getAdminSession(req.headers.cookie)) ?? null });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.get(["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"], async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await adminOverview());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.get(["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites"], async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ sites: await adminSites() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.get(["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"], async (_req, res) => {
+  try {
+    res.json(await getDefaultWebsiteConfig());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.put(["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"], async (req, res) => {
+  try {
+    res.json(await updateDefaultWebsiteConfig(req.body ?? {}));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats"], async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json(await templateStats());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"], async (_req, res) => {
+  try {
+    res.json({ templates: await listTemplatesForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"], templateUpload.any(), async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    let code: string | undefined = undefined;
+    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
+    if (files.length > 0) {
+      const validFiles: Express.Multer.File[] = [];
+      for (const file of files) {
+        const filename = file.originalname.toLowerCase();
+        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+        if (!isValidExt || file.buffer.includes(0)) continue;
+        validFiles.push(file);
+      }
+      if (validFiles.length === 0) {
+        res.status(400).json({ error: "No valid text or code files found in upload." });
+        return;
+      }
+      code = validFiles.length === 1 ? validFiles[0]!.buffer.toString("utf-8") : validFiles.map((f) => `<!-- File: ${f.originalname || f.filename} -->\n${f.buffer.toString("utf-8")}`).join("\n\n");
+    } else if (typeof req.body?.code === "string") {
+      code = req.body.code;
     }
-  },
-);
+    const isPublishedValue = req.body?.isPublished === undefined ? true : req.body.isPublished === "true" || req.body.isPublished === true;
+    const payload = {
+      name: req.body?.name,
+      category: req.body?.category || undefined,
+      description: req.body?.description || undefined,
+      thumbnailUrl: req.body?.thumbnailUrl || undefined,
+      isPublished: isPublishedValue,
+      code,
+    };
+    res.status(201).json(await createTemplate(payload, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
 app.get(
   ["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"],
@@ -1219,371 +1555,6 @@ app.get(
   },
 );
 
-/**
- * Registered before `/templates/:id` would be, and that ordering is load-bearing.
- *
- * Express matches in declaration order, so a `:id` route declared above this one
- * captures the literal string "stats" as an id and answers 404 for the stats call.
- * It costs nothing to get right here and is confusing to diagnose later.
- */
-app.get(
-  ["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats", /\/admin.*templates\/stats/],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json(await templateStats());
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-/** Every template, drafts and archived included — accessible for live editor & admin. */
-app.get(
-  ["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"],
-  async (_req, res) => {
-    try {
-      res.json({ templates: await listTemplatesForAdmin() });
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.delete(
-  ["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(await deleteAllTemplates(session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-const templateUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
-
-const ALLOWED_CODE_EXTENSIONS = [
-  ".html",
-  ".htm",
-  ".blade.php",
-  ".jsx",
-  ".vue",
-  ".txt",
-  ".php",
-  ".js",
-  ".tsx",
-  ".ts",
-  ".css",
-];
-
-app.post(
-  ["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"],
-  templateUpload.any(),
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-
-      let code: string | undefined = undefined;
-
-      const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
-
-      if (files.length > 0) {
-        const validFiles: Express.Multer.File[] = [];
-
-        for (const file of files) {
-          const filename = file.originalname.toLowerCase();
-          const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-          if (!isValidExt) continue;
-
-          if (file.buffer.includes(0)) continue;
-
-          validFiles.push(file);
-        }
-
-        if (validFiles.length === 0) {
-          res.status(400).json({
-            error:
-              "No valid text or code files found in the upload. Allowed extensions: .html, .blade.php, .jsx, .vue, .css, .txt",
-          });
-          return;
-        }
-
-        if (validFiles.length === 1) {
-          code = validFiles[0]!.buffer.toString("utf-8");
-        } else {
-          const codeBlocks = validFiles.map((file) => {
-            const name = file.originalname || file.filename;
-            const text = file.buffer.toString("utf-8");
-            return `<!-- File: ${name} -->\n${text}`;
-          });
-          code = codeBlocks.join("\n\n");
-        }
-      } else if (typeof req.body?.code === "string") {
-        code = req.body.code;
-      }
-
-      const isPublishedValue =
-        req.body?.isPublished === undefined
-          ? true
-          : req.body.isPublished === "true" || req.body.isPublished === true;
-
-      const payload = {
-        name: req.body?.name,
-        category: req.body?.category || undefined,
-        description: req.body?.description || undefined,
-        thumbnailUrl: req.body?.thumbnailUrl || undefined,
-        isPublished: isPublishedValue,
-        code,
-      };
-
-      res.status(201).json(await createTemplate(payload, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-/** The design library, for the edit screen's per-slot dropdowns. */
-app.get(
-  ["/api/v1/admin/library", "/api/admin/library", "/admin/library"],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json({ variants: await libraryVariantsForAdmin() });
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.get(
-  ["/api/v1/admin/templates/:id", "/api/admin/templates/:id", "/admin/templates/:id"],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json(await getTemplateForAdmin(req.params.id as string));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.patch(
-  ["/api/v1/admin/templates/:id", "/api/admin/templates/:id", "/admin/templates/:id"],
-  templateUpload.any(),
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-
-      let code: string | undefined = undefined;
-      const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
-
-      if (files.length > 0) {
-        const validFiles: Express.Multer.File[] = [];
-        for (const file of files) {
-          const filename = file.originalname.toLowerCase();
-          const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-          if (!isValidExt || file.buffer.includes(0)) continue;
-          validFiles.push(file);
-        }
-
-        if (validFiles.length > 0) {
-          if (validFiles.length === 1) {
-            code = validFiles[0]!.buffer.toString("utf-8");
-          } else {
-            const codeBlocks = validFiles.map((file) => {
-              const name = file.originalname || file.filename;
-              const text = file.buffer.toString("utf-8");
-              return `<!-- File: ${name} -->\n${text}`;
-            });
-            code = codeBlocks.join("\n\n");
-          }
-        }
-      } else if (typeof req.body?.code === "string") {
-        code = req.body.code;
-      }
-
-      const isPublishedValue =
-        req.body?.isPublished === undefined
-          ? undefined
-          : req.body.isPublished === "true" || req.body.isPublished === true;
-
-      const payload = {
-        name: req.body?.name || undefined,
-        category: req.body?.category || undefined,
-        description: req.body?.description,
-        thumbnailUrl: req.body?.thumbnailUrl,
-        isPublished: isPublishedValue,
-        code,
-        archived:
-          req.body?.archived === undefined
-            ? undefined
-            : req.body.archived === "true" || req.body.archived === true,
-      };
-
-      res.json(await updateTemplateDetails(req.params.id as string, payload, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-/**
- * Swaps which design fills each of this template's categories.
- *
- * Kept on the addendum's path even though the verb underneath is different: it
- * updates `sections.default_variant_id` rather than deleting and recreating rows.
- * See `updateTemplateSlots` for why the destructive version cannot be used here.
- */
-app.patch(
-  ["/api/v1/admin/templates/:id/sections", "/api/admin/templates/:id/sections", "/admin/templates/:id/sections"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(await updateTemplateSlots(req.params.id as string, req.body ?? {}, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-/**
- * Archives, or deletes when nothing depends on it.
- *
- * `?hard=true` asks for a real delete and is refused with a 409 unless the template
- * has no colleges and no college sections. The frontend's confirm() dialog is not
- * the check — the server is, because only it can see the cascade.
- */
-app.delete(
-  ["/api/v1/admin/templates/:id", "/api/admin/templates/:id", "/admin/templates/:id"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(
-        await retireTemplate(
-          req.params.id as string,
-          { hard: req.query.hard === "true" },
-          session,
-        ),
-      );
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.get(
-  ["/api/v1/admin/access-requests", "/api/admin/access-requests", "/admin/access-requests"],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json({ requests: await listAccessRequests(req.query) });
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-/**
- * Approves a request and sends the invite.
- */
-app.post(
-  ["/api/v1/admin/access-requests/:id/approve", "/api/admin/access-requests/:id/approve", "/admin/access-requests/:id/approve"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      const password = typeof req.body?.password === "string" ? req.body.password : undefined;
-      const { email, name, rawToken, expiresAt, user } = await approveAccessRequest(
-        req.params.id as string,
-        session,
-        password,
-      );
-
-      const delivery = await sendActivationEmail({
-        to: email,
-        name,
-        activationUrl: `${appUrl()}/activate?token=${rawToken}`,
-        expiresAt,
-      });
-
-      res.json({
-        approved: true,
-        email,
-        userId: user.id,
-        expiresAt: expiresAt.toISOString(),
-        delivered: delivery.delivered,
-        ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
-      });
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.post(
-  ["/api/v1/admin/access-requests/:id/reject", "/api/admin/access-requests/:id/reject", "/admin/access-requests/:id/reject"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(await rejectAccessRequest(req.params.id as string, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.get(
-  ["/api/v1/admin/users", "/api/admin/users", "/admin/users"],
-  async (req, res) => {
-    try {
-      await requireAdmin(req);
-      res.json({ users: await listUsersForAdmin() });
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.patch(
-  ["/api/v1/admin/users/:id/status", "/api/admin/users/:id/status", "/admin/users/:id/status"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(await updateUserStatusForAdmin(req.params.id as string, req.body ?? {}, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.patch(
-  ["/api/v1/admin/users/:id/password", "/api/admin/users/:id/password", "/admin/users/:id/password"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(await updateUserPasswordForAdmin(req.params.id as string, req.body ?? {}, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
-
-app.delete(
-  ["/api/v1/admin/users/:id", "/api/admin/users/:id", "/admin/users/:id"],
-  async (req, res) => {
-    try {
-      const session = await requireAdmin(req);
-      res.json(await deleteUserForAdmin(req.params.id as string, session));
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
 
 // --- Uploads ----------------------------------------------------------------
 
