@@ -117,6 +117,21 @@ app.use((req, res, next) => {
     return;
   }
 
+  // Sprint M5-B: Structured Request Tracing Headers
+  const requestId = (req.headers["x-request-id"] as string) || `req_${randomUUID().slice(0, 8)}`;
+  res.setHeader("x-request-id", requestId);
+
+  const tenantId = (req.headers["x-tenant-id"] as string) || "system";
+  res.setHeader("x-tenant-id", tenantId);
+
+  let flowStage = "GENERAL";
+  if (req.path.includes("access-requests")) flowStage = "ACCESS_REQUEST";
+  else if (req.path.includes("activate")) flowStage = "ACTIVATION";
+  else if (req.path.includes("auth")) flowStage = "AUTHENTICATION";
+  else if (req.path.includes("default-website")) flowStage = "EDITOR_PERSISTENCE";
+  else if (req.path.includes("preview") || req.path.includes("site")) flowStage = "LIVE_PUBLISHING";
+  res.setHeader("x-flow-stage", flowStage);
+
   next();
 });
 
