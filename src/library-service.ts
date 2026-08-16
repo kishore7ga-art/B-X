@@ -326,13 +326,23 @@ export const createTemplateSchema = z.object({
 
 export async function createTemplate(input: unknown, actor: AdminSession) {
   const data = createTemplateSchema.parse(input);
+  const nameLower = data.name.toLowerCase();
+  const sanitizedCode = data.code ? sanitizeTemplateCode(data.code) : null;
+
+  let cat = data.category ? data.category.toLowerCase().trim() : "";
+  if (!cat || cat === "undefined" || cat === "null" || cat === "custom") {
+    if (nameLower.includes("header") || nameLower.includes("nav")) {
+      cat = "header";
+    } else if (nameLower.includes("footer")) {
+      cat = "footer";
+    }
+  }
 
   const existing = await Template.findOne({ name: data.name });
-  const sanitizedCode = data.code ? sanitizeTemplateCode(data.code) : null;
 
   if (existing) {
     existing.code = sanitizedCode ?? existing.code;
-    if (data.category) existing.category = data.category;
+    if (cat) existing.category = cat;
     if (data.description) existing.description = data.description;
     existing.isPublished = data.isPublished;
     await existing.save();
@@ -351,7 +361,7 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
 
   const created = await Template.create({
     name: data.name,
-    category: data.category ?? null,
+    category: cat || null,
     description: data.description ?? null,
     thumbnailUrl: data.thumbnailUrl ?? null,
     code: sanitizedCode,
