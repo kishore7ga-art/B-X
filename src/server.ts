@@ -241,7 +241,9 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true;
   if (ORIGINS.includes(origin)) return true;
   const url = origin.toLowerCase();
+  const rootDomain = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || "").toLowerCase();
   if (
+    (rootDomain && (url.endsWith(`.${rootDomain}`) || url.includes(rootDomain))) ||
     url.endsWith(".meetkishore.in") ||
     url.endsWith(".xite.co.in") ||
     url.endsWith(".vercel.app") ||
@@ -340,9 +342,11 @@ app.use((req, _res, next) => {
  * the one invitations should point at — an admin panel listed first, say.
  */
 function appUrl(): string {
-  const configured = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  const configured =
+    process.env.APP_URL?.trim().replace(/\/+$/, "") ||
+    process.env.FRONTEND_URL?.trim().replace(/\/+$/, "");
   if (configured) return configured;
-  return CONFIGURED_ORIGINS[0] ?? "http://localhost:3000";
+  return CONFIGURED_ORIGINS[0] ?? DEFAULT_ORIGINS[0] ?? "http://localhost:3000";
 }
 
 /** Every request, one line — the log a split deployment is diagnosed from. */
