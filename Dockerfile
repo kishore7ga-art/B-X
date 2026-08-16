@@ -10,6 +10,7 @@ FROM base AS runner
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm run build || true
 
 RUN addgroup -g 1001 -S nodejs && adduser -S api -u 1001 \
  && mkdir -p public/uploads && chown -R api:nodejs public/uploads

@@ -2,6 +2,7 @@
  * Production entrypoint: seed Mongoose MongoDB reference data, then serve.
  */
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 
 function run(command, args, env) {
   return new Promise((resolve) => {
@@ -21,4 +22,9 @@ if (process.env.SEED_ON_START !== "false") {
 }
 
 console.log("[start] starting Express API server...");
-process.exit(await run("npx", ["tsx", "src/server.ts"]));
+const entryPoint = fs.existsSync("dist/server.js") ? "dist/server.js" : "src/server.ts";
+if (entryPoint.endsWith(".js")) {
+  process.exit(await run("node", [entryPoint]));
+} else {
+  process.exit(await run("npx", ["tsx", entryPoint]));
+}
