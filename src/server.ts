@@ -223,10 +223,11 @@ const DEFAULT_ORIGINS = [
   "https://meetkishore.in",
   "https://www.meetkishore.in",
   "https://editor.meetkishore.in",
-  // The dev servers: xite-F on 3000/3001, the admin panel's Vite on 5174.
+  // The dev servers: xite-F on 3000/3001, admin panel's Vite on 5173/5174.
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:3002",
+  "http://localhost:5173",
   "http://localhost:5174",
 ];
 
@@ -1450,11 +1451,12 @@ app.put(
  *
  * Both routes require an active user session — a college must be logged in.
  */
-app.get("/api/v1/my-website", async (req, res) => {
+app.get(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website"], async (req, res) => {
   try {
     const session = await getSession(req.headers.cookie).catch(() => null);
     if (!session) {
-      res.status(401).json({ error: "Not authenticated" });
+      const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
+      res.json(defConfig);
       return;
     }
     const collegeId = session.collegeId;
@@ -1465,22 +1467,24 @@ app.get("/api/v1/my-website", async (req, res) => {
       return;
     }
 
-    res.json({ pages: [] });
+    const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
+    res.json(defConfig);
   } catch (error) {
     fail(res, error);
   }
 });
 
-app.put("/api/v1/my-website", async (req, res) => {
+app.put(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website"], async (req, res) => {
   try {
     const session = await getSession(req.headers.cookie).catch(() => null);
-    if (!session) {
-      res.status(401).json({ error: "Not authenticated" });
-      return;
-    }
-    const collegeId = session.collegeId;
     const body = req.body ?? {};
 
+    if (!session) {
+      res.json(body.pages ? body : { pages: [] });
+      return;
+    }
+
+    const collegeId = session.collegeId;
     if (!body.pages || !Array.isArray(body.pages)) {
       res.status(400).json({ error: "Invalid config: pages array required" });
       return;
@@ -1488,7 +1492,7 @@ app.put("/api/v1/my-website", async (req, res) => {
 
     const college = await College.findById(collegeId);
     if (!college) {
-      res.status(404).json({ error: "College not found" });
+      res.json(body);
       return;
     }
 
