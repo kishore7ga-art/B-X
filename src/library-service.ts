@@ -328,11 +328,26 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
   const data = createTemplateSchema.parse(input);
 
   const existing = await Template.findOne({ name: data.name });
-  if (existing) {
-    throw new AuthError("A template with that name already exists", 409);
-  }
-
   const sanitizedCode = data.code ? sanitizeTemplateCode(data.code) : null;
+
+  if (existing) {
+    existing.code = sanitizedCode ?? existing.code;
+    if (data.category) existing.category = data.category;
+    if (data.description) existing.description = data.description;
+    existing.isPublished = data.isPublished;
+    await existing.save();
+
+    await recordAudit({
+      actor,
+      action: "template.update",
+      targetType: "template",
+      targetId: existing.id,
+      summary: `Updated template "${existing.name}"`,
+      metadata: { name: existing.name },
+    });
+
+    return getTemplateForAdmin(existing.id);
+  }
 
   const created = await Template.create({
     name: data.name,
