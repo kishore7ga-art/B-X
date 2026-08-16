@@ -1301,7 +1301,7 @@ adminRouter.get("/library", async (req, res) => {
   }
 });
 
-// Mount adminRouter on all possible admin path prefixes
+// Mount adminRouter on all possible admin path prefixes & fallback routes
 app.use(
   [
     "/api/v1/admin",
@@ -1312,8 +1312,8 @@ app.use(
   adminRouter,
 );
 
-// Fallback direct endpoint registrations for legacy route compatibility
-app.post(["/api/v1/admin/auth/login", "/api/admin/auth/login", "/admin/auth/login", "/api/v1/admin/login", "/api/admin/login", "/admin/login"], handleAdminLogin);
+// Fallback direct endpoint registrations for legacy route compatibility & proxy-stripped paths
+app.post(["/api/v1/admin/auth/login", "/api/admin/auth/login", "/admin/auth/login", "/api/v1/admin/login", "/api/admin/login", "/admin/login", "/auth/login", "/login"], handleAdminLogin);
 app.get(["/api/v1/admin/status", "/api/admin/status", "/admin/status", "/v1/admin/status", "/status"], async (_req, res) => {
   try {
     const info = await adminStatus();
@@ -1322,7 +1322,7 @@ app.get(["/api/v1/admin/status", "/api/admin/status", "/admin/status", "/v1/admi
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/me", "/api/admin/me", "/admin/me", "/v1/admin/me"], async (req, res) => {
+app.get(["/api/v1/admin/me", "/api/admin/me", "/admin/me", "/v1/admin/me", "/me"], async (req, res) => {
   try {
     if (!(await adminConfigured())) {
       throw new AuthError("Admin panel is not configured on this deployment", 503);
@@ -1332,7 +1332,7 @@ app.get(["/api/v1/admin/me", "/api/admin/me", "/admin/me", "/v1/admin/me"], asyn
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"], async (req, res) => {
+app.get(["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview", "/overview"], async (req, res) => {
   try {
     await requireAdmin(req);
     res.json(await adminOverview());
@@ -1340,7 +1340,7 @@ app.get(["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview"], as
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites"], async (req, res) => {
+app.get(["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites", "/sites"], async (req, res) => {
   try {
     await requireAdmin(req);
     res.json({ sites: await adminSites() });
@@ -1362,7 +1362,7 @@ app.put(["/api/v1/default-website", "/api/default-website", "/default-website", 
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats"], async (req, res) => {
+app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats", "/templates/stats"], async (req, res) => {
   try {
     await requireAdmin(req);
     res.json(await templateStats());
@@ -1370,14 +1370,14 @@ app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"], async (_req, res) => {
+app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], async (_req, res) => {
   try {
     res.json({ templates: await listTemplatesForAdmin() });
   } catch (error) {
     fail(res, error);
   }
 });
-app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates"], templateUpload.any(), async (req, res) => {
+app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
   try {
     const session = await requireAdmin(req);
     let code: string | undefined = undefined;
