@@ -123,38 +123,55 @@ export async function applyTemplateToDefaultWebsite(
   if (!code || !code.trim()) return getDefaultWebsiteConfig();
 
   const currentConfig = await getDefaultWebsiteConfig();
-  const cleanCategory = (category || "").toLowerCase();
+  const cleanCategory = (category || "hero").toLowerCase();
   const cleanName = (templateName || "").toLowerCase();
 
   const isHeader = cleanCategory.includes("header") || cleanCategory.includes("nav") || cleanName.includes("header") || cleanName.includes("nav");
   const isFooter = cleanCategory.includes("footer") || cleanName.includes("footer");
 
-  if (!isHeader && !isFooter) return currentConfig;
-
-  const targetType = isHeader ? "navbar" : "footer";
+  const targetType = isHeader ? "navbar" : isFooter ? "footer" : cleanCategory;
+  const sectionId = isHeader ? "def-home-navbar" : isFooter ? "def-home-footer" : `def-home-${cleanCategory}-${Date.now().toString().slice(-4)}`;
 
   const updatedPages = currentConfig.pages.map((p) => {
+    if (p.slug !== "/home" && p.slug !== "/") return p;
+
     let sections = Array.isArray(p.sections) ? [...p.sections] : [];
 
     const secIdx = sections.findIndex((s) => {
       const sType = (s.sectionType || s.id || s.title || "").toLowerCase();
-      return isHeader ? (sType.includes("header") || sType.includes("navbar") || sType.includes("nav")) : sType.includes("footer");
+      if (isHeader) return sType.includes("header") || sType.includes("navbar") || sType.includes("nav");
+      if (isFooter) return sType.includes("footer");
+      return sType === targetType || s.title?.toLowerCase() === templateName.toLowerCase();
     });
 
     const newSec: DefaultWebsiteSection = {
-      id: isHeader ? "def-home-navbar" : "def-home-footer",
+      id: secIdx >= 0 ? sections[secIdx].id : sectionId,
       title: templateName,
       sectionType: targetType,
-      sortOrder: isHeader ? 0 : 1,
+      sortOrder: isHeader ? 0 : isFooter ? sections.length : secIdx >= 0 ? sections[secIdx].sortOrder : sections.length,
       code: code,
     };
 
     if (secIdx >= 0) {
       sections[secIdx] = newSec;
     } else {
-      if (isHeader) sections.unshift(newSec);
-      else sections.push(newSec);
+      if (isHeader) {
+        sections.unshift(newSec);
+      } else if (isFooter) {
+        sections.push(newSec);
+      } else {
+        // Insert before footer if footer exists, else append
+        const footerIdx = sections.findIndex((s) => (s.sectionType || s.id || "").toLowerCase().includes("footer"));
+        if (footerIdx >= 0) {
+          sections.splice(footerIdx, 0, newSec);
+        } else {
+          sections.push(newSec);
+        }
+      }
     }
+
+    // Re-index sort order
+    sections = sections.map((sec, idx) => ({ ...sec, sortOrder: idx }));
 
     return {
       ...p,

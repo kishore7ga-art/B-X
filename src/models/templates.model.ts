@@ -42,6 +42,7 @@ const TemplateSlotSchema = new Schema<ITemplateSlot>(
 
 const TemplateSchema = new Schema<ITemplate>(
   {
+    id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
     name: { type: String, required: true, unique: true, trim: true },
     category: { type: String, default: null },
     description: { type: String, default: null },

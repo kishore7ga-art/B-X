@@ -11,6 +11,7 @@ import {
 } from "@/auth-service";
 import { AccessRequest, College, AuditLog } from "@/models";
 import { subdomainFromName } from "@/lib/college-types";
+import { getDefaultWebsiteConfig } from "@/default-website-service";
 
 export const accessRequestSchema = z.object({
   name: z
@@ -189,10 +190,12 @@ export async function approveAccessRequest(
       }
     }
 
+    const defaultSiteConfig = await getDefaultWebsiteConfig().catch(() => null);
     college = await College.create({
       name: orgName,
       subdomain: candidate,
       status: "ACTIVE",
+      websiteConfig: defaultSiteConfig,
       users: [
         {
           id: userId,
