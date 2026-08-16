@@ -109,6 +109,16 @@ export function sessionCookieScope(input: {
   }
 
   if (!api.endsWith(`.${frontend}`)) {
+    const fParts = frontend.split(".");
+    const aParts = api.split(".");
+    if (fParts.length >= 2 && aParts.length >= 2) {
+      const fParent = fParts.slice(-2).join(".");
+      const aParent = aParts.slice(-2).join(".");
+      if (fParent === aParent && fParent.includes(".")) {
+        return { domain: `.${fParent}`, source: "derived" };
+      }
+    }
+
     return {
       domain: undefined,
       source: "host-only",

@@ -123,8 +123,22 @@ export function adminCookieOptions(
     }
   })();
 
+  const domain = (() => {
+    if (process.env.SESSION_COOKIE_DOMAIN) return process.env.SESSION_COOKIE_DOMAIN;
+    if (originHost && host) {
+      const oParts = originHost.split(".");
+      const hParts = host.split(".");
+      if (oParts.length >= 2 && hParts.length >= 2) {
+        const oParent = oParts.slice(-2).join(".");
+        const hParent = hParts.slice(-2).join(".");
+        if (oParent === hParent && oParent.includes(".")) return `.${oParent}`;
+      }
+    }
+    return undefined;
+  })();
+
   const crossSite =
-    Boolean(process.env.SESSION_COOKIE_DOMAIN) ||
+    Boolean(domain) ||
     Boolean(originHost && host && !laxWouldReach(originHost, host));
 
   return {
@@ -133,9 +147,7 @@ export function adminCookieOptions(
     secure: crossSite || process.env.NODE_ENV === "production",
     path: "/",
     maxAge: ADMIN_MAX_AGE_SECONDS * 1000,
-    ...(process.env.SESSION_COOKIE_DOMAIN
-      ? { domain: process.env.SESSION_COOKIE_DOMAIN }
-      : {}),
+    ...(domain ? { domain } : {}),
   };
 }
 
