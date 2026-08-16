@@ -113,3 +113,55 @@ export async function updateDefaultWebsiteConfig(
 
   return config;
 }
+
+/** Immediately apply newly created or updated Admin Header / Footer section as the live default across all websites */
+export async function applyTemplateToDefaultWebsite(
+  templateName: string,
+  category: string,
+  code: string
+): Promise<DefaultWebsiteConfig> {
+  if (!code || !code.trim()) return getDefaultWebsiteConfig();
+
+  const currentConfig = await getDefaultWebsiteConfig();
+  const cleanCategory = (category || "").toLowerCase();
+  const cleanName = (templateName || "").toLowerCase();
+
+  const isHeader = cleanCategory.includes("header") || cleanCategory.includes("nav") || cleanName.includes("header") || cleanName.includes("nav");
+  const isFooter = cleanCategory.includes("footer") || cleanName.includes("footer");
+
+  if (!isHeader && !isFooter) return currentConfig;
+
+  const targetType = isHeader ? "navbar" : "footer";
+
+  const updatedPages = currentConfig.pages.map((p) => {
+    let sections = Array.isArray(p.sections) ? [...p.sections] : [];
+
+    const secIdx = sections.findIndex((s) => {
+      const sType = (s.sectionType || s.id || s.title || "").toLowerCase();
+      return isHeader ? (sType.includes("header") || sType.includes("navbar") || sType.includes("nav")) : sType.includes("footer");
+    });
+
+    const newSec: DefaultWebsiteSection = {
+      id: isHeader ? "def-home-navbar" : "def-home-footer",
+      title: templateName,
+      sectionType: targetType,
+      sortOrder: isHeader ? 0 : 1,
+      code: code,
+    };
+
+    if (secIdx >= 0) {
+      sections[secIdx] = newSec;
+    } else {
+      if (isHeader) sections.unshift(newSec);
+      else sections.push(newSec);
+    }
+
+    return {
+      ...p,
+      sections,
+    };
+  });
+
+  const newConfig = { pages: updatedPages };
+  return updateDefaultWebsiteConfig(newConfig);
+}

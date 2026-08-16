@@ -6,6 +6,7 @@ import { type AdminSession, recordAudit } from "@/admin-service";
 import { AuthError } from "@/auth-service";
 import { Template, College } from "@/models";
 import { BadRequest, NotFound } from "@/errors";
+import { applyTemplateToDefaultWebsite } from "@/default-website-service";
 
 export function sanitizeTemplateCode(rawCode: string): string {
   return sanitizeHtml(rawCode, {
@@ -356,6 +357,10 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
       metadata: { name: existing.name },
     });
 
+    if (existing.code && cat) {
+      await applyTemplateToDefaultWebsite(existing.name, cat, existing.code).catch(() => null);
+    }
+
     return getTemplateForAdmin(existing.id);
   }
 
@@ -378,6 +383,10 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
     summary: `Created template "${created.name}"`,
     metadata: { name: created.name },
   });
+
+  if (created.code && cat) {
+    await applyTemplateToDefaultWebsite(created.name, cat, created.code).catch(() => null);
+  }
 
   return getTemplateForAdmin(created.id);
 }
