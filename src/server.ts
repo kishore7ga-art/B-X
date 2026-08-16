@@ -571,7 +571,7 @@ function configPresence() {
   );
 }
 
-app.get("/api/health", async (_req, res) => {
+app.get(["/health", "/api/health"], async (_req, res) => {
   const startedAt = Date.now();
   try {
     const isConnected = mongoose.connection.readyState === 1;
