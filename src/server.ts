@@ -1460,21 +1460,12 @@ app.get("/api/v1/my-website", async (req, res) => {
     const collegeId = session.collegeId;
     const college = await College.findById(collegeId);
 
-    if (college && college.websiteConfig && college.websiteConfig.pages && college.websiteConfig.pages.length > 0) {
+    if (college && college.websiteConfig) {
       res.json(college.websiteConfig);
       return;
     }
 
-    // First visit — seed from global admin template.
-    const template = await getDefaultWebsiteConfig();
-    const seeded = JSON.parse(JSON.stringify(template));
-
-    if (college) {
-      college.websiteConfig = seeded;
-      await college.save();
-    }
-
-    res.json(seeded);
+    res.json({ pages: [] });
   } catch (error) {
     fail(res, error);
   }
@@ -1510,16 +1501,61 @@ app.put("/api/v1/my-website", async (req, res) => {
   }
 });
 
+/** Public site website config endpoint by tenant subdomain (Strict DB Source of Truth) */
+app.get(
+  ["/api/v1/public/site/:subdomain", "/api/v1/site/:subdomain", "/api/site/:subdomain"],
+  async (req, res) => {
+    try {
+      const rawSub = req.params.subdomain;
+      const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "greenfield" : "greenfield";
+      const college = await College.findOne({ subdomain }).catch(() => null);
+
+      if (college && college.websiteConfig && Array.isArray(college.websiteConfig.pages)) {
+        const homePage = college.websiteConfig.pages.find((p: any) => p.slug === "/home" || p.slug === "/") || college.websiteConfig.pages[0];
+        const pageSections = Array.isArray(homePage?.sections) ? homePage.sections : Array.isArray((college.websiteConfig as any).sections) ? (college.websiteConfig as any).sections : [];
+        res.json({
+          subdomain,
+          college: {
+            id: college.id,
+            name: college.name,
+            subdomain: college.subdomain,
+            status: college.status,
+          },
+          config: college.websiteConfig,
+          pages: college.websiteConfig.pages,
+          sections: pageSections,
+        });
+        return;
+      }
+
+      res.json({
+        subdomain,
+        college: college ? {
+          id: college.id,
+          name: college.name,
+          subdomain: college.subdomain,
+          status: college.status,
+        } : null,
+        config: { pages: [] },
+        pages: [],
+        sections: [],
+      });
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
 /** Editor API endpoint & direct browser redirect handler */
 app.get(
   ["/api/v1/editor/:subdomain", "/api/editor/:subdomain", "/editor/:subdomain/data"],
   async (req, res) => {
     try {
       const rawSub = req.params.subdomain;
-      const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "mec" : "mec";
+      const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "greenfield" : "greenfield";
       const college = await College.findOne({ subdomain }).catch(() => null);
 
-      if (college && college.websiteConfig && college.websiteConfig.pages && college.websiteConfig.pages.length > 0) {
+      if (college && college.websiteConfig && Array.isArray(college.websiteConfig.pages)) {
         res.json({
           college: {
             id: college.id,
@@ -1533,16 +1569,16 @@ app.get(
         return;
       }
 
-      const defaultConfig = await getDefaultWebsiteConfig();
       res.json({
         college: college ?? {
           id: "open-access-id",
-          name: "MEC ENGINEERING COLLEGE",
+          name: "GREENFIELD UNIVERSITY",
           subdomain,
           status: "PUBLISHED",
         },
-        config: defaultConfig,
-        pages: defaultConfig.pages,
+        config: { pages: [] },
+        pages: [],
+        sections: [],
       });
     } catch (error) {
       fail(res, error);
