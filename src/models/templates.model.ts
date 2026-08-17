@@ -42,14 +42,15 @@ const TemplateSlotSchema = new Schema<ITemplateSlot>(
 
 const TemplateSchema = new Schema<ITemplate>(
   {
-    id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+    // No custom 'id' field — Mongoose provides id virtual from _id automatically.
+    // A custom id field previously conflicted causing duplicate-key errors on save.
     name: { type: String, required: true, unique: true, trim: true },
     category: { type: String, default: null },
     description: { type: String, default: null },
     thumbnailUrl: { type: String, default: null },
     demoUrl: { type: String, default: null },
     code: { type: String, default: null },
-    isPublished: { type: Boolean, default: false },
+    isPublished: { type: Boolean, default: true },
     archivedAt: { type: Date, default: null },
     createdByEmail: { type: String, default: null },
     createdById: { type: String, default: null },
@@ -81,3 +82,4 @@ const TemplateSchema = new Schema<ITemplate>(
 );
 
 export const Template = mongoose.models.Template || mongoose.model<ITemplate>("Template", TemplateSchema);
+

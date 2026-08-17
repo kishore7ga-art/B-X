@@ -1,4 +1,4 @@
-import { Schema, model, Document } from "mongoose";
+import mongoose, { Schema, model, Document } from "mongoose";
 
 export interface IAuditLog extends Document {
   action: string;
@@ -30,4 +30,4 @@ const auditLogSchema = new Schema<IAuditLog>(
   }
 );
 
-export const AuditLog = model<IAuditLog>("AuditLog", auditLogSchema);
+export const AuditLog = (mongoose.models["AuditLog"] as mongoose.Model<IAuditLog>) || model<IAuditLog>("AuditLog", auditLogSchema);

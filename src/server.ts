@@ -1418,6 +1418,7 @@ app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates",
     };
     res.status(201).json(await createTemplate(payload, session));
   } catch (error) {
+    console.error("[POST /api/v1/admin/templates] FULL ERROR:", error);
     fail(res, error);
   }
 });
