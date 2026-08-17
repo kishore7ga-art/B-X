@@ -204,18 +204,21 @@ export async function adminLogin(input: unknown) {
   const targetEmail = (email || process.env.ADMIN_BOOTSTRAP_EMAIL || "admin@xite.co.in").toLowerCase();
   const defaultPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD || "2008";
 
-  let admin = await AdminUser.findOne({ email: targetEmail });
-
-  if (!admin && (password === defaultPassword || password === "2008")) {
-    admin = await AdminUser.create({
-      email: targetEmail,
-      passwordHash: await bcrypt.hash(password, 12),
-      role: "SUPER_ADMIN",
-    }).catch(() => null);
-  }
-
-  if (!admin) {
-    admin = await findAdminByPassword(password);
+  let admin: any = null;
+  try {
+    admin = await AdminUser.findOne({ email: targetEmail });
+    if (!admin && (password === defaultPassword || password === "2008")) {
+      admin = await AdminUser.create({
+        email: targetEmail,
+        passwordHash: await bcrypt.hash(password, 12),
+        role: "SUPER_ADMIN",
+      }).catch(() => null);
+    }
+    if (!admin) {
+      admin = await findAdminByPassword(password);
+    }
+  } catch (_dbError) {
+    admin = null;
   }
 
   if (!admin) {
