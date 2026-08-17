@@ -85,7 +85,7 @@ app.use((req, res, next) => {
   // Finding 2: Content Security Policy
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://api.xite.co.in https://admin.xite.co.in https://admin.meetkishore.in; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://admin.xite.co.in https://admin.meetkishore.in;",
+    "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://api.xite.co.in https://admin.xite.co.in https://xite.co.in; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://admin.xite.co.in https://xite.co.in;",
   );
 
   // Finding 5: HSTS header
@@ -218,11 +218,6 @@ const DEFAULT_ORIGINS = [
   "https://www.xite.co.in",
   "https://admin.xite.co.in",
   "https://api.xite.co.in",
-  "https://admin.meetkishore.in",
-  "https://api.meetkishore.in",
-  "https://meetkishore.in",
-  "https://www.meetkishore.in",
-  "https://editor.meetkishore.in",
   // The dev servers: xite-F on 3000/3001, admin panel's Vite on 5173/5174.
   "http://localhost:3000",
   "http://localhost:3001",
@@ -245,7 +240,6 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   const rootDomain = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || "").toLowerCase();
   if (
     (rootDomain && (url.endsWith(`.${rootDomain}`) || url.includes(rootDomain))) ||
-    url.endsWith(".meetkishore.in") ||
     url.endsWith(".xite.co.in") ||
     url.endsWith(".vercel.app") ||
     url.includes("localhost") ||
@@ -1024,10 +1018,10 @@ const adminRouter = express.Router();
 
 adminRouter.get("/status", async (_req, res) => {
   try {
-    const info = await adminStatus().catch(() => ({ configured: true, email: "admin@meetkishore.in" }));
+    const info = await adminStatus().catch(() => ({ configured: true, email: "admin@xite.co.in" }));
     res.json({ status: "ok", ...info });
   } catch (error) {
-    res.json({ status: "ok", configured: true, email: "admin@meetkishore.in" });
+    res.json({ status: "ok", configured: true, email: "admin@xite.co.in" });
   }
 });
 
@@ -1125,7 +1119,7 @@ adminRouter.post("/templates", templateUpload.any(), async (req, res) => {
   try {
     const session = (await requireAdmin(req).catch(() => null)) ?? {
       adminId: "system-admin",
-      email: "admin@meetkishore.in",
+      email: "admin@xite.co.in",
     };
     let code: string | undefined = undefined;
     const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
@@ -1394,7 +1388,7 @@ app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", 
 });
 app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
   try {
-    const session = (await requireAdmin(req).catch(() => null)) ?? { adminId: "system-admin", email: "admin@meetkishore.in" };
+    const session = (await requireAdmin(req).catch(() => null)) ?? { adminId: "system-admin", email: "admin@xite.co.in" };
     let code: string | undefined = undefined;
     const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
     if (files.length > 0) {
@@ -1546,6 +1540,10 @@ app.get(
         return;
       }
 
+      const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
+      const homePage = defConfig.pages?.find((p: any) => p.slug === "/home" || p.slug === "/") || defConfig.pages?.[0];
+      const pageSections = Array.isArray(homePage?.sections) ? homePage.sections : [];
+
       res.json({
         subdomain,
         college: college ? {
@@ -1554,9 +1552,9 @@ app.get(
           subdomain: college.subdomain,
           status: college.status,
         } : null,
-        config: { pages: [] },
-        pages: [],
-        sections: [],
+        config: defConfig,
+        pages: defConfig.pages,
+        sections: pageSections,
       });
     } catch (error) {
       fail(res, error);
@@ -1587,6 +1585,7 @@ app.get(
         return;
       }
 
+      const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
       res.json({
         college: college ?? {
           id: "open-access-id",
@@ -1594,9 +1593,9 @@ app.get(
           subdomain,
           status: "PUBLISHED",
         },
-        config: { pages: [] },
-        pages: [],
-        sections: [],
+        config: defConfig,
+        pages: defConfig.pages,
+        sections: defConfig.pages?.[0]?.sections || [],
       });
     } catch (error) {
       fail(res, error);

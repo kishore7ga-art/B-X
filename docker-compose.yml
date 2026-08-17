@@ -13,7 +13,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       MONGODB_URI: ${MONGODB_URI:-}
       SESSION_SECRET: ${SESSION_SECRET}
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in,https://admin.meetkishore.in,https://api.meetkishore.in}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in,https://admin.xite.co.in,https://api.xite.co.in,http://localhost:3000,http://localhost:5173}
       SEED_ON_START: ${SEED_ON_START:-true}
     volumes:
       - uploads:/app/public/uploads

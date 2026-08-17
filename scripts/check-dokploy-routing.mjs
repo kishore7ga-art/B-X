@@ -5,7 +5,7 @@ try {
   dns.setServers(["8.8.8.8", "1.1.1.1"]);
 } catch (e) {}
 
-const API_BASE = "https://api.meetkishore.in";
+const API_BASE = "https://api.xite.co.in";
 
 async function auditDokployRouting() {
   console.log("========================================================================");

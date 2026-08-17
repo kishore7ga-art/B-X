@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import mongoose from "mongoose";
 import dns from "node:dns";
+dns.setDefaultResultOrder("ipv4first");
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-try {
-  dns.setDefaultResultOrder("ipv4first");
-  dns.setServers(["8.8.8.8", "1.1.1.1"]);
-} catch (e) {}
+async function fetchWithRetry(url, options = {}, retries = 5) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fetch(url, options);
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+}
 
-const PROD_API_BASE = "https://api.meetkishore.in";
+const PROD_API_BASE = "https://api.xite.co.in";
 const MONGODB_URI = "mongodb+srv://kishorehi007_db_user:bAWpadELrbNNzGPr@xitedb.uk7epss.mongodb.net/college_saas?retryWrites=true&w=majority&appName=xitedb";
 
 async function runLiveProductionTest() {
@@ -15,8 +23,8 @@ async function runLiveProductionTest() {
   console.log("  CTO REAL PRODUCTION REAL-BROWSER FLOW VERIFICATION (LIVE PROD)        ");
   console.log("========================================================================");
   console.log(`Target Production API Base : ${PROD_API_BASE}`);
-  console.log(`Target Admin Domain       : https://admin.meetkishore.in`);
-  console.log(`Target Live Domain        : https://meetkishore.in`);
+  console.log(`Target Admin Domain       : https://admin.xite.co.in`);
+  console.log(`Target Live Domain        : https://xite.co.in`);
 
   // Connect to MongoDB Atlas
   await mongoose.connect(MONGODB_URI);
@@ -30,7 +38,7 @@ async function runLiveProductionTest() {
   // STEP 1 & 2: ADMIN LOGIN → CREATE SECTION → MONGODB ATLAS
   // -------------------------------------------------------------------
   console.log("\n--- STEP 1 & 2: ADMIN LOGIN & SECTION CREATION ---");
-  const loginRes = await fetch(`${PROD_API_BASE}/api/v1/admin/auth/login`, {
+  const loginRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/admin/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: "admin@xite.co.in", password: "2008" }),
@@ -48,7 +56,7 @@ async function runLiveProductionTest() {
     isPublished: true,
   };
 
-  const createRes = await fetch(`${PROD_API_BASE}/api/v1/admin/templates`, {
+  const createRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/admin/templates`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -71,7 +79,7 @@ async function runLiveProductionTest() {
   // STEP 3: DEFAULT WEBSITE READ & SYSTEM_SECRETS VERIFICATION
   // -------------------------------------------------------------------
   console.log("\n--- STEP 3: DEFAULT WEBSITE READ & SYSTEM_SECRETS ---");
-  const defRes = await fetch(`${PROD_API_BASE}/api/v1/default-website`);
+  const defRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/default-website`);
   console.log(`GET ${PROD_API_BASE}/api/v1/default-website → Status: ${defRes.status}`);
   assert.equal(defRes.status, 200);
   const defData = await defRes.json();
@@ -94,7 +102,7 @@ async function runLiveProductionTest() {
   // -------------------------------------------------------------------
   console.log("\n--- STEP 4: TENANT PROVISIONING & EDITOR STUDIO ---");
   const testEmail = `real-prod-${Date.now()}@university.edu`;
-  const reqRes = await fetch(`${PROD_API_BASE}/api/v1/access-requests`, {
+  const reqRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/access-requests`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -112,7 +120,7 @@ async function runLiveProductionTest() {
   }
   assert.ok(reqDoc);
 
-  const approveRes = await fetch(`${PROD_API_BASE}/api/v1/admin/access-requests/${reqDoc._id}/approve`, {
+  const approveRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/admin/access-requests/${reqDoc._id}/approve`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -127,7 +135,7 @@ async function runLiveProductionTest() {
   console.log(`✓ Provisioned tenant college in MongoDB: subdomain=${subdomain}`);
 
   // Authenticate as Tenant User
-  const userLoginRes = await fetch(`${PROD_API_BASE}/api/v1/auth/login`, {
+  const userLoginRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: testEmail, password: "TestPassword123!" }),
@@ -137,7 +145,7 @@ async function runLiveProductionTest() {
   assert.ok(collegeCookie, "Tenant login must issue session cookie");
 
   // GET /api/v1/my-website
-  const editorLoadRes = await fetch(`${PROD_API_BASE}/api/v1/my-website`, {
+  const editorLoadRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/my-website`, {
     headers: { Cookie: collegeCookie },
   });
   console.log(`GET ${PROD_API_BASE}/api/v1/my-website → Status: ${editorLoadRes.status}`);
@@ -156,7 +164,7 @@ async function runLiveProductionTest() {
       : p
   );
 
-  const saveRes = await fetch(`${PROD_API_BASE}/api/v1/my-website`, {
+  const saveRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/my-website`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -177,7 +185,7 @@ async function runLiveProductionTest() {
   // STEP 5: LIVE WEBSITE (GET /api/v1/public/site/:subdomain)
   // -------------------------------------------------------------------
   console.log("\n--- STEP 5: LIVE WEBSITE & PUBLIC API ---");
-  const liveRes = await fetch(`${PROD_API_BASE}/api/v1/public/site/${subdomain}`);
+  const liveRes = await fetchWithRetry(`${PROD_API_BASE}/api/v1/public/site/${subdomain}`);
   console.log(`GET ${PROD_API_BASE}/api/v1/public/site/${subdomain} → Status: ${liveRes.status}`);
   assert.equal(liveRes.status, 200);
   const liveConfig = await liveRes.json();
