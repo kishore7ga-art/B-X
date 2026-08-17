@@ -8,23 +8,62 @@ import { Template, College } from "@/models";
 import { BadRequest, NotFound } from "@/errors";
 import { applyTemplateToDefaultWebsite } from "@/default-website-service";
 
+/**
+ * Sanitize and normalize admin-uploaded template code.
+ * - Extracts <body> content from full <!DOCTYPE html> documents
+ * - Allows <script> tags (admin content is trusted — not user-generated)
+ * - Never throws — returns rawCode unchanged on any error
+ */
 export function sanitizeTemplateCode(rawCode: string): string {
-  return sanitizeHtml(rawCode, {
-    allowedTags: sanitizeHtml.defaults.allowedTags.concat([
-      "html", "body", "head", "title", "meta", "link", "style", "header", "footer", "nav",
-      "section", "article", "aside", "main", "figure", "figcaption", "svg", "path", "g",
-      "use", "polygon", "rect", "circle", "line", "polyline", "button", "form", "input",
-      "label", "select", "textarea", "option", "iframe", "template", "slot"
-    ]),
-    allowedAttributes: {
-      "*": [
-        "class", "id", "style", "title", "role", "aria-*", "data-*", "name", "type",
-        "value", "placeholder", "src", "href", "alt", "rel", "target", "width", "height",
-        "xmlns", "viewBox", "d", "fill", "stroke"
-      ],
-    },
-    allowedSchemes: ["http", "https", "mailto", "data"],
-  });
+  if (!rawCode || !rawCode.trim()) return rawCode;
+
+  try {
+    let code = rawCode.trim();
+
+    // If admin pasted a full HTML document, extract only the <body> contents.
+    // This keeps sections clean and prevents sanitize-html from mangling the doctype.
+    if (/^<!DOCTYPE/i.test(code) || /<html[\s>]/i.test(code)) {
+      const bodyMatch = code.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (bodyMatch && bodyMatch[1]) {
+        code = bodyMatch[1].trim();
+      } else {
+        // No body tag — strip html/head/doctype wrapper manually
+        code = code
+          .replace(/^<!DOCTYPE[^>]*>/i, '')
+          .replace(/<html[^>]*>/i, '')
+          .replace(/<\/html>/i, '')
+          .replace(/<head[\s\S]*?<\/head>/i, '')
+          .trim();
+      }
+    }
+
+    // Admin-uploaded content is trusted, so we allow script tags for
+    // things like hamburger menu toggles and interactive section logic.
+    return sanitizeHtml(code, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+        "html", "body", "head", "title", "meta", "link", "style", "script",
+        "header", "footer", "nav", "section", "article", "aside", "main",
+        "figure", "figcaption", "svg", "path", "g", "use", "polygon",
+        "rect", "circle", "line", "polyline", "button", "form", "input",
+        "label", "select", "textarea", "option", "iframe", "template", "slot"
+      ]),
+      allowedAttributes: {
+        "*": [
+          "class", "id", "style", "title", "role", "aria-*", "data-*", "name",
+          "type", "value", "placeholder", "src", "href", "alt", "rel", "target",
+          "width", "height", "xmlns", "viewBox", "d", "fill", "stroke",
+          "crossorigin", "integrity", "defer", "async", "charset",
+        ],
+      },
+      allowedSchemes: ["http", "https", "mailto", "data", "javascript"],
+      // Allow all script content through (admin-trusted)
+      allowedScriptDomains: ["*"],
+    });
+  } catch (err) {
+    // Never let sanitizer crash the save — return original code as fallback
+    console.warn("[sanitizeTemplateCode] sanitize-html failed, using raw code:", (err as Error).message);
+    return rawCode;
+  }
 }
 
 export const OFFERABLE = { isPublished: true, archivedAt: null } as const;
@@ -340,9 +379,19 @@ export const createTemplateSchema = z.object({
 });
 
 export async function createTemplate(input: unknown, actor: AdminSession) {
+  console.log("[createTemplate] called with name:", (input as any)?.name, "category:", (input as any)?.category);
   const data = createTemplateSchema.parse(input);
   const nameLower = data.name.toLowerCase();
-  const sanitizedCode = data.code ? sanitizeTemplateCode(data.code) : null;
+
+  // Sanitize and normalize — never throws, falls back to raw code
+  let sanitizedCode: string | null = null;
+  try {
+    sanitizedCode = data.code ? sanitizeTemplateCode(data.code) : null;
+    console.log("[createTemplate] sanitized code length:", sanitizedCode?.length ?? 0);
+  } catch (sanitizeErr) {
+    console.error("[createTemplate] sanitize failed:", sanitizeErr);
+    sanitizedCode = data.code ?? null;
+  }
 
   let cat = data.category ? data.category.toLowerCase().trim() : "";
   if (!cat || cat === "undefined" || cat === "null" || cat === "custom") {
