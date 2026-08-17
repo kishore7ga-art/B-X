@@ -37,24 +37,33 @@ export type TemplateStats = {
 };
 
 export async function templateStats(): Promise<TemplateStats> {
-  const [total, published, archived, collegesOnTemplates] = await Promise.all([
-    Template.countDocuments(),
-    Template.countDocuments({ isPublished: true, archivedAt: null }),
-    Template.countDocuments({ archivedAt: { $ne: null } }),
-    College.countDocuments({ isDemo: false, templateId: { $ne: null } }),
-  ]);
+  try {
+    const [total, published, archived, collegesOnTemplates] = await Promise.all([
+      Template.countDocuments(),
+      Template.countDocuments({ isPublished: true, archivedAt: null }),
+      Template.countDocuments({ archivedAt: { $ne: null } }),
+      College.countDocuments({ isDemo: false, templateId: { $ne: null } }),
+    ]);
 
-  return {
-    templates: {
-      total,
-      published,
-      draft: total - published - archived,
-      archived,
-    },
-    library: { total: 30, active: 30, retired: 0 },
-    byType: [],
-    collegesOnTemplates,
-  };
+    return {
+      templates: {
+        total,
+        published,
+        draft: Math.max(0, total - published - archived),
+        archived,
+      },
+      library: { total: 30, active: 30, retired: 0 },
+      byType: [],
+      collegesOnTemplates,
+    };
+  } catch (_err) {
+    return {
+      templates: { total: 0, published: 0, draft: 0, archived: 0 },
+      library: { total: 0, active: 0, retired: 0 },
+      byType: [],
+      collegesOnTemplates: 0,
+    };
+  }
 }
 
 export type TemplateRow = {
@@ -83,43 +92,48 @@ export type TemplateRow = {
 };
 
 export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
-  let templates = await Template.find().sort({ archivedAt: 1, name: 1 });
+  let templates: any[] = [];
+  try {
+    templates = await Template.find().sort({ archivedAt: 1, name: 1 });
 
-  if (templates.length === 0) {
-    try {
-      await Template.create([
-        {
-          id: "reference-university-v1",
-          name: "Greenfield University Standard",
-          category: "University",
-          description: "Official comprehensive university landing page template with all 19 standard sections.",
-          isPublished: true,
-          createdByEmail: "admin@xite.co.in",
-          createdAt: new Date(),
-        },
-        {
-          id: "modern-engineering-v2",
-          name: "Madras Engineering College",
-          category: "Engineering",
-          description: "High-impact tech & placement-focused engineering campus template.",
-          isPublished: true,
-          createdByEmail: "admin@xite.co.in",
-          createdAt: new Date(),
-        },
-        {
-          id: "arts-science-v1",
-          name: "Royal Arts & Science College",
-          category: "Arts & Science",
-          description: "Elegant academic & research portal template for liberal arts and science colleges.",
-          isPublished: true,
-          createdByEmail: "admin@xite.co.in",
-          createdAt: new Date(),
-        },
-      ]);
-      templates = await Template.find().sort({ archivedAt: 1, name: 1 });
-    } catch {
-      // Ignore seed conflicts if created concurrently
+    if (templates.length === 0) {
+      try {
+        await Template.create([
+          {
+            id: "reference-university-v1",
+            name: "Greenfield University Standard",
+            category: "University",
+            description: "Official comprehensive university landing page template with all 19 standard sections.",
+            isPublished: true,
+            createdByEmail: "admin@xite.co.in",
+            createdAt: new Date(),
+          },
+          {
+            id: "modern-engineering-v2",
+            name: "Madras Engineering College",
+            category: "Engineering",
+            description: "High-impact tech & placement-focused engineering campus template.",
+            isPublished: true,
+            createdByEmail: "admin@xite.co.in",
+            createdAt: new Date(),
+          },
+          {
+            id: "arts-science-v1",
+            name: "Royal Arts & Science College",
+            category: "Arts & Science",
+            description: "Elegant academic & research portal template for liberal arts and science colleges.",
+            isPublished: true,
+            createdByEmail: "admin@xite.co.in",
+            createdAt: new Date(),
+          },
+        ]);
+        templates = await Template.find().sort({ archivedAt: 1, name: 1 });
+      } catch {
+        // Ignore seed conflicts if created concurrently
+      }
     }
+  } catch (_dbErr) {
+    templates = [];
   }
 
   return templates.map((template) => {
@@ -136,8 +150,8 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
         : String(template.createdAt ?? new Date().toISOString());
 
     return {
-      id: template.id,
-      name: template.name,
+      id: template.id || template._id?.toString() || "tpl-default",
+      name: template.name || "Default Template",
       category: template.category ?? null,
       description: template.description ?? null,
       thumbnailUrl: template.thumbnailUrl ?? null,
