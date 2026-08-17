@@ -252,7 +252,7 @@ export async function updateTemplateDetails(
       createdById: actor.adminId,
     });
 
-    await recordAudit({
+    recordAudit({
       actor,
       action: "template.create",
       targetType: "template",
@@ -274,7 +274,7 @@ export async function updateTemplateDetails(
 
   await template.save();
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "template.update",
     targetType: "template",
@@ -317,7 +317,7 @@ export async function updateTemplateSlots(
 
   await template.save();
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "template.slots_update",
     targetType: "template",
@@ -375,7 +375,7 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
     existing.isPublished = data.isPublished;
     await existing.save();
 
-    await recordAudit({
+    recordAudit({
       actor,
       action: "template.update",
       targetType: "template",
@@ -402,7 +402,7 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
     createdById: actor.adminId,
   });
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "template.create",
     targetType: "template",
@@ -431,7 +431,7 @@ export async function retireTemplate(
     template.isPublished = false;
     await template.save();
 
-    await recordAudit({
+    recordAudit({
       actor,
       action: "template.archive",
       targetType: "template",
@@ -444,7 +444,7 @@ export async function retireTemplate(
 
   await Template.deleteOne({ _id: template._id });
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "template.delete",
     targetType: "template",
@@ -459,7 +459,7 @@ export async function deleteAllTemplates(actor: AdminSession) {
   const count = await Template.countDocuments();
   await Template.deleteMany({});
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "template.delete_all",
     targetType: "template",

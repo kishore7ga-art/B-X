@@ -267,31 +267,34 @@ export async function adminLogin(input: unknown) {
   };
 }
 
-export async function recordAudit(entry: {
+export function recordAudit(entry: {
   actor: AdminSession;
   action: string;
   targetType: string;
   targetId?: string | null;
   summary: string;
   metadata?: Record<string, unknown>;
-}) {
-  try {
-    await SystemSecret.create({
-      name: `audit:${Date.now()}:${Math.random().toString(36).substring(2, 7)}`,
-      value: {
-        actorId: entry.actor.adminId,
-        actorEmail: entry.actor.email,
-        action: entry.action,
-        targetType: entry.targetType,
-        targetId: entry.targetId ?? null,
-        summary: entry.summary,
-        metadata: entry.metadata,
-        createdAt: new Date(),
-      },
-    });
-  } catch (error) {
-    console.error("[admin] audit write failed:", (error as Error).message);
-  }
+}): void {
+  // Fire-and-forget: runs AFTER response is sent, never blocks or crashes the caller
+  setImmediate(async () => {
+    try {
+      await SystemSecret.create({
+        name: `audit:${Date.now()}:${Math.random().toString(36).substring(2, 7)}`,
+        value: {
+          actorId: entry.actor.adminId,
+          actorEmail: entry.actor.email,
+          action: entry.action,
+          targetType: entry.targetType,
+          targetId: entry.targetId ?? null,
+          summary: entry.summary,
+          metadata: entry.metadata,
+          createdAt: new Date(),
+        },
+      });
+    } catch (error) {
+      console.error("[admin] audit write failed (non-fatal):", (error as Error).message);
+    }
+  });
 }
 
 export async function adminOverview() {
@@ -392,7 +395,7 @@ export async function updateUserStatusForAdmin(
   user.status = status;
   await college.save();
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "user.update_status",
     targetType: "user",
@@ -437,7 +440,7 @@ export async function updateUserPasswordForAdmin(
   user.status = "ACTIVE";
   await college.save();
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "user.update_password",
     targetType: "user",
@@ -465,7 +468,7 @@ export async function deleteUserForAdmin(userId: string, actor: AdminSession) {
     await college.save();
   }
 
-  await recordAudit({
+  recordAudit({
     actor,
     action: "user.delete",
     targetType: "user",
