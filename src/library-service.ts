@@ -134,43 +134,7 @@ export async function listTemplatesForAdmin(): Promise<TemplateRow[]> {
   let templates: any[] = [];
   try {
     templates = await Template.find().sort({ archivedAt: 1, name: 1 });
-
-    if (templates.length === 0) {
-      try {
-        await Template.create([
-          {
-            id: "reference-university-v1",
-            name: "Greenfield University Standard",
-            category: "University",
-            description: "Official comprehensive university landing page template with all 19 standard sections.",
-            isPublished: true,
-            createdByEmail: "admin@xite.co.in",
-            createdAt: new Date(),
-          },
-          {
-            id: "modern-engineering-v2",
-            name: "Madras Engineering College",
-            category: "Engineering",
-            description: "High-impact tech & placement-focused engineering campus template.",
-            isPublished: true,
-            createdByEmail: "admin@xite.co.in",
-            createdAt: new Date(),
-          },
-          {
-            id: "arts-science-v1",
-            name: "Royal Arts & Science College",
-            category: "Arts & Science",
-            description: "Elegant academic & research portal template for liberal arts and science colleges.",
-            isPublished: true,
-            createdByEmail: "admin@xite.co.in",
-            createdAt: new Date(),
-          },
-        ]);
-        templates = await Template.find().sort({ archivedAt: 1, name: 1 });
-      } catch {
-        // Ignore seed conflicts if created concurrently
-      }
-    }
+    // No seeding — DB starts empty and admin adds real section templates via the Studio
   } catch (_dbErr) {
     templates = [];
   }
