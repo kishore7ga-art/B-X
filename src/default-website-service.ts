@@ -67,8 +67,25 @@ const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
   ],
 };
 
+let inMemoryDefaultWebsite: DefaultWebsiteConfig | null = null;
+
 /** Ensure system_secrets collection holds default website config with clean sections and pages */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
+  const currentMem = inMemoryDefaultWebsite;
+  if (currentMem && Array.isArray(currentMem.pages) && currentMem.pages.length > 0) {
+    try {
+      const secret = await SystemSecret.findOne({ name: "DEFAULT_WEBSITE_CONFIG" });
+      if (secret && secret.value) {
+        const parsed = typeof secret.value === "string" ? JSON.parse(secret.value) : secret.value;
+        if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
+          inMemoryDefaultWebsite = parsed;
+          return parsed;
+        }
+      }
+    } catch {}
+    return currentMem;
+  }
+
   try {
     const secret = await SystemSecret.findOne({ name: "DEFAULT_WEBSITE_CONFIG" });
     if (secret && secret.value) {
@@ -81,6 +98,7 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
             mergedPages.push(initPage);
           }
         });
+        inMemoryDefaultWebsite = { pages: mergedPages };
         return { pages: mergedPages };
       }
     }
@@ -93,23 +111,30 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
     await updateDefaultWebsiteConfig(INITIAL_DEFAULT_WEBSITE);
   } catch {}
 
+  inMemoryDefaultWebsite = INITIAL_DEFAULT_WEBSITE;
   return INITIAL_DEFAULT_WEBSITE;
 }
 
 export async function updateDefaultWebsiteConfig(
   config: DefaultWebsiteConfig
 ): Promise<DefaultWebsiteConfig> {
-  await SystemSecret.findOneAndUpdate(
-    { name: "DEFAULT_WEBSITE_CONFIG" },
-    { name: "DEFAULT_WEBSITE_CONFIG", value: config },
-    { upsert: true, new: true }
-  );
+  inMemoryDefaultWebsite = config;
 
-  await AuditLog.create({
-    action: "EDITOR_CONFIG_UPDATED",
-    tenantId: "system",
-    details: { pagesCount: config.pages?.length || 0 },
-  }).catch(() => null);
+  try {
+    await SystemSecret.findOneAndUpdate(
+      { name: "DEFAULT_WEBSITE_CONFIG" },
+      { name: "DEFAULT_WEBSITE_CONFIG", value: config },
+      { upsert: true, new: true }
+    );
+
+    await AuditLog.create({
+      action: "EDITOR_CONFIG_UPDATED",
+      tenantId: "system",
+      details: { pagesCount: config.pages?.length || 0 },
+    }).catch(() => null);
+  } catch (err) {
+    console.warn("Could not persist default website config to MongoDB, saved to memory fallback:", err);
+  }
 
   return config;
 }
@@ -179,6 +204,6 @@ export async function applyTemplateToDefaultWebsite(
     };
   });
 
-  const newConfig = { pages: updatedPages };
-  return updateDefaultWebsiteConfig(newConfig);
+  const finalConfig: DefaultWebsiteConfig = { pages: updatedPages };
+  return updateDefaultWebsiteConfig(finalConfig);
 }
