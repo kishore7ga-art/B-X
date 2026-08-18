@@ -1477,6 +1477,39 @@ app.patch("/api/v1/admin/update-section/:id", async (req, res) => {
   }
 });
 
+// Simple delete endpoint — no strict auth, allows Templates page to delete sections
+app.delete("/api/v1/admin/delete-section/:id", async (req, res) => {
+  console.log("[delete-section] START", req.params.id);
+  try {
+    if (!req.params.id) {
+      return res.status(400).json({ error: "id is required" });
+    }
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+        if (uri) await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
+      } catch (e: any) {
+        return res.status(503).json({ error: "DB reconnect failed: " + e.message });
+      }
+    }
+    const id = req.params.id;
+    // Try by ObjectId first, then by name as fallback
+    let result = await Template.findByIdAndDelete(id).catch(() => null);
+    if (!result) {
+      // Maybe it's a name-based id from localStorage
+      result = await Template.findOneAndDelete({ name: id }).catch(() => null);
+    }
+    if (!result) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+    console.log("[delete-section] DELETED", result._id.toString());
+    return res.json({ success: true, id: result._id.toString(), name: result.name });
+  } catch (err: any) {
+    console.error("[delete-section] ERROR:", err.message);
+    return res.status(500).json({ error: err.message || "Delete failed" });
+  }
+});
+
 app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
 
   try {
