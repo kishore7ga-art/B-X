@@ -20,21 +20,29 @@ export function sanitizeTemplateCode(rawCode: string): string {
   try {
     let code = rawCode.trim();
 
-    // If admin pasted a full HTML document, extract only the <body> contents.
-    // This keeps sections clean and prevents sanitize-html from mangling the doctype.
+    // If admin pasted a full HTML document, extract <style> from <head> + <body> contents.
+    // This preserves all CSS while removing the outer html/head/doctype wrapper.
     if (/^<!DOCTYPE/i.test(code) || /<html[\s>]/i.test(code)) {
-      const bodyMatch = code.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-      if (bodyMatch && bodyMatch[1]) {
-        code = bodyMatch[1].trim();
-      } else {
-        // No body tag — strip html/head/doctype wrapper manually
-        code = code
-          .replace(/^<!DOCTYPE[^>]*>/i, '')
-          .replace(/<html[^>]*>/i, '')
-          .replace(/<\/html>/i, '')
-          .replace(/<head[\s\S]*?<\/head>/i, '')
-          .trim();
+      // 1. Extract all <style> blocks from <head>
+      const headMatch = code.match(/<head[\s\S]*?<\/head>/i);
+      const headStyles: string[] = [];
+      if (headMatch) {
+        const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+        let m;
+        while ((m = styleRegex.exec(headMatch[0])) !== null) {
+          headStyles.push(`<style>${m[1]}</style>`);
+        }
       }
+      // 2. Extract body content
+      const bodyMatch = code.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      const bodyContent = bodyMatch?.[1]?.trim() || code
+        .replace(/^<!DOCTYPE[^>]*>/i, '')
+        .replace(/<html[^>]*>/i, '')
+        .replace(/<\/html>/i, '')
+        .replace(/<head[\s\S]*?<\/head>/i, '')
+        .trim();
+      // 3. Combine: styles first, then body HTML
+      code = [...headStyles, bodyContent].filter(Boolean).join('\n');
     }
 
     // Admin-uploaded content is trusted, so we allow script tags for
