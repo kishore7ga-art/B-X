@@ -66,6 +66,7 @@ import {
   updateDefaultWebsiteConfig,
 } from "@/default-website-service";
 import { generateAiSection } from "@/ai-service";
+import { optimizeSection } from "@/ai-optimize-service";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
@@ -1313,6 +1314,22 @@ adminRouter.get("/library", async (req, res) => {
   try {
     await requireAdmin(req);
     res.json({ variants: await libraryVariantsForAdmin() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * AI Fix & Responsive — optimizes an existing Xite section for responsiveness.
+ *
+ * Calls the Gemini API server-side; the API key is never sent to the browser.
+ * Protected by requireAdmin — only authenticated admins may call this.
+ */
+adminRouter.post("/ai/optimize-section", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    const result = await optimizeSection(req.body ?? {});
+    res.json(result);
   } catch (error) {
     fail(res, error);
   }

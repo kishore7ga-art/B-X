@@ -810,6 +810,54 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/admin/ai/optimize-section": {
+      post: {
+        tags: ["Admin", "AI"],
+        summary: "AI Fix & Responsive — optimize an existing section",
+        description:
+          "Sends the provided Xite section code to the Gemini API and returns " +
+          "an improved version with responsive CSS, fixed layout, and mobile " +
+          "navigation. The Gemini API key is stored exclusively on the server " +
+          "and is never returned in any response.",
+        security: SESSION_COOKIE,
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  code: { type: "string", description: "The Xite section HTML/CSS/JS code to optimize." },
+                },
+                required: ["code"],
+              },
+            },
+          },
+        },
+        responses: {
+          "200": json(
+            {
+              type: "object",
+              properties: {
+                code: { type: "string", description: "Optimized embeddable Xite section code." },
+              },
+              required: ["code"],
+            },
+            "Optimized section code returned by the AI.",
+          ),
+          ...errors(
+            [400, "Missing or invalid section code."],
+            [401, "Not signed in."],
+            [413, "Section code too large for AI processing."],
+            [422, "AI safety filter declined the content."],
+            [429, "AI service rate limit reached — retry shortly."],
+            [502, "AI service unavailable or returned an invalid response."],
+            [503, "AI optimization not configured on this deployment."],
+            [504, "AI request timed out."],
+          ),
+        },
+      },
+    },
     "/api/v1/admin/overview": {
       get: {
         tags: ["Admin"],
