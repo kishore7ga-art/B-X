@@ -175,7 +175,10 @@ export async function optimizeSection(input: unknown): Promise<{ code: string }>
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
 
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  // gemini-1.5-flash is universally available with all Google AI Studio keys.
+  // gemini-2.0-flash is newer but requires specific project enablement.
+  const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-1.5-flash";
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
   let response: Response;
   try {
