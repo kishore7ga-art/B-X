@@ -10,7 +10,10 @@ import { applyTemplateToDefaultWebsite } from "@/default-website-service";
 
 /**
  * Sanitize and normalize admin-uploaded template code.
- * - Extracts <body> content from full <!DOCTYPE html> documents
+ * - Extracts <style> from <head> + <body> content from full <!DOCTYPE html> documents
+ * - IMPORTANT: sanitize-html v2+ strips ALL text content from <style> tags.
+ *   We work around this by extracting ALL <style> blocks first, sanitizing only
+ *   the HTML portion, then prepending the style blocks back.
  * - Allows <script> tags (admin content is trusted — not user-generated)
  * - Never throws — returns rawCode unchanged on any error
  */
@@ -20,20 +23,25 @@ export function sanitizeTemplateCode(rawCode: string): string {
   try {
     let code = rawCode.trim();
 
-    // If admin pasted a full HTML document, extract <style> from <head> + <body> contents.
-    // This preserves all CSS while removing the outer html/head/doctype wrapper.
+    // Step 1: If full HTML document, extract <style> from <head> + <body> content.
     if (/^<!DOCTYPE/i.test(code) || /<html[\s>]/i.test(code)) {
-      // 1. Extract all <style> blocks from <head>
       const headMatch = code.match(/<head[\s\S]*?<\/head>/i);
       const headStyles: string[] = [];
+      const headLinks: string[] = [];
       if (headMatch) {
+        // Collect <style> blocks from head
         const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi;
         let m;
         while ((m = styleRegex.exec(headMatch[0])) !== null) {
-          headStyles.push(`<style>${m[1]}</style>`);
+          if (m[1]?.trim()) headStyles.push(`<style>${m[1]}</style>`);
+        }
+        // Collect <link rel="stylesheet"> from head (Google Fonts, CDN CSS, etc.)
+        const linkRegex = /<link[^>]+rel=["']stylesheet["'][^>]*>/gi;
+        let lm;
+        while ((lm = linkRegex.exec(headMatch[0])) !== null) {
+          headLinks.push(lm[0]);
         }
       }
-      // 2. Extract body content
       const bodyMatch = code.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
       const bodyContent = bodyMatch?.[1]?.trim() || code
         .replace(/^<!DOCTYPE[^>]*>/i, '')
@@ -41,13 +49,28 @@ export function sanitizeTemplateCode(rawCode: string): string {
         .replace(/<\/html>/i, '')
         .replace(/<head[\s\S]*?<\/head>/i, '')
         .trim();
-      // 3. Combine: styles first, then body HTML
-      code = [...headStyles, bodyContent].filter(Boolean).join('\n');
+      code = [...headLinks, ...headStyles, bodyContent].filter(Boolean).join('\n');
     }
 
-    // Admin-uploaded content is trusted, so we allow script tags for
-    // things like hamburger menu toggles and interactive section logic.
-    return sanitizeHtml(code, {
+    // Step 2: Extract ALL <style> blocks from the code BEFORE sanitizing.
+    // sanitize-html v2+ removes text content from <style> tags even when allowed.
+    // We save them now and reattach after sanitization.
+    const preservedStyles: string[] = [];
+    const preservedLinks: string[] = [];
+    let codeWithoutStyles = code
+      .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (match, content) => {
+        if (content?.trim()) preservedStyles.push(`<style>${content}</style>`);
+        return ''; // Remove from HTML to sanitize
+      })
+      .replace(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi, (match) => {
+        preservedLinks.push(match);
+        return '';
+      })
+      .trim();
+
+    // Step 3: Sanitize only the HTML (scripts and layout tags — no style content to worry about).
+    // Admin-uploaded content is trusted, so we allow script tags for hamburger menus etc.
+    const sanitized = sanitizeHtml(codeWithoutStyles, {
       allowedTags: sanitizeHtml.defaults.allowedTags.concat([
         "html", "body", "head", "title", "meta", "link", "style", "script",
         "header", "footer", "nav", "section", "article", "aside", "main",
@@ -64,15 +87,19 @@ export function sanitizeTemplateCode(rawCode: string): string {
         ],
       },
       allowedSchemes: ["http", "https", "mailto", "data", "javascript"],
-      // Allow all script content through (admin-trusted)
       allowedScriptDomains: ["*"],
     });
+
+    // Step 4: Reattach all preserved styles BEFORE the HTML content.
+    // Order: external links first (fonts/CDN), then inline <style>, then HTML.
+    const parts = [...preservedLinks, ...preservedStyles, sanitized].filter(Boolean);
+    return parts.join('\n');
   } catch (err) {
-    // Never let sanitizer crash the save — return original code as fallback
     console.warn("[sanitizeTemplateCode] sanitize-html failed, using raw code:", (err as Error).message);
     return rawCode;
   }
 }
+
 
 export const OFFERABLE = { isPublished: true, archivedAt: null } as const;
 
