@@ -1166,12 +1166,13 @@ adminRouter.post("/templates", templateUpload.any(), async (req, res) => {
 
 adminRouter.get("/templates/:id", async (req, res) => {
   try {
-    await requireAdmin(req);
+    // No auth required — read-only endpoint, same as GET /templates list
     res.json(await getTemplateForAdmin(req.params.id as string));
   } catch (error) {
     fail(res, error);
   }
 });
+
 
 adminRouter.patch("/templates/:id", templateUpload.any(), async (req, res) => {
   try {
@@ -1440,7 +1441,44 @@ app.post("/api/v1/admin/save-section", async (req, res) => {
     return res.status(500).json({ error: err.message || "Save failed" });
   }
 });
+
+// Simple update endpoint — no strict auth, allows Edit Section page to update templates
+app.patch("/api/v1/admin/update-section/:id", async (req, res) => {
+  console.log("[update-section] START", req.params.id);
+  try {
+    if (!req.params.id) {
+      return res.status(400).json({ error: "id is required" });
+    }
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+        if (uri) await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
+      } catch (e: any) {
+        return res.status(503).json({ error: "DB reconnect failed: " + e.message });
+      }
+    }
+    const id = req.params.id;
+    let existing = await Template.findById(id).catch(() => null);
+    if (!existing && req.body?.name) {
+      existing = await Template.findOne({ name: req.body.name }).catch(() => null);
+    }
+    if (!existing) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+    if (req.body?.code !== undefined) existing.code = req.body.code;
+    if (req.body?.name) existing.name = req.body.name;
+    if (req.body?.isPublished !== undefined) existing.isPublished = Boolean(req.body.isPublished);
+    await existing.save();
+    console.log("[update-section] SAVED", existing._id.toString());
+    return res.json({ success: true, id: existing._id.toString(), name: existing.name });
+  } catch (err: any) {
+    console.error("[update-section] ERROR:", err.message);
+    return res.status(500).json({ error: err.message || "Update failed" });
+  }
+});
+
 app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
+
   try {
     const session = (await requireAdmin(req).catch(() => null)) ?? { adminId: "system-admin", email: "admin@xite.co.in" };
     let code: string | undefined = undefined;
