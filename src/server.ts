@@ -568,7 +568,26 @@ function configPresence() {
 app.get(["/health", "/api/health"], async (_req, res) => {
   const startedAt = Date.now();
   try {
-    const isConnected = mongoose.connection.readyState === 1;
+    let isConnected = mongoose.connection.readyState === 1;
+
+    // Auto-heal: attempt reconnect on health check if DB is down
+    if (!isConnected) {
+      const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+      if (uri) {
+        try {
+          console.log("[health] DB disconnected — attempting reconnect...");
+          await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
+          isConnected = mongoose.connection.readyState === 1;
+          if (isConnected) {
+            console.log("[health] ✅ DB reconnected");
+            await bootstrapAdmin().catch(() => null);
+          }
+        } catch (reconnErr) {
+          console.error("[health] reconnect failed:", (reconnErr as Error).message);
+        }
+      }
+    }
+
     if (!isConnected) throw new Error("MongoDB connection state is not connected");
 
     res.json({
@@ -578,19 +597,10 @@ app.get(["/health", "/api/health"], async (_req, res) => {
       config: configPresence(),
       database: "connected",
       templates: await Template.countDocuments().catch(() => null),
-      /**
-       * Whether an approval can actually reach anybody.
-       *
-       * Here rather than left to be discovered, because an unconfigured mailer
-       * fails in the quietest possible way: approving still answers 200, the row
-       * still says APPROVED, and the only sign anything is wrong is a person who
-       * never got an email and has no way to say so. The dashboard reads this.
-       */
       mailer: mailerConfigured() ? "configured" : "not configured",
       latencyMs: Date.now() - startedAt,
     });
   } catch (error) {
-    // 503 so an uptime monitor notices, with the reason but never the URL.
     console.error("[health] database unreachable:", (error as Error).message);
     res.status(503).json({
       status: "degraded",
@@ -1386,6 +1396,50 @@ app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", 
     fail(res, error);
   }
 });
+
+// Ultra-simple section save — no audit, no post-processing, direct DB write
+app.post("/api/v1/admin/save-section", async (req, res) => {
+  console.log("[save-section] START", JSON.stringify({ name: req.body?.name, category: req.body?.category, codeLen: req.body?.code?.length ?? 0 }));
+  try {
+    const session = await requireAdmin(req);
+    if (!req.body?.name || !req.body?.code) {
+      return res.status(400).json({ error: "name and code are required" });
+    }
+    // Check if DB is connected
+    if (mongoose.connection.readyState !== 1) {
+      try {
+        const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+        if (uri) await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
+      } catch (reconnectErr: any) {
+        return res.status(503).json({ error: "DB reconnect failed: " + reconnectErr.message });
+      }
+    }
+    const existing = await Template.findOne({ name: req.body.name });
+    if (existing) {
+      existing.code = req.body.code;
+      existing.category = req.body.category || existing.category;
+      existing.isPublished = req.body.isPublished ?? true;
+      await existing.save();
+      console.log("[save-section] UPDATED", existing._id.toString());
+      return res.json({ success: true, id: existing._id.toString(), name: existing.name, action: "updated" });
+    }
+    const doc = await Template.create({
+      name: req.body.name,
+      category: req.body.category || null,
+      description: req.body.description || null,
+      code: req.body.code,
+      isPublished: req.body.isPublished ?? true,
+      createdByEmail: session?.email || "admin",
+    });
+    console.log("[save-section] CREATED", doc._id.toString());
+    return res.status(201).json({ success: true, id: doc._id.toString(), name: doc.name, action: "created" });
+  } catch (err: any) {
+    if (err.name === "Unauthorized") return res.status(401).json({ error: err.message });
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error("[save-section] ERROR:", err.message);
+    return res.status(500).json({ error: err.message || "Save failed" });
+  }
+});
 app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
   try {
     const session = (await requireAdmin(req).catch(() => null)) ?? { adminId: "system-admin", email: "admin@xite.co.in" };
@@ -1845,4 +1899,23 @@ app.listen(PORT, async () => {
     console.error("[api] Database startup error:", err);
   }
   verifyDocs();
+
+  // Background reconnect: auto-heal DB connection every 30s if disconnected.
+  // This means once MongoDB Atlas whitelist is fixed, the server auto-connects
+  // without needing a Dokploy redeploy.
+  setInterval(async () => {
+    if (mongoose.connection.readyState !== 1) {
+      const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+      if (!uri) return;
+      console.log("[db-watchdog] Connection lost — attempting reconnect...");
+      try {
+        await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
+        console.log("[db-watchdog] ✅ Reconnected to MongoDB Atlas");
+        await bootstrapAdmin().catch(() => null);
+      } catch (e: any) {
+        console.warn("[db-watchdog] Reconnect failed:", e.message);
+      }
+    }
+  }, 30_000);
 });
+
