@@ -6,7 +6,8 @@ import { type AdminSession, recordAudit } from "@/admin-service";
 import { AuthError } from "@/auth-service";
 import { Template, College } from "@/models";
 import { BadRequest, NotFound } from "@/errors";
-import { applyTemplateToDefaultWebsite } from "@/default-website-service";
+// applyTemplateToDefaultWebsite import removed — Default Website and Normal Templates
+// are now fully independent. No automatic cross-writes between the two systems.
 
 /**
  * Sanitize and normalize admin-uploaded template code.
@@ -420,7 +421,11 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
     });
 
     if (existing.code && cat) {
-      await applyTemplateToDefaultWebsite(existing.name, cat, existing.code).catch(() => null);
+      // NOTE: applyTemplateToDefaultWebsite() intentionally REMOVED.
+      // Normal Templates and Default Website Config are now fully independent:
+      // - Normal Templates  → MongoDB "templates" collection (Templates page)
+      // - Default Website   → MongoDB "systemsecrets" collection (Default Website page)
+      // Admins manage each separately. No automatic cross-writes.
     }
 
     return getTemplateForAdmin(existing.id);
@@ -447,7 +452,9 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
   });
 
   if (created.code && cat) {
-    await applyTemplateToDefaultWebsite(created.name, cat, created.code).catch(() => null);
+    // NOTE: applyTemplateToDefaultWebsite() intentionally REMOVED.
+    // Normal Templates are saved only to the "templates" collection.
+    // The Default Website page manages its own independent config.
   }
 
   return getTemplateForAdmin(created.id);
