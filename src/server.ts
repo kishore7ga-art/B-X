@@ -1451,11 +1451,15 @@ app.post(["/api/v1/admin/save-section", "/api/admin/save-section", "/admin/save-
         return res.status(503).json({ error: "DB reconnect failed: " + reconnectErr.message });
       }
     }
-    const existing = await Template.findOne({ name: req.body.name });
+    let existing = req.body?.id ? await Template.findById(req.body.id).catch(() => null) : null;
+    if (!existing && req.body?.name) {
+      existing = await Template.findOne({ name: req.body.name }).catch(() => null);
+    }
     if (existing) {
       existing.code = req.body.code;
       existing.category = req.body.category || existing.category;
       existing.isPublished = req.body.isPublished ?? true;
+      if (req.body.name) existing.name = req.body.name;
       await existing.save();
       console.log("[save-section] UPDATED", existing._id.toString());
       return res.json({ success: true, id: existing._id.toString(), name: existing.name, action: "updated" });
@@ -1502,6 +1506,7 @@ app.patch("/api/v1/admin/update-section/:id", async (req, res) => {
     }
     if (req.body?.code !== undefined) existing.code = req.body.code;
     if (req.body?.name) existing.name = req.body.name;
+    if (req.body?.category) existing.category = req.body.category;
     if (req.body?.isPublished !== undefined) existing.isPublished = Boolean(req.body.isPublished);
     await existing.save();
     console.log("[update-section] SAVED", existing._id.toString());
