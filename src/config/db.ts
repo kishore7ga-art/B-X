@@ -12,49 +12,47 @@ try {
 /**
  * MongoDB Atlas Connection Manager with retry logic and lifecycle handling.
  */
-export async function connectDB(retries = 5, delayMs = 3000): Promise<typeof mongoose> {
-  const uri = process.env.MONGODB_URI;
+export async function connectDB(retries = 8, delayMs = 5000): Promise<typeof mongoose> {
+  // Accept both common env var names
+  const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
 
   if (!uri) {
-    console.error("[db] FATAL: MONGODB_URI environment variable is missing.");
+    console.error("[db] FATAL: Neither MONGODB_URI nor DATABASE_URL environment variable is set.");
+    console.error("[db] Please set MONGODB_URI in Dokploy environment variables.");
     process.exit(1);
   }
 
+  console.log("[db] Using URI starting with:", uri.slice(0, 30) + "...");
   mongoose.set("strictQuery", false);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       console.log(`[db] Connecting to MongoDB Atlas (Attempt ${attempt}/${retries})...`);
       const conn = await mongoose.connect(uri, {
-        serverSelectionTimeoutMS: 10000,
-        connectTimeoutMS: 10000,
+        serverSelectionTimeoutMS: 15000,
+        connectTimeoutMS: 15000,
+        socketTimeoutMS: 30000,
       });
 
-      console.log(`[db] MongoDB Atlas Connected: ${conn.connection.host} / ${conn.connection.name}`);
+      console.log(`[db] ✅ MongoDB Atlas Connected: ${conn.connection.host} / ${conn.connection.name}`);
       return conn;
     } catch (error) {
-      console.error(`[db] Connection attempt ${attempt} failed:`, (error as Error).message);
+      console.error(`[db] ❌ Connection attempt ${attempt} failed:`, (error as Error).message);
 
       if (attempt === retries) {
-        console.error("[db] WARNING: Remote Atlas cluster connection timed out or unreachable.");
-        console.error("[db] Attempting local MongoDB fallback...");
-        try {
-          const localUri = "mongodb://127.0.0.1:27017/college_saas";
-          const conn = await mongoose.connect(localUri);
-          console.log(`[db] Local MongoDB Connected: ${conn.connection.host} / ${conn.connection.name}`);
-          return conn;
-        } catch (localErr) {
-          console.error("[db] Local MongoDB connection also failed:", (localErr as Error).message);
-          return mongoose;
-        }
+        console.error("[db] ❌ FATAL: Could not connect to MongoDB Atlas after", retries, "attempts.");
+        console.error("[db] ❌ Check: 1) MONGODB_URI env var in Dokploy  2) Atlas Network Access (whitelist 0.0.0.0/0)");
+        // Don't exit — let the server run (health will show degraded) so logs are accessible
+        return mongoose;
       }
 
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
-  throw new Error("Could not connect to MongoDB Atlas");
+  return mongoose;
 }
+
 
 mongoose.connection.on("disconnected", () => {
   console.warn("[db] MongoDB connection lost.");
