@@ -75,7 +75,25 @@ export async function submitAccessRequest(input: unknown) {
       details: { email: cleanEmail, organization: orgName },
     }).catch(() => null);
   } catch (err) {
-    console.error("[access-request] Database operation encountered error:", err);
+    /**
+     * A write that did not happen is not a request that was received.
+     *
+     * Every database error here used to be logged and then answered with
+     * `{ received: true }` — the same 202 as a successful submission. Somebody
+     * filled in the form, was told their request was in, and nothing was ever
+     * written: no row, nothing in the Super Admin's queue, no account to
+     * approve, and later no credentials to sign in with. The failure was
+     * invisible on both ends at once.
+     *
+     * Answering 503 keeps the one property that *is* deliberate — a caller
+     * still cannot tell whether an address already had a pending request,
+     * because that path is a success, not an error.
+     */
+    console.error("[access-request] could not record request:", err);
+    throw new AuthError(
+      "We could not record your request just now. Please try again in a moment.",
+      503,
+    );
   }
 
   return { received: true as const };

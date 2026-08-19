@@ -761,10 +761,24 @@ const LONGEST_WINDOW_MS = Math.max(
 const attempts = new Map<string, number[]>();
 
 /**
- * Records an attempt and says whether it was one too many.
+ * Says whether a bucket is over its limit, without touching it.
  *
- * `req.ip` is only the real client because `trust proxy` is set above; keyed on
- * the socket address it would be one bucket for the whole internet.
+ * Split from recording because the two happen at different moments: the check
+ * belongs before the work, and the *charge* belongs after it and only if the
+ * attempt failed. Counting successes was locking people out of an account they
+ * were signing into correctly.
+ */
+function isRateLimited(action: keyof typeof LIMITS, subject: string) {
+  const { max, windowMs } = LIMITS[action];
+  const now = Date.now();
+  const recent = (attempts.get(`${action}:${subject}`) ?? []).filter(
+    (at) => now - at < windowMs,
+  );
+  return recent.length >= max;
+}
+
+/**
+ * Charges one failed attempt against a bucket.
  */
 function tooManyAttempts(action: keyof typeof LIMITS, ip: string) {
   const { max, windowMs } = LIMITS[action];
@@ -801,9 +815,40 @@ function tooManyAttempts(action: keyof typeof LIMITS, ip: string) {
  * A safety control that has to be opted into is a safety control that is off.
  * `ENABLE_RATE_LIMIT=false` remains available for a load test that needs it.
  */
-function rateLimit(action: keyof typeof LIMITS, req: express.Request) {
+function rateLimit(action: keyof typeof LIMITS, req: express.Request, subject?: string) {
   if (process.env.ENABLE_RATE_LIMIT === "false") return false;
-  return tooManyAttempts(action, req.ip ?? "unknown");
+  return tooManyAttempts(action, rateLimitSubject(req, subject));
+}
+
+/** As above, but read-only — for a check that happens before the work. */
+function rateLimitExceeded(
+  action: keyof typeof LIMITS,
+  req: express.Request,
+  subject?: string,
+) {
+  if (process.env.ENABLE_RATE_LIMIT === "false") return false;
+  return isRateLimited(action, rateLimitSubject(req, subject));
+}
+
+/**
+ * Who an attempt is charged to.
+ *
+ * `req.ip` alone was wrong for every endpoint the frontend calls on a visitor's
+ * behalf. Sign-in and access requests do not arrive from a browser: a Server
+ * Action posts them from the Next.js server, so `req.ip` is *that server* for
+ * every user of the platform. The login bucket is ten attempts per fifteen
+ * minutes — so ten sign-ins anywhere, successful or not, locked out everyone
+ * else. The admin panel is a browser SPA calling this API directly, which is
+ * why admin sign-in kept working while user sign-in did not: it was the only
+ * one still being keyed by a real client address.
+ *
+ * Naming the thing being guessed — the email — fixes it in the direction that
+ * also makes the limit *better*: an attacker grinding one account can no longer
+ * lock out every other account, whatever address they come from.
+ */
+function rateLimitSubject(req: express.Request, subject?: string) {
+  const ip = req.ip ?? "unknown";
+  return subject ? `${subject.trim().toLowerCase()}@${ip}` : ip;
 }
 
 /*
@@ -824,8 +869,11 @@ function rateLimit(action: keyof typeof LIMITS, req: express.Request) {
  */
 
 app.post("/api/v1/auth/login", async (req, res) => {
+  const attemptedEmail =
+    typeof req.body?.email === "string" ? req.body.email : "";
+
   try {
-    if (rateLimit("login", req)) {
+    if (rateLimitExceeded("login", req, attemptedEmail)) {
       res.status(429).json({ error: "Too many attempts. Try again later." });
       return;
     }
@@ -834,6 +882,9 @@ app.post("/api/v1/auth/login", async (req, res) => {
     res.cookie(COOKIE_NAME, token, cookieOptions(requestHost(req)));
     res.json({ token, subdomain, next });
   } catch (error) {
+    // Charged here rather than on the way in: a correct password should not
+    // spend anyone's budget, least of all everyone else's.
+    rateLimit("login", req, attemptedEmail);
     fail(res, error);
   }
 });
@@ -904,7 +955,7 @@ app.get("/api/v1/me", async (req, res) => {
  */
 app.post("/api/v1/access-requests", async (req, res) => {
   try {
-    if (rateLimit("accessRequest", req)) {
+    if (rateLimit("accessRequest", req, typeof req.body?.email === "string" ? req.body.email : "")) {
       res
         .status(429)
         .json({ error: "Too many requests from this address. Try again later." });
