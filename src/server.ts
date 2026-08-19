@@ -1178,7 +1178,19 @@ adminRouter.get("/default-website", async (_req, res) => {
 
 adminRouter.put("/default-website", async (req, res) => {
   try {
-    res.json(await updateDefaultWebsiteConfig(req.body ?? {}));
+    // This is the route the Admin panel actually calls. The identical handler
+    // registered later on `app` never sees `/api/v1/admin/default-website` —
+    // the router is mounted first and wins — so guarding only that one left the
+    // real door open.
+    await requireAdmin(req);
+
+    const body = req.body ?? {};
+    if (!Array.isArray(body.pages)) {
+      res.status(400).json({ error: "Invalid config: pages array required" });
+      return;
+    }
+
+    res.json(await updateDefaultWebsiteConfig(body));
   } catch (error) {
     fail(res, error);
   }
@@ -1222,10 +1234,9 @@ adminRouter.delete("/templates", async (req, res) => {
 
 adminRouter.post("/templates", templateUpload.any(), async (req, res) => {
   try {
-    const session = (await requireAdmin(req).catch(() => null)) ?? {
-      adminId: "system-admin",
-      email: "admin@xite.co.in",
-    };
+    // Was: catch the rejection and continue as a fabricated "system-admin",
+    // which let anyone publish into the template library every tenant draws from.
+    const session = await requireAdmin(req);
     let code: string | undefined = undefined;
     const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
     if (files.length > 0) {
@@ -1509,7 +1520,21 @@ app.get(["/api/v1/default-website", "/api/default-website", "/default-website", 
 });
 app.put(["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"], async (req, res) => {
   try {
-    res.json(await updateDefaultWebsiteConfig(req.body ?? {}));
+    // The GET stays open — the editor and every published site read the platform
+    // default when a tenant has no sections of its own. The write does not: this
+    // body becomes the starting website of every college created from here on.
+    await requireAdmin(req);
+
+    // `updateDefaultWebsiteConfig` writes whatever it is handed, so an empty or
+    // malformed body used to replace the platform default with `{}` — and every
+    // tenant that has no sections of its own renders from that document.
+    const body = req.body ?? {};
+    if (!Array.isArray(body.pages)) {
+      res.status(400).json({ error: "Invalid config: pages array required" });
+      return;
+    }
+
+    res.json(await updateDefaultWebsiteConfig(body));
   } catch (error) {
     fail(res, error);
   }
@@ -1544,10 +1569,12 @@ app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", 
 app.post(["/api/v1/admin/save-section", "/api/admin/save-section", "/admin/save-section"], async (req, res) => {
   console.log("[save-section] START", JSON.stringify({ name: req.body?.name, category: req.body?.category, codeLen: req.body?.code?.length ?? 0 }));
   try {
-    // Soft auth: try to verify admin session for audit logging, but don't block
-    // if cookie verification fails due to cross-subdomain mismatch
-    // (admin.xite.co.in vs api.xite.co.in).
-    const session = await getAdminSession(req.headers.cookie).catch(() => null);
+    // This was "soft auth" — the session was read for the audit trail and a
+    // failure was ignored, because the admin panel's cookie was not reaching the
+    // API across admin.xite.co.in / api.xite.co.in. That is what
+    // SESSION_COOKIE_DOMAIN fixed; the workaround outlived the bug and left an
+    // open write endpoint on the section library.
+    const session = await requireAdmin(req);
 
     if (!req.body?.name || !req.body?.code) {
       return res.status(400).json({ error: "name and code are required" });
@@ -1586,15 +1613,20 @@ app.post(["/api/v1/admin/save-section", "/api/admin/save-section", "/admin/save-
     return res.status(201).json({ success: true, id: doc._id.toString(), name: doc.name, action: "created" });
   } catch (err: any) {
     console.error("[save-section] ERROR:", err.message);
-    return res.status(500).json({ error: err.message || "Save failed" });
+    // Through `fail`, not a hardcoded 500: `requireAdmin` rejects with an
+    // Unauthorized error, and answering that as a server fault tells the admin
+    // panel to retry rather than to sign in.
+    return fail(res, err);
   }
 });
 
 
-// Simple update endpoint — no strict auth, allows Edit Section page to update templates
+// Updates a section in the shared library. Admin-only: the library is what
+// every tenant's editor offers.
 app.patch("/api/v1/admin/update-section/:id", async (req, res) => {
   console.log("[update-section] START", req.params.id);
   try {
+    await requireAdmin(req);
     if (!req.params.id) {
       return res.status(400).json({ error: "id is required" });
     }
@@ -1623,14 +1655,18 @@ app.patch("/api/v1/admin/update-section/:id", async (req, res) => {
     return res.json({ success: true, id: existing._id.toString(), name: existing.name });
   } catch (err: any) {
     console.error("[update-section] ERROR:", err.message);
-    return res.status(500).json({ error: err.message || "Update failed" });
+    // Through `fail`, not a hardcoded 500: `requireAdmin` rejects with an
+    // Unauthorized error, and answering that as a server fault tells the admin
+    // panel to retry rather than to sign in.
+    return fail(res, err);
   }
 });
 
-// Simple delete endpoint — no strict auth, allows Templates page to delete sections
+// Removes a section from the shared library. Admin-only, for the same reason.
 app.delete("/api/v1/admin/delete-section/:id", async (req, res) => {
   console.log("[delete-section] START", req.params.id);
   try {
+    await requireAdmin(req);
     if (!req.params.id) {
       return res.status(400).json({ error: "id is required" });
     }
@@ -1656,14 +1692,20 @@ app.delete("/api/v1/admin/delete-section/:id", async (req, res) => {
     return res.json({ success: true, id: result._id.toString(), name: result.name });
   } catch (err: any) {
     console.error("[delete-section] ERROR:", err.message);
-    return res.status(500).json({ error: err.message || "Delete failed" });
+    // Through `fail`, not a hardcoded 500: `requireAdmin` rejects with an
+    // Unauthorized error, and answering that as a server fault tells the admin
+    // panel to retry rather than to sign in.
+    return fail(res, err);
   }
 });
 
 app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
 
   try {
-    const session = (await requireAdmin(req).catch(() => null)) ?? { adminId: "system-admin", email: "admin@xite.co.in" };
+    // Was: `requireAdmin(req).catch(() => null) ?? { adminId: "system-admin" }`,
+    // which turned a rejected session into a fabricated administrator and signed
+    // the audit trail with a name nobody holds.
+    const session = await requireAdmin(req);
     let code: string | undefined = undefined;
     const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
     if (files.length > 0) {
