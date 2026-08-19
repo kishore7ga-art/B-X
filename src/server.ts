@@ -234,20 +234,73 @@ const CONFIGURED_ORIGINS = (process.env.CORS_ORIGINS ?? "")
 
 const ORIGINS = [...new Set([...DEFAULT_ORIGINS, ...CONFIGURED_ORIGINS])];
 
+/**
+ * Whether an origin may make credentialed calls to this API.
+ *
+ * Exact membership in ORIGINS, plus one suffix rule for genuine tenant
+ * subdomains — and that suffix is tested against a *parsed hostname*, never
+ * against the origin string.
+ *
+ * That distinction is the whole finding. This used to read
+ * `url.includes(rootDomain)`, which admitted `https://xite.co.in.attacker.com`:
+ * the string contains "xite.co.in", so it passed, and the matching origin is
+ * then reflected into `Access-Control-Allow-Origin` alongside
+ * `Access-Control-Allow-Credentials: true` — the exact pairing browsers refuse
+ * to allow with a wildcard, handed to any domain somebody cared to register.
+ * `url.includes("localhost")` had the same shape, and so did the blanket
+ * `.vercel.app` rule, which trusted every deployment on a shared public host.
+ *
+ * A Vercel preview or any other new surface goes in `CORS_ORIGINS`, verbatim.
+ * That is one environment variable against a standing invitation to read
+ * signed-in users' data.
+ */
 function isAllowedOrigin(origin: string | undefined): boolean {
+  // Same-origin and server-to-server callers send no Origin header at all, and
+  // are not subject to CORS in the first place. Rejecting them here would break
+  // the frontend's internal fetches while protecting nothing.
   if (!origin) return true;
   if (ORIGINS.includes(origin)) return true;
-  const url = origin.toLowerCase();
-  const rootDomain = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || "").toLowerCase();
-  if (
-    (rootDomain && (url.endsWith(`.${rootDomain}`) || url.includes(rootDomain))) ||
-    url.endsWith(".xite.co.in") ||
-    url.endsWith(".vercel.app") ||
-    url.includes("localhost") ||
-    url.includes("127.0.0.1")
-  ) {
-    return true;
+
+  let hostname: string;
+  let protocol: string;
+  try {
+    const parsed = new URL(origin);
+    hostname = parsed.hostname.toLowerCase();
+    protocol = parsed.protocol;
+  } catch {
+    // Not a parseable origin. Nothing legitimate arrives looking like this.
+    return false;
   }
+
+  if (protocol !== "https:" && protocol !== "http:") return false;
+
+  const rootDomain = (
+    process.env.ROOT_DOMAIN ||
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN ||
+    ""
+  )
+    .toLowerCase()
+    .trim();
+
+  // A tenant's own published site: <subdomain>.xite.co.in. Suffix-matched on the
+  // parsed hostname, so a domain merely *containing* the root cannot match.
+  for (const root of [rootDomain, "xite.co.in"]) {
+    if (!root) continue;
+    if (hostname === root || hostname.endsWith(`.${root}`)) return true;
+  }
+
+  // Loopback belongs to development, where there is a dev server to talk to and
+  // no production session worth stealing. Exact hostnames only.
+  if (process.env.NODE_ENV !== "production") {
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1"
+    ) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -657,7 +710,7 @@ const LIMITS = {
    * and there is no legitimate reason for a person to get this wrong five
    * times in a quarter hour.
    */
-  adminLogin: { max: 100, windowMs: 15 * 60 * 1000 },
+  adminLogin: { max: 5, windowMs: 15 * 60 * 1000 },
   /**
    * Requesting access. Public, unauthenticated, and the only write of its kind.
    *
@@ -685,6 +738,20 @@ const LIMITS = {
    * oracle while the POST beside it is limited.
    */
   activate: { max: 10, windowMs: 15 * 60 * 1000 },
+  /**
+   * Generating or rewriting a section with Gemini.
+   *
+   * The only bucket here that is about money rather than guessing. Each call
+   * spends against GEMINI_API_KEY and holds a connection for up to sixty
+   * seconds, and both routes were reachable without a session — an uncapped
+   * billing endpoint on the public internet.
+   *
+   * Keyed per address like the rest, which is the floor rather than the answer:
+   * these routes now require a session, so the real cap is per account. Set a
+   * hard monthly quota in the Google console as the backstop that does not
+   * depend on this file being right.
+   */
+  ai: { max: 20, windowMs: 60 * 60 * 1000 },
 } as const;
 
 const LONGEST_WINDOW_MS = Math.max(
@@ -721,9 +788,21 @@ function tooManyAttempts(action: keyof typeof LIMITS, ip: string) {
   return recent.length > max;
 }
 
-/** One place, so a new limited route cannot invent a different envelope. */
+/**
+ * One place, so a new limited route cannot invent a different envelope.
+ *
+ * On unless explicitly switched off. It was the other way round —
+ * `!== "true"` — which meant every limiter in this file was inert in every
+ * deployment, because `ENABLE_RATE_LIMIT` was set in neither `.env.example` nor
+ * `docker-compose.yml`. Nothing failed and nothing logged; login, admin login,
+ * access requests and activation were simply unmetered, while the comments
+ * above described protection that was not running.
+ *
+ * A safety control that has to be opted into is a safety control that is off.
+ * `ENABLE_RATE_LIMIT=false` remains available for a load test that needs it.
+ */
 function rateLimit(action: keyof typeof LIMITS, req: express.Request) {
-  if (process.env.ENABLE_RATE_LIMIT !== "true") return false;
+  if (process.env.ENABLE_RATE_LIMIT === "false") return false;
   return tooManyAttempts(action, req.ip ?? "unknown");
 }
 
@@ -841,10 +920,25 @@ app.post("/api/v1/access-requests", async (req, res) => {
 /**
  * AI-Assisted Section Generation Endpoint.
  *
- * Allows college administrators to generate custom themed homepage sections from prompts.
+ * Generates a themed homepage section from a prompt, for the college that owns
+ * the current session.
+ *
+ * Requires that session. It did not, and the cost of that is not abstract: this
+ * calls Gemini on our key, so an unauthenticated POST loop is a bill. Session
+ * first, then the limiter, so an anonymous caller is rejected before it can
+ * consume anyone's quota.
  */
 app.post("/api/v1/ai/generate-section", async (req, res) => {
   try {
+    await requireSession(req);
+
+    if (rateLimit("ai", req)) {
+      res
+        .status(429)
+        .json({ error: "Too many AI requests. Try again in a little while." });
+      return;
+    }
+
     const result = await generateAiSection(req.body ?? {});
     res.json(result);
   } catch (error) {
@@ -1325,23 +1419,39 @@ adminRouter.get("/library", async (req, res) => {
  * Calls the Gemini API server-side; the API key is never sent to the browser.
  * Protected by requireAdmin — only authenticated admins may call this.
  */
+/**
+ * Rewrites a section's markup with Gemini, for the admin studio.
+ *
+ * Requires an admin session. The previous version verified one and then
+ * continued regardless, reasoning that `GEMINI_API_KEY` being a server-side
+ * secret was itself the gate. It is not: the key is what pays for the call, not
+ * what authorises it, and "the secret is on the server" is true of every
+ * credential behind every unauthenticated endpoint ever exploited.
+ *
+ * The comment justified the bypass by pointing at the other write endpoints
+ * doing the same thing. That was accurate, and it was the problem — the
+ * workaround had become the house style. The cookie-domain mismatch it was
+ * built around is fixed by setting SESSION_COOKIE_DOMAIN, not by removing the
+ * check that noticed it.
+ */
 adminRouter.post("/ai/optimize-section", async (req, res) => {
   try {
-    // Try admin session auth — if it fails (e.g. cookie domain mismatch between
-    // xite.co.in/admin and api.xite.co.in), we still gate on GEMINI_API_KEY being
-    // present (server-side secret), which is how this project's other write-endpoints
-    // work (save-section catches Unauthorized, update-section has no auth at all).
-    const session = await getAdminSession(req.headers.cookie).catch(() => null);
+    await requireAdmin(req);
 
-    // Hard gate: GEMINI_API_KEY must be configured on the server
-    if (!process.env.GEMINI_API_KEY) {
-      res.status(503).json({ error: "AI optimization is not configured on this deployment" });
+    if (rateLimit("ai", req)) {
+      res
+        .status(429)
+        .json({ error: "Too many AI requests. Try again in a little while." });
       return;
     }
 
-    // Soft gate: if we CAN verify the session, require it to be valid
-    // If session is null but cookie was present, it may be a cookie domain issue —
-    // allow through since the API key is the real secret gate
+    if (!process.env.GEMINI_API_KEY) {
+      res
+        .status(503)
+        .json({ error: "AI optimization is not configured on this deployment" });
+      return;
+    }
+
     const result = await optimizeSection(req.body ?? {});
     res.json(result);
   } catch (error) {

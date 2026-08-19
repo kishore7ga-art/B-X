@@ -13,8 +13,39 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       MONGODB_URI: ${MONGODB_URI:-}
       SESSION_SECRET: ${SESSION_SECRET}
+      # Distinct from SESSION_SECRET on purpose — admin-service refuses to reuse
+      # it. Unset, the admin signing key is generated and stored in the database
+      # instead, which works but ties every admin session to that one row.
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in,https://admin.xite.co.in,https://api.xite.co.in,http://localhost:3000,http://localhost:5173}
-      SEED_ON_START: ${SEED_ON_START:-true}
+      # The one variable that was missing and cost the most.
+      #
+      # The admin panel is served from admin.xite.co.in and this API from
+      # api.xite.co.in. Without a Domain on the session cookie it is host-only,
+      # so the panel's cookie never reaches the API, every admin request arrives
+      # unauthenticated — and the fix that was applied was to stop checking.
+      # A leading dot scopes it to both.
+      SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-.xite.co.in}
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-xite.co.in}
+      # Where activation emails point. Derived from CORS_ORIGINS when unset,
+      # which is right until the first allowed origin stops being the frontend.
+      APP_URL: ${APP_URL:-https://xite.co.in}
+      # Traefik sits in front, so X-Forwarded-For is trustworthy exactly one hop
+      # deep. Not `true`: that trusts the whole client-supplied chain, which
+      # lets a caller be rate-limited as somebody else.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # On unless explicitly disabled. Named here so its state is visible rather
+      # than inferred from a default buried in server.ts.
+      ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      # Server-side only. Never prefixed NEXT_PUBLIC_ or VITE_ — those reach the
+      # browser bundle.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-noreply@xite.co.in}
+      # Seeding rewrites reference data. Running it on every container restart
+      # makes an ordinary redeploy a write against production.
+      SEED_ON_START: ${SEED_ON_START:-false}
     volumes:
       - uploads:/app/public/uploads
     networks:
