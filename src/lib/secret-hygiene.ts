@@ -1,5 +1,7 @@
+import { randomBytes } from "node:crypto";
+
 /**
- * Refuses to start on a secret that is not a secret.
+ * Neutralises a secret that is not a secret.
  *
  * On 2026-08-20 the production API was found running with
  * `SESSION_SECRET` and `ADMIN_SESSION_SECRET` set to the literal placeholder
@@ -14,10 +16,10 @@
  * string of sufficient length, so `secretKey()` accepted it, the service booted,
  * the logs were clean and the product worked exactly as designed.
  *
- * That is the gap this closes. A deployment carrying a known key now fails
- * loudly at boot rather than serving traffic it cannot protect — the failure is
- * unmissable, it happens before the first request, and it happens in the
- * terminal of whoever deployed it.
+ * That is the gap this closes. A deployment carrying a known key now replaces it
+ * at boot with one generated for that process — the published key stops being
+ * able to sign anything, and the service keeps serving. See
+ * `assertSecretsAreSafe` for why it degrades rather than refusing to start.
  */
 
 /**
@@ -96,43 +98,73 @@ export function inspectSecret(name: string, rawValue: string | undefined): Secre
 }
 
 /**
- * Checks every secret this service signs with, and stops the process if any of
- * them cannot be trusted.
+ * Checks every secret this service signs with, and makes an untrusted one
+ * harmless without taking the service down.
  *
- * Fatal in every environment, deliberately. The temptation is to warn in
- * development and fail in production, and that is precisely how a placeholder
- * reaches production: it works on the machine where it was introduced, so
- * nobody finds out until the environment that matters is already carrying it.
+ * This exited the process when it was first written, which is the textbook
+ * answer and was the wrong one. It shipped into a deployment whose keys had not
+ * yet been rotated, the API and the frontend both refused to boot, and the
+ * platform was down until somebody could be walked through generating a pair of
+ * secrets. A control that turns a known-bad configuration into an outage gets
+ * reverted in a hurry, and then protects nothing.
+ *
+ * Refusing the *key* is what matters, not refusing to run. An untrusted key is
+ * replaced at boot with a generated one held only in this process, so:
+ *
+ *   - the published key can no longer sign anything this service will accept,
+ *     which is the entire security goal;
+ *   - the service starts, and every college website stays up;
+ *   - sessions do not survive a restart, and the frontend cannot verify a cookie
+ *     it did not sign, so the misconfiguration stays visible in the product
+ *     rather than being papered over.
+ *
+ * It is a degraded mode, announced as one. The fix is still to set a real value.
  */
 export function assertSecretsAreSafe(
   env: NodeJS.ProcessEnv = process.env,
-  exit: (code: number) => never = process.exit as (code: number) => never,
 ): void {
-  const problems = [
-    inspectSecret("SESSION_SECRET", env.SESSION_SECRET),
-    // Optional: unset means the admin signing key is generated and stored in the
-    // database instead. A *bad* value is still fatal — falling back on it would
-    // be the same silence this file exists to end.
-    env.ADMIN_SESSION_SECRET === undefined
-      ? null
-      : inspectSecret("ADMIN_SESSION_SECRET", env.ADMIN_SESSION_SECRET),
-  ].filter((problem): problem is SecretProblem => problem !== null);
+  const checks: { name: string; required: boolean }[] = [
+    { name: "SESSION_SECRET", required: true },
+    // Unset is legitimate: the admin signing key is then generated and stored in
+    // the database instead. Only a *bad* value is replaced here.
+    { name: "ADMIN_SESSION_SECRET", required: false },
+  ];
 
-  if (problems.length === 0) return;
+  const replaced: SecretProblem[] = [];
 
-  console.error("\n[secrets] Refusing to start.\n");
-  for (const { name, reason } of problems) {
-    console.error(`  ${name} ${reason}`);
+  for (const { name, required } of checks) {
+    const raw = env[name];
+    if (!required && raw === undefined) continue;
+
+    const problem = inspectSecret(name, raw);
+    if (!problem) continue;
+
+    env[name] = randomBytes(48).toString("base64");
+    replaced.push(problem);
   }
-  console.error(
-    "\n  Sessions are signed with these keys, so an untrusted key means anyone" +
-      "\n  can issue themselves one. Generate replacements with:" +
-      "\n" +
-      "\n      openssl rand -base64 48" +
-      "\n" +
-      "\n  then set them in this deployment's environment and restart. Rotating" +
-      "\n  invalidates every existing session, which is the intended effect.\n",
-  );
 
-  exit(1);
+  if (replaced.length === 0) return;
+
+  console.error(
+    [
+      "",
+      "  ┌──────────────────────────────────────────────────────────────┐",
+      "  │  RUNNING ON TEMPORARY SIGNING KEYS                           │",
+      "  └──────────────────────────────────────────────────────────────┘",
+      "",
+      ...replaced.map(({ name, reason }) => `  ${name} ${reason}`),
+      "",
+      "  Each has been replaced with a key generated for this process, so",
+      "  nothing signed with the old one is accepted. Two consequences:",
+      "",
+      "    - every session ends when this service restarts;",
+      "    - the frontend cannot verify a cookie it does not share a key with,",
+      "      so sessions will not renew.",
+      "",
+      "  Set real values and redeploy:",
+      "",
+      "      openssl rand -base64 48",
+      "",
+    ].join("\n"),
+  );
 }
