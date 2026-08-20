@@ -8,7 +8,19 @@ try {
 } catch (e) {}
 
 const BASE_URL = process.env.TEST_API_BASE ?? "http://localhost:4000";
-const MONGODB_URI = "mongodb+srv://kishorehi007_db_user:bAWpadELrbNNzGPr@xitedb.uk7epss.mongodb.net/college_saas?retryWrites=true&w=majority&appName=xitedb";
+/**
+ * From the environment, never from this file.
+ *
+ * A live connection string with a working username and password was hardcoded
+ * here, in a repository that was public — read/write access to every tenant's
+ * data, bypassing the API and every check in it. Rotating the password is what
+ * fixed the exposure; this is what stops it coming back.
+ */
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error("Set MONGODB_URI in the environment before running this script.");
+  process.exit(2);
+}
 
 async function runProof() {
   console.log("==========================================================");

@@ -1,6 +1,16 @@
 // Dokploy Deployment Trigger: 2026-08-14
 import "dotenv/config";
 
+import { assertSecretsAreSafe } from "@/lib/secret-hygiene";
+
+/**
+ * Before anything else, including the database and the first route.
+ *
+ * A service that cannot protect a session should not accept one, and the only
+ * moment that check is cheap is before it starts listening.
+ */
+assertSecretsAreSafe();
+
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { createReadStream } from "node:fs";
