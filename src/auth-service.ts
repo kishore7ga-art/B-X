@@ -225,6 +225,26 @@ export async function login(input: { email: string; password: string }) {
       );
     }
 
+    /**
+     * Approved, but there is no account behind it any more.
+     *
+     * The request says a Super Admin let this person in; `college.users[]` says
+     * no such user exists. That happens when the account was deleted after
+     * approval — 753 of them were, in one administrative purge — and the person
+     * on the other end has done nothing wrong and changed nothing. Falling
+     * through to "Incorrect email or password" tells them to doubt a password
+     * that was never the problem, and re-approving cannot help them either:
+     * `approveAccessRequest` only acts on a PENDING request, so the row is spent.
+     *
+     * Registering again is the only route back, so that is what it says.
+     */
+    if (pending?.status === "APPROVED") {
+      throw new AuthError(
+        "This account is no longer active. Please register again to request access.",
+        403,
+      );
+    }
+
     if (pending?.status === "REJECTED") {
       throw new AuthError(
         "Your access request was not approved. Contact your administrator if you believe this is a mistake.",
