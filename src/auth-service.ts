@@ -3,7 +3,7 @@ import { SignJWT } from "jose";
 import { z } from "zod";
 import mongoose from "mongoose";
 
-import { College } from "@/models";
+import { AccessRequest, College } from "@/models";
 import { SESSION_MAX_AGE_SECONDS } from "@/lib/api-contract";
 import {
   hostFromOrigin,
@@ -191,7 +191,47 @@ export async function login(input: { email: string; password: string }) {
   const invalid = new AuthError("Incorrect email or password", 401);
 
   if (!college || !user) {
+    // Constant-ish time regardless of whether the address is known.
     await bcrypt.compare(parsed.data.password, `$2a$12$${"x".repeat(53)}`);
+
+    /**
+     * "Incorrect email or password" is a lie to most of the people who see it.
+     *
+     * Registration does not create an account. It writes an AccessRequest, with
+     * the password the person chose hashed onto *that* document, and a Super
+     * Admin has to approve it before `college.users[]` gains an entry. Until
+     * then the credentials exist in the database — they are simply not anywhere
+     * `login()` looks.
+     *
+     * At the time of writing that is 227 people, each of whom picked a password,
+     * was told their request was submitted, and has been told ever since that
+     * they typed it wrong. They retry, they reset, they give up. The single most
+     * common "login is broken" report is this message.
+     *
+     * It does disclose whether an address has a pending request, which the
+     * generic message does not. That trade is worth making here: this is an
+     * approval queue people are waiting in, the fact that they applied is
+     * already known to them, and the alternative is a product that tells its
+     * users nothing true.
+     */
+    const pending = await AccessRequest.findOne({ applicantEmail: emailLower }).sort({
+      createdAt: -1,
+    });
+
+    if (pending?.status === "PENDING") {
+      throw new AuthError(
+        "Your access request is still awaiting approval. You will be able to sign in once an administrator approves it.",
+        403,
+      );
+    }
+
+    if (pending?.status === "REJECTED") {
+      throw new AuthError(
+        "Your access request was not approved. Contact your administrator if you believe this is a mistake.",
+        403,
+      );
+    }
+
     throw invalid;
   }
 
