@@ -29,6 +29,49 @@ export interface IWebsiteConfig {
   pages: IPageItem[];
 }
 
+/**
+ * Where a custom domain is in its lifecycle.
+ *
+ * These describe observed reality, never intent. `ACTIVE` means this service
+ * has seen the domain resolve to us *and* seen TLS terminate on it — not that
+ * somebody pressed a button.
+ */
+export type DomainStatus =
+  | "PENDING_VERIFICATION"
+  | "VERIFIED"
+  | "ACTIVE"
+  | "FAILED"
+  | "DISCONNECTED";
+
+/**
+ * Certificate state.
+ *
+ * Traefik issues certificates; this service does not. So every value here is
+ * the result of a check against the live host, and there is deliberately no way
+ * to set it from a request body — a tenant told "SSL: Active" when no
+ * certificate exists is worse off than a tenant told nothing.
+ */
+export type SslStatus = "NONE" | "PENDING" | "ACTIVE" | "ERROR";
+
+export interface ICustomDomain {
+  id: string;
+  /** Normalised: lowercase, trimmed, no scheme, no port, no trailing dot. */
+  hostname: string;
+  status: DomainStatus;
+  /** The value the tenant puts in their `_xite-verify` TXT record. */
+  verificationToken: string;
+  verificationCheckedAt?: Date | null;
+  verifiedAt?: Date | null;
+  /** Why the last check failed, shown to the tenant verbatim. */
+  lastError?: string | null;
+  sslStatus: SslStatus;
+  sslCheckedAt?: Date | null;
+  /** The host canonical for this tenant. At most one per college. */
+  isPrimary: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ICollege extends Document {
   id: string;
   name: string;
@@ -42,7 +85,32 @@ export interface ICollege extends Document {
   collegeType?: string | null;
   isDemo: boolean;
   users: ICollegeUser[];
+  /**
+   * The draft. What the editor reads and autosaves into.
+   *
+   * Deliberately not renamed to `draftConfig`. Every tenant row already carries
+   * this field, the editor and three API routes already write it, and a rename
+   * is a migration that can only go wrong — for a field whose meaning has not
+   * changed. What changed is that it is no longer what the public reads.
+   */
   websiteConfig?: IWebsiteConfig | null;
+  draftUpdatedAt?: Date | null;
+
+  /**
+   * The published site: what visitors get, and the only thing they get.
+   *
+   * Null for a tenant that has never pressed Publish. Public reads fall back to
+   * the draft in that case, which is what keeps every site that was live before
+   * this field existed live after it — no migration, no tenant going dark.
+   */
+  publishedConfig?: IWebsiteConfig | null;
+  publishedAt?: Date | null;
+  publishedByEmail?: string | null;
+  /** Increments on every successful publish. 0 means never published. */
+  publishedVersion: number;
+
+  domains: ICustomDomain[];
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -87,6 +155,28 @@ const WebsiteConfigSchema = new Schema<IWebsiteConfig>(
   { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
+const CustomDomainSchema = new Schema<ICustomDomain>(
+  {
+    id: { type: String, required: true, default: () => new mongoose.Types.ObjectId().toString() },
+    hostname: { type: String, required: true, lowercase: true, trim: true },
+    status: {
+      type: String,
+      enum: ["PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "FAILED", "DISCONNECTED"],
+      default: "PENDING_VERIFICATION",
+    },
+    verificationToken: { type: String, required: true },
+    verificationCheckedAt: { type: Date, default: null },
+    verifiedAt: { type: Date, default: null },
+    lastError: { type: String, default: null },
+    sslStatus: { type: String, enum: ["NONE", "PENDING", "ACTIVE", "ERROR"], default: "NONE" },
+    sslCheckedAt: { type: Date, default: null },
+    isPrimary: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+);
+
 const CollegeSchema = new Schema<ICollege>(
   {
     name: { type: String, required: true, trim: true },
@@ -101,6 +191,12 @@ const CollegeSchema = new Schema<ICollege>(
     isDemo: { type: Boolean, default: false },
     users: { type: [CollegeUserSchema], default: [] },
     websiteConfig: { type: WebsiteConfigSchema, default: null },
+    draftUpdatedAt: { type: Date, default: null },
+    publishedConfig: { type: WebsiteConfigSchema, default: null },
+    publishedAt: { type: Date, default: null },
+    publishedByEmail: { type: String, default: null },
+    publishedVersion: { type: Number, default: 0 },
+    domains: { type: [CustomDomainSchema], default: [] },
   },
   {
     timestamps: true,
@@ -126,5 +222,19 @@ const CollegeSchema = new Schema<ICollege>(
     },
   }
 );
+
+/**
+ * One hostname, one tenant — enforced by the database, not by application code.
+ *
+ * A unique index on an array path gives this in both directions at once:
+ * MongoDB rejects a second college claiming a hostname another college already
+ * holds, *and* rejects one college holding the same hostname twice. The
+ * find-then-insert version of this check loses to two requests arriving
+ * together, and losing it means one tenant serving another tenant's site.
+ *
+ * Sparse, so the many colleges with no custom domain do not all collide on
+ * "missing".
+ */
+CollegeSchema.index({ "domains.hostname": 1 }, { unique: true, sparse: true });
 
 export const College = mongoose.models.College || mongoose.model<ICollege>("College", CollegeSchema);

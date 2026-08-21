@@ -18,7 +18,8 @@
     "seed": "node scripts/seed-mongodb.mjs",
     "check:shared": "node scripts/check-shared-files.mjs",
     "prebuild": "node scripts/check-shared-files.mjs",
-    "admin": "node scripts/admin.mjs"
+    "admin": "node scripts/admin.mjs",
+    "test:unit": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@types/sanitize-html": "^2.16.1",

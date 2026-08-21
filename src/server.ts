@@ -54,6 +54,15 @@ import {
   mintSessionToken,
 } from "@/auth-service";
 import { docsPage } from "@/docs-page";
+import { publishSite, publishStatus, publishedSiteConfig } from "@/publishing-service";
+import {
+  addDomain,
+  collegeIdForHost,
+  disconnectDomain,
+  listDomains,
+  setPrimaryDomain,
+  verifyDomain,
+} from "@/domain-service";
 import {
   createTemplate,
   deleteAllTemplates,
@@ -530,6 +539,26 @@ function firstIssueMessage(error: unknown): string {
  * connection details live. Anything unrecognised is now a 500, logged here and
  * described to the client only in the general.
  */
+/**
+ * Who is doing this, for the audit trail.
+ *
+ * The session carries a `userId` and a `collegeId` and no email — users are
+ * embedded in the college document, so the address is one lookup away and is
+ * not worth putting in a token that is sent on every request.
+ *
+ * Returns null rather than throwing: an audit entry attributed to "unknown" is
+ * worth having, and a publish that fails because the audit lookup did is not.
+ */
+async function actorEmailFor(collegeId: string, userId: string): Promise<string | null> {
+  try {
+    const college = await College.findById(collegeId).select("users").lean();
+    const users = (college as { users?: { id: string; email: string }[] } | null)?.users ?? [];
+    return users.find((u) => u.id === userId)?.email ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function fail(res: express.Response, error: unknown) {
   // A schema rejection is the caller's to fix, and says so usefully.
   if (error instanceof Error && error.name === "ZodError") {
@@ -554,6 +583,27 @@ function fail(res: express.Response, error: unknown) {
 
   if (error instanceof Error && error.name === "Unauthorized") {
     res.status(401).json({ error: error.message });
+    return;
+  }
+
+  /**
+   * An error that named its own client-side status.
+   *
+   * The publishing and domain services throw plain Errors carrying a `status`,
+   * because the thing that knows a hostname is already taken is the function
+   * that looked — not a class hierarchy above it. Only 4xx is honoured: those
+   * messages are written for the tenant to read and act on. A 5xx still falls
+   * through to the generic reply below, because an internal failure's message
+   * is ours and describes our internals.
+   */
+  const status = (error as { status?: unknown })?.status;
+  if (
+    error instanceof Error &&
+    typeof status === "number" &&
+    status >= 400 &&
+    status < 500
+  ) {
+    res.status(status).json({ error: error.message });
     return;
   }
 
@@ -1884,9 +1934,160 @@ app.put(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website
     }
 
     college.websiteConfig = body;
+    // Stamped here rather than relying on the document's own `updatedAt`, which
+    // moves for a publish, a domain check and every other write to this row.
+    // The settings screen needs "when the draft last changed" specifically.
+    college.draftUpdatedAt = new Date();
     await college.save();
 
     res.json(college.websiteConfig);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Publishing.
+ *
+ * These are the routes the editor's Publish button now calls. It previously
+ * called nothing at all: a 1.2-second `setTimeout`, a localStorage key and a
+ * toast reading "Website published successfully to production live!".
+ *
+ * Both require a college session, and both scope every read and write to that
+ * session's own `collegeId`. Neither takes a college id from the caller —
+ * there is no request body or parameter here that could name another tenant.
+ */
+app.get(["/api/v1/publish/status", "/api/publish/status"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to see publish status." });
+      return;
+    }
+    res.json(await publishStatus(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post(["/api/v1/publish", "/api/publish"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to publish." });
+      return;
+    }
+
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    const result = await publishSite(session.collegeId, actor);
+    res.json(result);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Custom domains.
+ *
+ * Every route resolves the tenant from the session and never from the request,
+ * so a domain id belonging to another college simply is not found — there is no
+ * code path where one tenant's id reaches another tenant's document.
+ */
+app.get(["/api/v1/domains", "/api/domains"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to manage domains." });
+      return;
+    }
+    res.json({ domains: await listDomains(session.collegeId) });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post(["/api/v1/domains", "/api/domains"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to add a domain." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.status(201).json(await addDomain(session.collegeId, req.body?.hostname, actor));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post(["/api/v1/domains/:id/verify", "/api/domains/:id/verify"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to verify a domain." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.json(await verifyDomain(session.collegeId, String(req.params.id), actor));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post(["/api/v1/domains/:id/primary", "/api/domains/:id/primary"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to change the primary domain." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.json({ domains: await setPrimaryDomain(session.collegeId, String(req.params.id), actor) });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete(["/api/v1/domains/:id", "/api/domains/:id"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to disconnect a domain." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    await disconnectDomain(session.collegeId, String(req.params.id), actor);
+    res.status(204).end();
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Which tenant a hostname belongs to.
+ *
+ * The frontend's proxy calls this for any host it does not recognise as a
+ * platform subdomain, so that a custom domain can be routed at all. It answers
+ * only for domains that are ACTIVE — added-but-unproven names resolve to
+ * nothing, or adding a hostname would be enough to claim it.
+ *
+ * Public and unauthenticated by necessity: it runs before any session exists,
+ * for a visitor who has none. It discloses only the mapping a DNS lookup and a
+ * single HTTP request would reveal anyway.
+ */
+app.get(["/api/v1/public/resolve-host", "/api/public/resolve-host"], async (req, res) => {
+  try {
+    const host = typeof req.query.host === "string" ? req.query.host : "";
+    if (!host) {
+      res.status(400).json({ error: "host is required" });
+      return;
+    }
+    const match = await collegeIdForHost(host);
+    if (!match) {
+      res.status(404).json({ error: "No site is connected to that address." });
+      return;
+    }
+    res.json({ subdomain: match.subdomain });
   } catch (error) {
     fail(res, error);
   }
@@ -1901,9 +2102,23 @@ app.get(
       const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "greenfield" : "greenfield";
       const college = await College.findOne({ subdomain }).catch(() => null);
 
-      if (college && college.websiteConfig && Array.isArray(college.websiteConfig.pages)) {
-        const homePage = college.websiteConfig.pages.find((p: any) => p.slug === "/home" || p.slug === "/") || college.websiteConfig.pages[0];
-        const pageSections = Array.isArray(homePage?.sections) ? homePage.sections : Array.isArray((college.websiteConfig as any).sections) ? (college.websiteConfig as any).sections : [];
+      /**
+       * Visitors get the published site and nothing else.
+       *
+       * This read `college.websiteConfig` — the same field the editor autosaves
+       * into on a two-second debounce — so every keystroke was public two
+       * seconds after it was typed. It reads the published config now.
+       *
+       * `publishedSiteConfig` falls back to the draft for a tenant who has
+       * never published, which is what kept every site that was live before
+       * this change live after it. The fallback stops applying to a tenant the
+       * first time they publish.
+       */
+      const liveConfig = college ? publishedSiteConfig(college) : null;
+
+      if (college && liveConfig && Array.isArray(liveConfig.pages)) {
+        const homePage = liveConfig.pages.find((p: any) => p.slug === "/home" || p.slug === "/") || liveConfig.pages[0];
+        const pageSections = Array.isArray(homePage?.sections) ? homePage.sections : Array.isArray((liveConfig as any).sections) ? (liveConfig as any).sections : [];
         res.json({
           subdomain,
           college: {
@@ -1912,9 +2127,14 @@ app.get(
             subdomain: college.subdomain,
             status: college.status,
           },
-          config: college.websiteConfig,
-          pages: college.websiteConfig.pages,
+          // The published config, not `college.websiteConfig`. Returning the
+          // draft here would have handed the unpublished site to every visitor
+          // in the same response whose `sections` were correctly published.
+          config: liveConfig,
+          pages: liveConfig.pages,
           sections: pageSections,
+          publishedVersion: college.publishedVersion ?? 0,
+          publishedAt: college.publishedAt ?? null,
         });
         return;
       }
@@ -1941,7 +2161,20 @@ app.get(
   },
 );
 
-/** Editor API endpoint & direct browser redirect handler */
+/**
+ * Editor API endpoint & direct browser redirect handler.
+ *
+ * Unauthenticated, and takes a subdomain from the URL — so anybody could ask it
+ * for anybody's site. It answered with `college.websiteConfig`, the live draft,
+ * which made every tenant's unpublished work readable by anyone who could spell
+ * their subdomain. It is also the second entry in the public viewer's fallback
+ * chain, so a tenant whose published lookup missed served their draft to
+ * visitors through this route even after the route above was fixed.
+ *
+ * It serves the published config now, exactly as the public route does. The
+ * editor itself never depended on this for drafts: it reads them from
+ * `/api/v1/my-website`, which requires that tenant's own session.
+ */
 app.get(
   ["/api/v1/editor/:subdomain", "/api/editor/:subdomain", "/editor/:subdomain/data"],
   async (req, res) => {
@@ -1949,8 +2182,9 @@ app.get(
       const rawSub = req.params.subdomain;
       const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "greenfield" : "greenfield";
       const college = await College.findOne({ subdomain }).catch(() => null);
+      const liveConfig = college ? publishedSiteConfig(college) : null;
 
-      if (college && college.websiteConfig && Array.isArray(college.websiteConfig.pages)) {
+      if (college && liveConfig && Array.isArray(liveConfig.pages)) {
         res.json({
           college: {
             id: college.id,
@@ -1958,8 +2192,8 @@ app.get(
             subdomain: college.subdomain,
             status: college.status,
           },
-          config: college.websiteConfig,
-          pages: college.websiteConfig.pages,
+          config: liveConfig,
+          pages: liveConfig.pages,
         });
         return;
       }
