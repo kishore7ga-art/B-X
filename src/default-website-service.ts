@@ -69,6 +69,42 @@ const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
 
 let inMemoryDefaultWebsite: DefaultWebsiteConfig | null = null;
 
+/**
+ * Every page's sections, in the order the Admin arranged them.
+ *
+ * `sortOrder` is the field the Admin Studio writes when a section is moved,
+ * added or removed, but nothing read it back — every consumer took the array
+ * in whatever order it happened to be stored in. That held only for as long as
+ * every writer kept the two in step, and the editor now seeds a whole page from
+ * this config in one go, so the order is the difference between a page that
+ * comes out header-first and one that does not.
+ *
+ * The array index is the tiebreaker, which makes the sort stable and leaves a
+ * config whose sections all share a `sortOrder` (or have none at all) exactly
+ * as it was rather than shuffled into an arbitrary order.
+ */
+function orderPageSections(config: DefaultWebsiteConfig): DefaultWebsiteConfig {
+  if (!config || !Array.isArray(config.pages)) return { pages: [] };
+
+  return {
+    ...config,
+    pages: config.pages.map((page) => {
+      const sections = Array.isArray(page?.sections) ? page.sections : [];
+      return {
+        ...page,
+        sections: sections
+          .map((section, index) => ({ section, index }))
+          .sort((a, b) => {
+            const aOrder = Number.isFinite(a.section?.sortOrder) ? a.section.sortOrder : a.index;
+            const bOrder = Number.isFinite(b.section?.sortOrder) ? b.section.sortOrder : b.index;
+            return aOrder === bOrder ? a.index - b.index : aOrder - bOrder;
+          })
+          .map(({ section }) => section),
+      };
+    }),
+  };
+}
+
 /** Ensure system_secrets collection holds default website config with clean sections and pages */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   const currentMem = inMemoryDefaultWebsite;
@@ -78,12 +114,13 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
       if (secret && secret.value) {
         const parsed = typeof secret.value === "string" ? JSON.parse(secret.value) : secret.value;
         if (parsed && Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-          inMemoryDefaultWebsite = parsed;
-          return parsed;
+          const ordered = orderPageSections(parsed);
+          inMemoryDefaultWebsite = ordered;
+          return ordered;
         }
       }
     } catch {}
-    return currentMem;
+    return orderPageSections(currentMem);
   }
 
   try {
@@ -98,8 +135,9 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
             mergedPages.push(initPage);
           }
         });
-        inMemoryDefaultWebsite = { pages: mergedPages };
-        return { pages: mergedPages };
+        const ordered = orderPageSections({ pages: mergedPages });
+        inMemoryDefaultWebsite = ordered;
+        return ordered;
       }
     }
   } catch (err) {
@@ -112,7 +150,7 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   } catch {}
 
   inMemoryDefaultWebsite = INITIAL_DEFAULT_WEBSITE;
-  return INITIAL_DEFAULT_WEBSITE;
+  return orderPageSections(INITIAL_DEFAULT_WEBSITE);
 }
 
 export async function updateDefaultWebsiteConfig(
