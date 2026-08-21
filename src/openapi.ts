@@ -392,6 +392,368 @@ export const openApiDocument = {
       },
     },
 
+    /* ── Publishing ──────────────────────────────────────────────────────
+       Draft and published are separate. The editor autosaves into the draft;
+       only these routes move it to what visitors are served. */
+
+    "/api/v1/publish/status": {
+      get: {
+        tags: ["Publishing"],
+        summary: "Draft and published state for the signed-in college",
+        description:
+          "Reports whether a site has ever been published, which version is live, when, " +
+          "by whom, and whether the draft has diverged from it. `hasUnpublishedChanges` " +
+          "compares only what renders — page slugs and each section's id and code — so a " +
+          "timestamp moving is not presented to a tenant as a pending change.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                hasDraft: bool,
+                hasPublished: bool,
+                publishedVersion: int,
+                publishedAt: nullableStr,
+                publishedByEmail: nullableStr,
+                draftUpdatedAt: nullableStr,
+                hasUnpublishedChanges: bool,
+                draftPages: int,
+                publishedPages: int,
+              },
+            },
+            "Publish status.",
+          ),
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
+    "/api/v1/publish": {
+      post: {
+        tags: ["Publishing"],
+        summary: "Publish the current draft",
+        description:
+          "Copies the draft over the published config in one guarded update, so two " +
+          "publishes racing cannot leave the config from one and the version from the " +
+          "other. Refuses an empty draft rather than taking a working site down, and " +
+          "answers 409 when another publish landed in between.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                publishedVersion: int,
+                publishedAt: str,
+                pages: int,
+                sections: int,
+              },
+            },
+            "Published.",
+          ),
+          400: { description: "There is nothing to publish." },
+          401: { description: "Not authenticated." },
+          409: { description: "Another publish is in progress for this site." },
+        },
+      },
+    },
+
+    /* ── Custom domains ──────────────────────────────────────────────────
+       Every status below describes something this service observed. Nothing
+       here can issue a certificate — Traefik does that, under Dokploy. */
+
+    "/api/v1/domains": {
+      get: {
+        tags: ["Domains"],
+        summary: "Custom domains for the signed-in college",
+        description:
+          "Each entry carries the exact DNS records that tenant must create, generated " +
+          "from this deployment's own routing target rather than a fixed example.",
+        responses: {
+          200: json({ type: "object", properties: { domains: { type: "array" } } }, "Domains."),
+          401: { description: "Not authenticated." },
+        },
+      },
+      post: {
+        tags: ["Domains"],
+        summary: "Connect a custom domain",
+        description:
+          "Normalises whatever was typed to a bare hostname — a pasted URL, port or " +
+          "trailing dot would otherwise be stored as a value no Host header can match. " +
+          "Refuses platform-owned hostnames, and refuses a name already connected to " +
+          "another site. Uniqueness is held by a unique index on `domains.hostname`, not " +
+          "by the pre-check, so two simultaneous claims cannot both succeed.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { hostname: str },
+                required: ["hostname"],
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: "Added, pending verification." },
+          400: { description: "Not a valid domain, or one the platform owns." },
+          401: { description: "Not authenticated." },
+          409: { description: "Already connected to another site." },
+        },
+      },
+    },
+
+    "/api/v1/domains/{id}/verify": {
+      post: {
+        tags: ["Domains"],
+        summary: "Check DNS and HTTPS for a domain",
+        description:
+          "Runs the real checks, in order: a TXT lookup under `_xite-verify.<domain>` to " +
+          "prove control of the zone, then CNAME/A to confirm it points here, then an " +
+          "HTTPS request to confirm a certificate exists. The domain reaches ACTIVE only " +
+          "when all three succeeded in this call. Ownership is checked before routing " +
+          "because pointing a CNAME at us proves nothing about owning the name.",
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        responses: {
+          200: { description: "The domain, with what the checks found." },
+          401: { description: "Not authenticated." },
+          404: { description: "No such domain on this site." },
+        },
+      },
+    },
+
+    "/api/v1/domains/{id}/primary": {
+      post: {
+        tags: ["Domains"],
+        summary: "Make a domain the canonical address",
+        description:
+          "Allowed only for a domain that is ACTIVE. A primary domain is where visitors " +
+          "are sent, and sending them somewhere unproven is the failure this flow exists " +
+          "to prevent.",
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        responses: {
+          200: json({ type: "object", properties: { domains: { type: "array" } } }, "Domains."),
+          400: { description: "That domain is not verified and serving yet." },
+          401: { description: "Not authenticated." },
+          404: { description: "No such domain on this site." },
+        },
+      },
+    },
+
+    "/api/v1/domains/{id}": {
+      delete: {
+        tags: ["Domains"],
+        summary: "Disconnect a domain",
+        description:
+          "Removes the entry so the unique index frees that hostname for whoever holds " +
+          "it next. Traffic to it stops resolving to this tenant immediately.",
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        responses: {
+          204: { description: "Disconnected." },
+          401: { description: "Not authenticated." },
+          404: { description: "No such domain on this site." },
+        },
+      },
+    },
+
+    "/api/v1/public/resolve-host": {
+      get: {
+        tags: ["Public Site"],
+        summary: "Which site a hostname serves",
+        description:
+          "Used by the frontend proxy to route a custom domain, before any session " +
+          "exists. Answers only for domains that are ACTIVE, so adding a hostname is not " +
+          "enough to claim it. Public by necessity, and discloses only what a DNS lookup " +
+          "and one HTTP request would reveal anyway.",
+        security: [],
+        parameters: [{ name: "host", in: "query", required: true, schema: str }],
+        responses: {
+          200: json({ type: "object", properties: { subdomain: str } }, "The tenant."),
+          400: { description: "`host` is required." },
+          404: { description: "No site is connected to that address." },
+        },
+      },
+    },
+
+    /* ── Site settings ───────────────────────────────────────────────────
+       These are read during the published site's render, not merely stored. */
+
+    "/api/v1/site-settings": {
+      get: {
+        tags: ["Site Settings"],
+        summary: "SEO, maintenance mode and custom code",
+        description:
+          "`customCodeExecutes` reports whether script in `customCode` will actually run. " +
+          "It is false on a xite.co.in address: those share a registrable domain with the " +
+          "platform, where the session cookie is scoped and CORS is allowed, so tenant " +
+          "script there could call this API as whoever is browsing. Such code is stored " +
+          "verbatim and rendered with executable content stripped.",
+        responses: {
+          200: { description: "Settings, with the custom-code execution notice." },
+          401: { description: "Not authenticated." },
+        },
+      },
+      patch: {
+        tags: ["Site Settings"],
+        summary: "Change some settings",
+        description:
+          "A patch, not a replace: the settings screen has three independent cards, and " +
+          "sending the whole object from one would revert what another just changed. " +
+          "Omitted keys keep their current value.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  seo: {
+                    type: "object",
+                    properties: { indexingEnabled: bool, title: nullableStr, description: nullableStr },
+                  },
+                  maintenance: {
+                    type: "object",
+                    properties: { enabled: bool, message: nullableStr },
+                  },
+                  customCode: {
+                    type: "object",
+                    properties: { headHtml: nullableStr, bodyEndHtml: nullableStr },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "The settings as stored." },
+          400: { description: "A value was too long, or the wrong type." },
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
+    /* ── Account ─────────────────────────────────────────────────────────── */
+
+    "/api/v1/account/password": {
+      post: {
+        tags: ["Account"],
+        summary: "Change your password",
+        description:
+          "The user is taken from the session, never the body, so this cannot be aimed at " +
+          "another account. The current password is verified first, so an unlocked tab is " +
+          "not on its own enough to lock the owner out. Failures are audited.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { currentPassword: str, newPassword: str },
+                required: ["currentPassword", "newPassword"],
+              },
+            },
+          },
+        },
+        responses: {
+          204: { description: "Changed." },
+          400: { description: "Current password wrong, or the new one too short or unchanged." },
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
+    /* ── Billing ─────────────────────────────────────────────────────────
+       A ledger, not a billing engine. Nothing in this platform prices a plan,
+       meters usage or takes a payment, and these routes do not pretend to. */
+
+    "/api/v1/billing/invoices": {
+      get: {
+        tags: ["Billing"],
+        summary: "Invoices for the signed-in college",
+        description:
+          "Newest first, scoped to this tenant. Amounts are integer minor units with a " +
+          "preformatted display string, so no surface has to reimplement where the " +
+          "decimal goes. An empty list means no invoice has been raised.",
+        responses: {
+          200: json({ type: "object", properties: { invoices: { type: "array" } } }, "Invoices."),
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
+    "/api/v1/billing/payment-methods": {
+      get: {
+        tags: ["Billing"],
+        summary: "Saved cards, and which provider holds them",
+        description:
+          "`provider` is null when no payment provider is connected to the platform, " +
+          "which is currently always. A provider named in the environment but not " +
+          "implemented also reports null, so a client cannot open a flow this service " +
+          "could not complete.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: { provider: nullableStr, paymentMethods: { type: "array" } },
+            },
+            "Payment methods.",
+          ),
+          401: { description: "Not authenticated." },
+        },
+      },
+      post: {
+        tags: ["Billing"],
+        summary: "Attach a card a provider has already tokenised",
+        description:
+          "Takes a provider reference and display metadata only. A body carrying " +
+          "`number`, `pan`, `cvc` or `cvv` is refused outright rather than accepted and " +
+          "trimmed: storing a PAN puts this platform in PCI-DSS scope and retaining a CVC " +
+          "after authorisation is prohibited, and accepting-then-discarding is how one " +
+          "reaches a log line. Answers 501 while no provider is connected.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  providerRef: str,
+                  brand: nullableStr,
+                  last4: nullableStr,
+                  expMonth: int,
+                  expYear: int,
+                },
+                required: ["providerRef"],
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: "Attached." },
+          400: { description: "Card details were sent, or the reference was missing." },
+          401: { description: "Not authenticated." },
+          501: { description: "No payment provider is connected to this platform." },
+        },
+      },
+    },
+
+    "/api/v1/billing/payment-methods/{id}": {
+      delete: {
+        tags: ["Billing"],
+        summary: "Remove a saved card",
+        description:
+          "Scoped by tenant, so another tenant's id is simply not found. If the default " +
+          "was removed, the oldest remaining card becomes the default rather than leaving " +
+          "the tenant with cards and none of them default.",
+        parameters: [{ name: "id", in: "path", required: true, schema: str }],
+        responses: {
+          204: { description: "Removed." },
+          401: { description: "Not authenticated." },
+          404: { description: "No such payment method on this site." },
+        },
+      },
+    },
+
     "/api/v1/admin/default-website": {
       get: {
         tags: ["Admin"],
