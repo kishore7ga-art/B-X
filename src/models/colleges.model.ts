@@ -53,6 +53,27 @@ export type DomainStatus =
  */
 export type SslStatus = "NONE" | "PENDING" | "ACTIVE" | "ERROR";
 
+export interface ISiteSettings {
+  seo: {
+    /** When false, the published site emits `noindex, nofollow`. */
+    indexingEnabled: boolean;
+    title?: string | null;
+    description?: string | null;
+  };
+  maintenance: {
+    /** When true, visitors get the maintenance page instead of the site. */
+    enabled: boolean;
+    message?: string | null;
+  };
+  customCode: {
+    /** Injected into <head> of the published site only. */
+    headHtml?: string | null;
+    /** Injected immediately before </body> of the published site only. */
+    bodyEndHtml?: string | null;
+  };
+  updatedAt?: Date | null;
+}
+
 export interface ICustomDomain {
   id: string;
   /** Normalised: lowercase, trimmed, no scheme, no port, no trailing dot. */
@@ -110,6 +131,7 @@ export interface ICollege extends Document {
   publishedVersion: number;
 
   domains: ICustomDomain[];
+  settings?: ISiteSettings | null;
 
   createdAt: Date;
   updatedAt: Date;
@@ -151,6 +173,26 @@ const PageItemSchema = new Schema<IPageItem>(
 const WebsiteConfigSchema = new Schema<IWebsiteConfig>(
   {
     pages: { type: [PageItemSchema], default: [] },
+  },
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+);
+
+const SiteSettingsSchema = new Schema<ISiteSettings>(
+  {
+    seo: {
+      indexingEnabled: { type: Boolean, default: true },
+      title: { type: String, default: null },
+      description: { type: String, default: null },
+    },
+    maintenance: {
+      enabled: { type: Boolean, default: false },
+      message: { type: String, default: null },
+    },
+    customCode: {
+      headHtml: { type: String, default: null },
+      bodyEndHtml: { type: String, default: null },
+    },
+    updatedAt: { type: Date, default: null },
   },
   { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
@@ -197,6 +239,7 @@ const CollegeSchema = new Schema<ICollege>(
     publishedByEmail: { type: String, default: null },
     publishedVersion: { type: Number, default: 0 },
     domains: { type: [CustomDomainSchema], default: [] },
+    settings: { type: SiteSettingsSchema, default: null },
   },
   {
     timestamps: true,

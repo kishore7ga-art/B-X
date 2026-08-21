@@ -56,6 +56,15 @@ import {
 import { docsPage } from "@/docs-page";
 import { publishSite, publishStatus, publishedSiteConfig } from "@/publishing-service";
 import {
+  attachPaymentMethod,
+  changePassword,
+  detachPaymentMethod,
+  listInvoices,
+  listPaymentMethods,
+  paymentProvider,
+} from "@/account-service";
+import { getSettings, publicSettingsFor, updateSettings } from "@/site-settings-service";
+import {
   addDomain,
   collegeIdForHost,
   disconnectDomain,
@@ -2064,6 +2073,129 @@ app.delete(["/api/v1/domains/:id", "/api/domains/:id"], async (req, res) => {
 });
 
 /**
+ * Site settings: SEO, maintenance mode, custom code.
+ *
+ * A PATCH rather than a PUT: the settings screen has three independent cards,
+ * and sending the whole object from one of them would revert whatever another
+ * changed in between.
+ */
+app.get(["/api/v1/site-settings", "/api/site-settings"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view settings." });
+      return;
+    }
+    res.json(await getSettings(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.patch(["/api/v1/site-settings", "/api/site-settings"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to change settings." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.json(await updateSettings(session.collegeId, req.body, actor));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Password change.
+ *
+ * The user is taken from the session, never the body, so this cannot be aimed
+ * at another account. The current password is verified before anything changes.
+ */
+app.post(["/api/v1/account/password", "/api/account/password"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to change your password." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    await changePassword(session.collegeId, session.userId, req.body, actor);
+    res.status(204).end();
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Billing.
+ *
+ * Reports what exists. No plan is priced, no usage is metered and no invoice is
+ * raised anywhere in this platform, so a tenant with no invoices is told they
+ * have none rather than shown a plausible history.
+ */
+app.get(["/api/v1/billing/invoices", "/api/billing/invoices"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view billing." });
+      return;
+    }
+    res.json({ invoices: await listInvoices(session.collegeId) });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.get(["/api/v1/billing/payment-methods", "/api/billing/payment-methods"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view payment methods." });
+      return;
+    }
+    res.json({
+      provider: paymentProvider(),
+      paymentMethods: await listPaymentMethods(session.collegeId),
+    });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.post(["/api/v1/billing/payment-methods", "/api/billing/payment-methods"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to add a payment method." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.status(201).json(await attachPaymentMethod(session.collegeId, req.body, actor));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.delete(
+  ["/api/v1/billing/payment-methods/:id", "/api/billing/payment-methods/:id"],
+  async (req, res) => {
+    try {
+      const session = await getSession(req.headers.cookie).catch(() => null);
+      if (!session) {
+        res.status(401).json({ error: "Sign in to remove a payment method." });
+        return;
+      }
+      const actor = await actorEmailFor(session.collegeId, session.userId);
+      await detachPaymentMethod(session.collegeId, String(req.params.id), actor);
+      res.status(204).end();
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+/**
  * Which tenant a hostname belongs to.
  *
  * The frontend's proxy calls this for any host it does not recognise as a
@@ -2135,6 +2267,26 @@ app.get(
           sections: pageSections,
           publishedVersion: college.publishedVersion ?? 0,
           publishedAt: college.publishedAt ?? null,
+          /**
+           * The settings the renderer has to honour: whether to serve the site
+           * at all, whether search engines may index it, and what custom markup
+           * to emit.
+           *
+           * `onOwnDomain` is decided here from the host the visitor actually
+           * used, and it fails closed — a request that does not say gets the
+           * stripped form. It is what determines whether a tenant's <script>
+           * runs, and that decision must not be made by the client that would
+           * benefit from getting it wrong.
+           */
+          settings: publicSettingsFor(college, {
+            onOwnDomain: (() => {
+              const host = typeof req.query.host === "string" ? req.query.host.toLowerCase() : "";
+              if (!host) return false;
+              return (college.domains ?? []).some(
+                (domain: any) => domain?.status === "ACTIVE" && domain?.hostname === host,
+              );
+            })(),
+          }),
         });
         return;
       }
