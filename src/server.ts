@@ -114,7 +114,7 @@ app.use((req, res, next) => {
   // Finding 2: Content Security Policy
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://api.xite.co.in https://admin.xite.co.in https://xite.co.in; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://admin.xite.co.in https://xite.co.in;",
+    "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://api.webxite.org https://admin.webxite.org https://webxite.org; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://admin.webxite.org https://webxite.org;",
   );
 
   // Finding 5: HSTS header
@@ -242,11 +242,28 @@ app.use((req, _res, next) => {
  * `CORS_ORIGINS` still works and is additive — a new host goes live by being set
  * there, and belongs here on its next commit.
  */
+/**
+ * The platform's domain, and the one it was migrated away from.
+ *
+ * `xite.co.in` was production until the move to `webxite.org`. It survives as a
+ * *legacy* root in exactly two places — the suffix rule in `isAllowedOrigin`
+ * below and the reserved-host check in domain-service.ts — so that tenant sites
+ * already published at `<subdomain>.xite.co.in` keep resolving, and a browser
+ * still holding a session issued on the old domain is not rejected mid-cutover.
+ *
+ * It is not a canonical anything. Nothing is added to it, no link is generated
+ * pointing at it, and it is deleted outright once the edge redirect
+ * `xite.co.in/* -> webxite.org/*` has been in place long enough that no live
+ * link resolves through it. Grep for LEGACY_ROOT to find every survivor.
+ */
+const PLATFORM_ROOT = "webxite.org";
+const LEGACY_ROOT = "xite.co.in";
+
 const DEFAULT_ORIGINS = [
-  "https://xite.co.in",
-  "https://www.xite.co.in",
-  "https://admin.xite.co.in",
-  "https://api.xite.co.in",
+  "https://webxite.org",
+  "https://www.webxite.org",
+  "https://admin.webxite.org",
+  "https://api.webxite.org",
   // The dev servers: xite-F on 3000/3001, admin panel's Vite on 5173/5174.
   "http://localhost:3000",
   "http://localhost:3001",
@@ -270,8 +287,8 @@ const ORIGINS = [...new Set([...DEFAULT_ORIGINS, ...CONFIGURED_ORIGINS])];
  * against the origin string.
  *
  * That distinction is the whole finding. This used to read
- * `url.includes(rootDomain)`, which admitted `https://xite.co.in.attacker.com`:
- * the string contains "xite.co.in", so it passed, and the matching origin is
+ * `url.includes(rootDomain)`, which admitted `https://webxite.org.attacker.com`:
+ * the string contains "webxite.org", so it passed, and the matching origin is
  * then reflected into `Access-Control-Allow-Origin` alongside
  * `Access-Control-Allow-Credentials: true` — the exact pairing browsers refuse
  * to allow with a wildcard, handed to any domain somebody cared to register.
@@ -310,9 +327,10 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     .toLowerCase()
     .trim();
 
-  // A tenant's own published site: <subdomain>.xite.co.in. Suffix-matched on the
-  // parsed hostname, so a domain merely *containing* the root cannot match.
-  for (const root of [rootDomain, "xite.co.in"]) {
+  // A tenant's own published site: <subdomain>.webxite.org. Suffix-matched on
+  // the parsed hostname, so a domain merely *containing* the root cannot match.
+  // LEGACY_ROOT is here for the migration only — see its declaration.
+  for (const root of [rootDomain, PLATFORM_ROOT, LEGACY_ROOT]) {
     if (!root) continue;
     if (hostname === root || hostname.endsWith(`.${root}`)) return true;
   }
@@ -643,7 +661,7 @@ app.get("/", (_req, res) => {
       upload: "POST /api/uploads",
       serveUpload: "GET /uploads/:file",
     },
-    frontend: "https://xite.co.in",
+    frontend: "https://webxite.org",
   });
 });
 
@@ -1691,7 +1709,7 @@ app.post(["/api/v1/admin/save-section", "/api/admin/save-section", "/admin/save-
   try {
     // This was "soft auth" — the session was read for the audit trail and a
     // failure was ignored, because the admin panel's cookie was not reaching the
-    // API across admin.xite.co.in / api.xite.co.in. That is what
+    // API across admin.webxite.org / api.webxite.org. That is what
     // SESSION_COOKIE_DOMAIN fixed; the workaround outlived the bug and left an
     // open write endpoint on the section library.
     const session = await requireAdmin(req);

@@ -6,8 +6,8 @@ const pool = new pg.Pool({
 
 async function syncAll43AdminTemplates() {
   try {
-    console.log("Fetching all 43 production admin templates from https://api.xite.co.in/api/v1/admin/templates...");
-    const res = await fetch("https://api.xite.co.in/api/v1/admin/templates");
+    console.log("Fetching all 43 production admin templates from https://api.webxite.org/api/v1/admin/templates...");
+    const res = await fetch("https://api.webxite.org/api/v1/admin/templates");
     if (!res.ok) {
       throw new Error(`HTTP error ${res.status}`);
     }

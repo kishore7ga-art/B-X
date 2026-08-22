@@ -9,7 +9,7 @@ import type { ICollege, ICustomDomain, DomainStatus, SslStatus } from "@/models/
  *
  * What was here before was a `useState` and a toast. `College.customDomain`
  * existed with a unique index and nothing ever wrote it, `proxy.ts` only ever
- * rewrote `*.xite.co.in`, and the editor told the tenant "Custom domain updated
+ * rewrote `*.webxite.org`, and the editor told the tenant "Custom domain updated
  * to https://…" without a single network call. A tenant could believe they had
  * pointed their domain at us while nothing anywhere had changed.
  *
@@ -23,6 +23,15 @@ import type { ICollege, ICustomDomain, DomainStatus, SslStatus } from "@/models/
  * and obtains certificates. This service can see whether that has happened and
  * report it; it cannot make it happen, and it must never imply otherwise.
  */
+
+/**
+ * The platform's domain, and the one it was migrated away from.
+ *
+ * Mirrors the pair declared in server.ts; see there for why LEGACY_ROOT exists
+ * and when it goes.
+ */
+const PLATFORM_ROOT = "webxite.org";
+const LEGACY_ROOT = "xite.co.in";
 
 /** The TXT record name a tenant creates, prefixed to their domain. */
 export const VERIFICATION_RECORD_PREFIX = "_xite-verify";
@@ -60,7 +69,7 @@ export type DomainView = {
  * would send tenants to somewhere that is not us.
  */
 function routingTarget(): { cname: string; apexIp: string | null } {
-  const root = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || "xite.co.in")
+  const root = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || PLATFORM_ROOT)
     .toLowerCase()
     .trim();
   const apexIp = process.env.CUSTOM_DOMAIN_APEX_IP?.trim() || null;
@@ -127,18 +136,22 @@ export function normalizeHostname(input: unknown): string {
 /**
  * Refuses hostnames the platform already owns.
  *
- * A tenant claiming `admin.xite.co.in` or `api.xite.co.in` would, once routing
- * honoured custom domains, point platform hostnames at their own site. The
- * check is on the parsed hostname with a suffix rule, never `includes()` —
+ * A tenant claiming `admin.webxite.org` or `api.webxite.org` would, once
+ * routing honoured custom domains, point platform hostnames at their own site.
+ * The check is on the parsed hostname with a suffix rule, never `includes()` —
  * the same distinction `isAllowedOrigin` in server.ts already documents,
- * because `xite.co.in.attacker.com` contains the root domain.
+ * because `webxite.org.attacker.com` contains the root domain.
+ *
+ * LEGACY_ROOT stays reserved after the domain migration: `xite.co.in` still
+ * routes to this platform, so letting a tenant claim a name under it would be
+ * the same hijack against the old domain.
  */
 function assertNotPlatformHost(hostname: string): void {
-  const root = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || "xite.co.in")
+  const root = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || PLATFORM_ROOT)
     .toLowerCase()
     .trim();
 
-  for (const reserved of [root, "xite.co.in"]) {
+  for (const reserved of [root, PLATFORM_ROOT, LEGACY_ROOT]) {
     if (!reserved) continue;
     if (hostname === reserved || hostname.endsWith(`.${reserved}`)) {
       throw Object.assign(

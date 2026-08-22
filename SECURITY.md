@@ -106,7 +106,7 @@ given cannot be trusted; read the message rather than working around it.
 | --- | --- | --- |
 | `SESSION_SECRET` | API + frontend | Must match across both. Generated, never copied. |
 | `ADMIN_SESSION_SECRET` | API | Distinct from `SESSION_SECRET`; the service refuses to reuse it. |
-| `SESSION_COOKIE_DOMAIN` | API | `.xite.co.in`, so `admin.` and `api.` share the cookie. Unset locally. |
+| `SESSION_COOKIE_DOMAIN` | API | `.webxite.org`, so `admin.` and `api.` share the cookie. Unset locally. |
 | `TRUST_PROXY` | API | `1` behind Traefik. Rate limits key partly on client address; without this every caller looks like the proxy. |
 | `ENABLE_RATE_LIMIT` | API | On unless exactly `"false"`. There is no reason to set it outside a load test. |
 | `AUTH_DISABLED` | frontend | `false`. `true` opens the editor to anyone as a shared tenant. |

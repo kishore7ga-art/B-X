@@ -6,21 +6,21 @@ async function debugDnsAndRouting() {
   console.log("========================================================================");
 
   try {
-    const addresses = await dns.resolve4("api.xite.co.in").catch(() => []);
-    console.log("Resolved IPv4 Addresses for api.xite.co.in:", addresses);
+    const addresses = await dns.resolve4("api.webxite.org").catch(() => []);
+    console.log("Resolved IPv4 Addresses for api.webxite.org:", addresses);
 
     const cb = Date.now();
-    const r1 = await fetch(`https://api.xite.co.in/api/health?cb=${cb}`, {
+    const r1 = await fetch(`https://api.webxite.org/api/health?cb=${cb}`, {
       headers: { "Cache-Control": "no-cache, no-store", "Pragma": "no-cache" }
     });
-    console.log(`GET https://api.xite.co.in/api/health?cb=${cb} → Status: ${r1.status}`);
+    console.log(`GET https://api.webxite.org/api/health?cb=${cb} → Status: ${r1.status}`);
     const b1 = await r1.text();
     console.log("Body:", b1.substring(0, 300));
 
-    const r2 = await fetch(`https://api.xite.co.in/health?cb=${cb}`, {
+    const r2 = await fetch(`https://api.webxite.org/health?cb=${cb}`, {
       headers: { "Cache-Control": "no-cache, no-store", "Pragma": "no-cache" }
     });
-    console.log(`GET https://api.xite.co.in/health?cb=${cb} → Status: ${r2.status}`);
+    console.log(`GET https://api.webxite.org/health?cb=${cb} → Status: ${r2.status}`);
     const b2 = await r2.text();
     console.log("Body:", b2.substring(0, 300));
 

@@ -17,19 +17,19 @@ services:
       # it. Unset, the admin signing key is generated and stored in the database
       # instead, which works but ties every admin session to that one row.
       ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in,https://admin.xite.co.in,https://api.xite.co.in,http://localhost:3000,http://localhost:5173}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://webxite.org,https://admin.webxite.org,https://api.webxite.org,http://localhost:3000,http://localhost:5173}
       # The one variable that was missing and cost the most.
       #
-      # The admin panel is served from admin.xite.co.in and this API from
-      # api.xite.co.in. Without a Domain on the session cookie it is host-only,
+      # The admin panel is served from admin.webxite.org and this API from
+      # api.webxite.org. Without a Domain on the session cookie it is host-only,
       # so the panel's cookie never reaches the API, every admin request arrives
       # unauthenticated — and the fix that was applied was to stop checking.
       # A leading dot scopes it to both.
-      SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-.xite.co.in}
-      ROOT_DOMAIN: ${ROOT_DOMAIN:-xite.co.in}
+      SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-.webxite.org}
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-webxite.org}
       # Where activation emails point. Derived from CORS_ORIGINS when unset,
       # which is right until the first allowed origin stops being the frontend.
-      APP_URL: ${APP_URL:-https://xite.co.in}
+      APP_URL: ${APP_URL:-https://webxite.org}
       # Traefik sits in front, so X-Forwarded-For is trustworthy exactly one hop
       # deep. Not `true`: that trusts the whole client-supplied chain, which
       # lets a caller be rate-limited as somebody else.
@@ -42,7 +42,7 @@ services:
       # browser bundle.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      MAIL_FROM: ${MAIL_FROM:-noreply@xite.co.in}
+      MAIL_FROM: ${MAIL_FROM:-noreply@webxite.org}
       # Seeding rewrites reference data. Running it on every container restart
       # makes an ordinary redeploy a write against production.
       SEED_ON_START: ${SEED_ON_START:-false}

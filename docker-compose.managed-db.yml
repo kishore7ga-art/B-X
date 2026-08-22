@@ -28,7 +28,7 @@ services:
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
       # Exact origins, never "*": the session cookie rides on these requests and
       # browsers refuse a wildcard alongside credentials.
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://xite.co.in}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://webxite.org}
       # This service owns the schema. The frontend runs with SKIP_MIGRATIONS.
       SEED_ON_START: ${SEED_ON_START:-true}
     volumes:

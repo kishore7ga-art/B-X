@@ -67,11 +67,22 @@ describe("normalizeHostname — what a tenant typed vs what a Host header carrie
 
 describe("assertNotPlatformHost — a tenant cannot claim the platform's own names", () => {
   it("refuses the root domain", () => {
-    assert.throws(() => assertNotPlatformHost("xite.co.in"), /belongs to the platform/);
+    assert.throws(() => assertNotPlatformHost("webxite.org"), /belongs to the platform/);
   });
 
   it("refuses any platform subdomain", () => {
-    for (const host of ["admin.xite.co.in", "api.xite.co.in", "anything.xite.co.in"]) {
+    for (const host of ["admin.webxite.org", "api.webxite.org", "anything.webxite.org"]) {
+      assert.throws(() => assertNotPlatformHost(host), /belongs to the platform/, host);
+    }
+  });
+
+  /**
+   * The domain the platform migrated away from is still routed here, so it is
+   * still ours to refuse. Drop this alongside LEGACY_ROOT when the old domain
+   * stops resolving to us.
+   */
+  it("refuses the legacy domain and its subdomains", () => {
+    for (const host of ["xite.co.in", "admin.xite.co.in", "anything.xite.co.in"]) {
       assert.throws(() => assertNotPlatformHost(host), /belongs to the platform/, host);
     }
   });
@@ -79,6 +90,7 @@ describe("assertNotPlatformHost — a tenant cannot claim the platform's own nam
   // The distinction the CORS check in server.ts already documents: a substring
   // test would admit this, and it is a domain anyone can register.
   it("allows a domain that merely contains the root domain", () => {
+    assert.doesNotThrow(() => assertNotPlatformHost("webxite.org.attacker.com"));
     assert.doesNotThrow(() => assertNotPlatformHost("xite.co.in.attacker.com"));
   });
 

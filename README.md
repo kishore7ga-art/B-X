@@ -52,9 +52,9 @@ Dokploy → **Create → Compose**
 SESSION_SECRET=<the SAME 32+ chars as the frontend>
 ADMIN_SESSION_SECRET=<32+ chars, DIFFERENT from SESSION_SECRET>
 POSTGRES_PASSWORD=<strong random>
-CORS_ORIGINS=https://xite.co.in
+CORS_ORIGINS=https://webxite.org
 RESEND_API_KEY=<from resend.com/api-keys>
-MAIL_FROM=XITE <no-reply@xite.co.in>
+MAIL_FROM=XITE <no-reply@webxite.org>
 ```
 
 **Do not set `AUTH_DISABLED=true`.** It used to be listed here and it is not a
@@ -80,18 +80,18 @@ itself, not your server.
 
 | Field | Value |
 |---|---|
-| Host | `api.xite.co.in` |
+| Host | `api.webxite.org` |
 | Service Name | `api` |
 | Container Port | **4000** |
 | HTTPS | on (Let's Encrypt) |
 
-Point an A record for `api.xite.co.in` at the same server first, or
+Point an A record for `api.webxite.org` at the same server first, or
 certificate issuance fails.
 
 ### 4. Deploy, then check
 
 ```bash
-curl https://api.xite.co.in/api/health
+curl https://api.webxite.org/api/health
 ```
 
 ```json
@@ -108,22 +108,22 @@ failed — check the deploy log for `[start] seeding`.
 In the **xite-F** service's environment:
 
 ```
-NEXT_PUBLIC_API_BASE_URL=https://api.xite.co.in
+NEXT_PUBLIC_API_BASE_URL=https://api.webxite.org
 ```
 
 Redeploy the frontend. Browser calls now go to this service — visible in the
-Network tab as `PATCH https://api.xite.co.in/api/v1/sections/...`.
+Network tab as `PATCH https://api.webxite.org/api/v1/sections/...`.
 
 ### Two things that will bite you, in this order
 
 **1. CORS.** `CORS_ORIGINS` must name the frontend's origin exactly. It is
-already set to `https://xite.co.in` above. A wildcard is not an option — the
+already set to `https://webxite.org` above. A wildcard is not an option — the
 browser refuses `*` on a request carrying credentials.
 
 **2. The cookie.** The session cookie is currently issued `SameSite=Lax`, which
 a browser will not send to a *different* origin. Until xite-F sets
 `SameSite=None; Secure` in `src/lib/auth/session.ts`, authenticated calls to
-`api.xite.co.in` arrive signed out — a 401 on every save with CORS looking
+`api.webxite.org` arrive signed out — a 401 on every save with CORS looking
 fine.
 
 Both disappear if you leave `NEXT_PUBLIC_API_BASE_URL` unset and keep the API
@@ -151,7 +151,7 @@ same-origin behind one domain.
 Same server, two Dokploy services: put both on `dokploy-network` (uncomment the
 blocks in `docker-compose.yml`) and the frontend can reach this one privately at
 `http://api:4000` — no public hop, no CORS. Use the public
-`api.xite.co.in` only for calls the browser makes directly.
+`api.webxite.org` only for calls the browser makes directly.
 
 ---
 

@@ -15,7 +15,7 @@ async function fetchWithRetry(url, options = {}, retries = 5) {
   }
 }
 
-const PROD_API_BASE = "https://api.xite.co.in";
+const PROD_API_BASE = "https://api.webxite.org";
 /**
  * From the environment, never from this file.
  *
@@ -35,8 +35,8 @@ async function runLiveProductionTest() {
   console.log("  CTO REAL PRODUCTION REAL-BROWSER FLOW VERIFICATION (LIVE PROD)        ");
   console.log("========================================================================");
   console.log(`Target Production API Base : ${PROD_API_BASE}`);
-  console.log(`Target Admin Domain       : https://admin.xite.co.in`);
-  console.log(`Target Live Domain        : https://xite.co.in`);
+  console.log(`Target Admin Domain       : https://admin.webxite.org`);
+  console.log(`Target Live Domain        : https://webxite.org`);
 
   // Connect to MongoDB Atlas
   await mongoose.connect(MONGODB_URI);

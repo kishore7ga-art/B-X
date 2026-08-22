@@ -118,7 +118,7 @@ The left sliding drawer manages page navigation structure, color palettes, and t
 3. **DNS Configuration Table**:
    - **Type**: `A Record` / `CNAME`.
    - **Host / Name**: `@` (Root domain) / `www`.
-   - **Target Value**: `76.76.21.21` / `cname.xite.co.in`.
+   - **Target Value**: `76.76.21.21` / `cname.webxite.org`.
    - **Status**: `Connected` / `Pending Verification`.
    - **Copy Action**: One-click clipboard copy for DNS records.
 

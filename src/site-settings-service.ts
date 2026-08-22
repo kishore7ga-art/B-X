@@ -31,11 +31,11 @@ export const DEFAULT_SETTINGS: ISiteSettings = {
  *
  * This is the sharpest decision in the file, so it is worth stating plainly.
  *
- * Every tenant site on `*.xite.co.in` shares one registrable domain with the
- * platform. The session cookie is scoped to `.xite.co.in`, it is `SameSite=None`
+ * Every tenant site on `*.webxite.org` shares one registrable domain with the
+ * platform. The session cookie is scoped to `.webxite.org`, it is `SameSite=None`
  * so it rides cross-site requests, and `isAllowedOrigin` in server.ts admits
- * every `*.xite.co.in` origin for credentialed CORS. A `<script>` running on
- * `tenant-a.xite.co.in` therefore sits inside the platform's cookie scope and
+ * every `*.webxite.org` origin for credentialed CORS. A `<script>` running on
+ * `tenant-a.webxite.org` therefore sits inside the platform's cookie scope and
  * inside its CORS allowlist: it can make credentialed calls to the API as
  * whichever signed-in person is browsing, and read the answers. The cookie being
  * `httpOnly` prevents it being read directly and prevents none of that.
@@ -151,7 +151,7 @@ function toView(college: ICollege): SettingsView {
     customCodeExecutes: executes,
     customCodeNotice: executes
       ? null
-      : "Scripts run once you connect your own domain. On a xite.co.in address they are saved but not executed, because that address shares a domain with the platform.",
+      : "Scripts run once you connect your own domain. On a webxite.org address they are saved but not executed, because that address shares a domain with the platform.",
   };
 }
 

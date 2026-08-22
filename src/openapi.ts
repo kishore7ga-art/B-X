@@ -130,7 +130,7 @@ export const openApiDocument = {
     title: "XITE API",
     version: "1.0.0",
     description:
-      "The API behind xite.co.in. Every read and write the frontend performs " +
+      "The API behind webxite.org. Every read and write the frontend performs " +
       "goes through this service.\n\n" +
       "Authentication is a session cookie (`college_session`), an HS256 JWT " +
       "issued by `POST /api/v1/auth/login`. It is httpOnly, so browser clients " +
@@ -143,7 +143,7 @@ export const openApiDocument = {
       "rate-limited, 500 our fault.",
   },
   servers: [
-    { url: "https://api.xite.co.in", description: "Production" },
+    { url: "https://api.webxite.org", description: "Production" },
     { url: "http://localhost:4000", description: "Local development" },
   ],
   tags: [
@@ -584,7 +584,7 @@ export const openApiDocument = {
         summary: "SEO, maintenance mode and custom code",
         description:
           "`customCodeExecutes` reports whether script in `customCode` will actually run. " +
-          "It is false on a xite.co.in address: those share a registrable domain with the " +
+          "It is false on a webxite.org address: those share a registrable domain with the " +
           "platform, where the session cookie is scoped and CORS is allowed, so tenant " +
           "script there could call this API as whoever is browsing. Such code is stored " +
           "verbatim and rendered with executable content stripped.",

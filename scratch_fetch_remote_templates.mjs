@@ -1,8 +1,8 @@
 async function fetchRemoteTemplates() {
   const endpoints = [
     "http://localhost:4000/api/v1/admin/templates",
-    "https://admin.xite.co.in/api/v1/admin/templates",
-    "https://api.xite.co.in/api/v1/admin/templates",
+    "https://admin.webxite.org/api/v1/admin/templates",
+    "https://api.webxite.org/api/v1/admin/templates",
   ];
 
   for (const url of endpoints) {

@@ -49,7 +49,7 @@ Nothing new is **required**. These change behaviour when set:
 |---|---|---|
 | `CUSTOM_DOMAIN_CNAME_TARGET` | `xite-B` | Falls back to `sites.<ROOT_DOMAIN>`. Tenants are shown a CNAME target that may not route. |
 | `CUSTOM_DOMAIN_APEX_IP` | `xite-B` | Apex domains are offered **no A record**, only a CNAME their provider may refuse at the apex. |
-| `ROOT_DOMAIN` / `NEXT_PUBLIC_ROOT_DOMAIN` | both | Defaults to `xite.co.in`. Decides which hosts are platform-owned and therefore refused as custom domains. |
+| `ROOT_DOMAIN` / `NEXT_PUBLIC_ROOT_DOMAIN` | both | Defaults to `webxite.org`. Decides which hosts are platform-owned and therefore refused as custom domains. |
 | `PAYMENT_PROVIDER` | `xite-B` | Billing reports "no provider connected", which is correct — see §7. |
 
 `PAYMENT_PROVIDER` accepts only `stripe` or `razorpay`, and **neither is
@@ -76,7 +76,7 @@ which is honest — but will look stuck to anyone who does not know step 1 exist
 
 Still outstanding platform-wide:
 
-- Wildcard DNS and a wildcard certificate for `*.xite.co.in`.
+- Wildcard DNS and a wildcard certificate for `*.webxite.org`.
 - A Dokploy API token, if domain attachment is ever to be automated rather than
   clicked.
 
@@ -84,17 +84,17 @@ Still outstanding platform-wide:
 
 ```bash
 # The API is up and connected.
-curl -s https://api.xite.co.in/api/health
+curl -s https://api.webxite.org/api/health
 
 # The new routes exist. 401 means deployed; 404 means not.
-curl -s -o /dev/null -w '%{http_code}\n' https://api.xite.co.in/api/v1/publish/status
-curl -s -o /dev/null -w '%{http_code}\n' https://api.xite.co.in/api/v1/site-settings
+curl -s -o /dev/null -w '%{http_code}\n' https://api.webxite.org/api/v1/publish/status
+curl -s -o /dev/null -w '%{http_code}\n' https://api.webxite.org/api/v1/site-settings
 
 # Control: a route that has never existed should be 404, not 401.
-curl -s https://api.xite.co.in/api/v1/no-such-route
+curl -s https://api.webxite.org/api/v1/no-such-route
 
 # The frontend is deployed: this meta tag did not exist before.
-curl -s https://xite.co.in/site/greenfield | grep -o '<meta name="robots"[^>]*>'
+curl -s https://webxite.org/site/greenfield | grep -o '<meta name="robots"[^>]*>'
 ```
 
 Then, signed in:
@@ -118,9 +118,9 @@ Stated so nobody builds on an assumption it does not support.
   carrying `number`, `pan`, `cvc` or `cvv` outright. Only a provider's token and
   display metadata are stored. Collecting a PAN would put this platform in
   PCI-DSS scope.
-- **It does not execute tenant script on `*.xite.co.in`.** Those hosts share a
+- **It does not execute tenant script on `*.webxite.org`.** Those hosts share a
   registrable domain with the platform: the session cookie is scoped to
-  `.xite.co.in`, it is `SameSite=None`, and CORS admits every platform
+  `.webxite.org`, it is `SameSite=None`, and CORS admits every platform
   subdomain. Tenant script there could call the API as whoever is browsing.
   Custom code is stored verbatim and rendered with executable content stripped
   until the tenant connects their own domain.

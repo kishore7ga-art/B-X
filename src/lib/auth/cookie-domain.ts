@@ -23,7 +23,7 @@ export type CookieScope =
   | { domain: undefined; source: "host-only"; reason: string };
 
 /**
- * `https://api.xite.co.in/`, `api.xite.co.in:443`, `[::1]:3000` -> the hostname.
+ * `https://api.webxite.org/`, `api.webxite.org:443`, `[::1]:3000` -> the hostname.
  *
  * Takes a full origin or a bare `Host` header, because the callers have one of
  * each and the difference is not interesting here.
@@ -62,8 +62,8 @@ function cannotCarryDomain(host: string): boolean {
 /**
  * The `Domain` both services should write, given who they are.
  *
- * Only a strict parent/subdomain pair is inferred — `xite.co.in` serving the
- * app and `api.xite.co.in` serving this, which is the shape a split deployment
+ * Only a strict parent/subdomain pair is inferred — `webxite.org` serving the
+ * app and `api.webxite.org` serving this, which is the shape a split deployment
  * actually takes. Two sibling subdomains share a parent too, but naming it
  * safely means knowing where the registrable domain ends, and guessing that
  * without the Public Suffix List is how you end up asking a browser for
