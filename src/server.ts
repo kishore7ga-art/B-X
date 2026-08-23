@@ -1556,19 +1556,37 @@ adminRouter.post("/access-requests/:id/approve", async (req, res) => {
       session,
       password,
     );
+    const activationUrl = `${appUrl()}/activate?token=${rawToken}`;
     const delivery = await sendActivationEmail({
       to: email,
       name,
-      activationUrl: `${appUrl()}/activate?token=${rawToken}`,
+      activationUrl,
       expiresAt,
     });
+    /**
+     * When the email did not go out, hand the link back to the approver.
+     *
+     * `approveAccessRequest` creates the account with CSPRNG output nobody is
+     * told, and the activation link is the only way in. This route knew the
+     * delivery had failed, reported `delivered: false`, and then dropped the one
+     * value that could still rescue the account — the raw token exists nowhere
+     * else, only its hash is stored. On a deployment with no `RESEND_API_KEY`
+     * that is the *common* path, not an edge case: approving a college produced
+     * an account that could never be signed into, and the panel said it was fine.
+     *
+     * Returned only on failure, and only to a caller that has already cleared
+     * `requireAdmin` and just approved this request. It grants them nothing they
+     * did not have — the same session can set the account's password outright
+     * via PATCH /users/:id/password — so this is a delivery channel of last
+     * resort, not a widening of what a Super Admin can do.
+     */
     res.json({
       approved: true,
       email,
       userId: user.id,
       expiresAt: expiresAt.toISOString(),
       delivered: delivery.delivered,
-      ...(delivery.delivered ? {} : { deliveryError: delivery.reason }),
+      ...(delivery.delivered ? {} : { deliveryError: delivery.reason, activationUrl }),
     });
   } catch (error) {
     fail(res, error);

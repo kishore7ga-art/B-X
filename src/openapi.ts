@@ -1722,6 +1722,15 @@ export const openApiDocument = {
           "deny an approval that happened — and the obvious retry answers 409. " +
           "The approval and the delivery are reported separately; " +
           "`deliveryError` carries the reason, for the operator only.\n\n" +
+          "**`activationUrl` is present only when `delivered` is false.** An " +
+          "account approved without a password of its own is created with " +
+          "CSPRNG output nobody is told, so the link is the only way in and it " +
+          "exists nowhere else — only its hash is stored. Withholding it on a " +
+          "failed send left the approver holding an account nobody could ever " +
+          "sign into. It goes to a caller that has already cleared " +
+          "`requireAdmin` and just approved this request, and grants them " +
+          "nothing they did not have: the same session can set the account's " +
+          "password outright via `PATCH /users/{id}/password`.\n\n" +
           "Logged via `recordAudit` as `access_request.approve`.",
         security: SESSION_COOKIE,
         parameters: [
@@ -1737,10 +1746,11 @@ export const openApiDocument = {
                 expiresAt: str,
                 delivered: bool,
                 deliveryError: str,
+                activationUrl: str,
               },
               required: ["approved", "email", "expiresAt", "delivered"],
             },
-            "Approved. The token is not included, by design.",
+            "Approved. The token is included only when the email failed to send.",
           ),
           ...errors(
             [401, "Not signed in."],
