@@ -1,4 +1,7 @@
+import sanitizeHtml from "sanitize-html";
+
 import { AuditLog, College } from "@/models";
+import { safeCss } from "@/lib/sections/sanitize-section-html";
 import type { ICollege, ISiteSettings } from "@/models/colleges.model";
 
 /**
@@ -58,24 +61,97 @@ export function mayExecuteCustomCode(college: {
 /**
  * Removes anything that executes, for rendering on a shared platform subdomain.
  *
- * Deliberately a strip, not an escape: the tenant asked for markup, so `<meta>`,
- * `<link>` and styling still work and their analytics tag simply does not run
- * until they connect their own domain. An allowlist parser would be better and
- * is a larger change; this errs toward removing too much.
+ * This was five regexes over a raw string, and the comment above them conceded
+ * that "an allowlist parser would be better". It was not merely worse — it was
+ * bypassable, in the ordinary ways a regex HTML filter always is:
+ *
+ *   - `<img/onerror=alert(1) src=x>` — the handler pattern required whitespace
+ *     before `on`, and `/` is a perfectly good attribute separator in HTML;
+ *   - `<a href=&#106;avascript:alert(1)>` — the scheme check ran against the
+ *     raw bytes, and the browser decodes the entity afterwards;
+ *   - `<button formaction="javascript:...">` — `formaction` was not one of the
+ *     two attributes checked;
+ *   - `<svg><animate onbegin=...>` inside a tag the strip never looked at.
+ *
+ * Any one of those puts script on `<tenant>.webxite.org`, which is inside the
+ * session cookie's scope and inside the CORS allowlist — the exact outcome the
+ * long comment on `mayExecuteCustomCode` above exists to prevent, and the reason
+ * this function is the boundary rather than a nicety.
+ *
+ * It is `sanitize-html` now, which parses the markup rather than pattern-matching
+ * it, so an attribute is either on the list or gone whatever it is spelled like.
+ * The intent is unchanged and deliberately still a strip rather than an escape:
+ * `<meta>`, `<link>` and styling keep working, and the tenant's analytics tag
+ * simply does not run until they connect their own domain.
  */
 export function stripExecutable(html: string | null | undefined): string {
   if (!html) return "";
-  return (
-    html
-      // Script elements, including an unclosed trailing one.
-      .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, "")
-      // Anything that can navigate or embed another origin's document.
-      .replace(/<\s*(iframe|object|embed|applet|frame|frameset)\b[\s\S]*?(?:<\/\s*\1\s*>|$)/gi, "")
-      // Inline handlers: onclick=, onerror=, onload= …
-      .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-      // javascript: and data: URLs in href/src.
-      .replace(/\s(href|src)\s*=\s*(?:"\s*(?:javascript|data):[^"]*"|'\s*(?:javascript|data):[^']*'|(?:javascript|data):[^\s>]*)/gi, "")
-  );
+
+  try {
+    /**
+     * `<style>` bodies are lifted out before the parser sees them.
+     *
+     * sanitize-html deletes the *text content* of a style element even when the
+     * tag is allowed — it has no CSS parser and dropping the body is its safe
+     * default. A tenant's head code is frequently nothing but a stylesheet, so
+     * running it straight through would have silently emptied every one of
+     * them: the tag would still be there and the CSS would be gone.
+     *
+     * `safeCss` is the same pass the section sanitiser applies, so CSS is
+     * treated identically wherever it arrives from.
+     */
+    const styles: string[] = [];
+    const withoutStyles = html.replace(
+      /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi,
+      (_full, css: string) => {
+        if (css.trim()) styles.push(`<style>${safeCss(css)}</style>`);
+        return "";
+      },
+    );
+
+    const cleaned = sanitizeHtml(withoutStyles, {
+      allowedTags: [
+        // The point of head code that is not script: verification tags,
+        // preconnects, stylesheets, favicons, social preview metadata.
+        "meta", "link", "title", "base",
+        // And ordinary markup, for a footer banner or a cookie notice.
+        "div", "span", "p", "a", "img", "br", "hr", "small", "strong", "em",
+        "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "noscript",
+      ],
+      allowedAttributes: {
+        // No `on*` wildcard, so every event handler goes by omission.
+        "*": ["style", "class", "id", "dir", "lang", "aria-*", "data-*"],
+        meta: ["name", "property", "content", "charset", "http-equiv", "itemprop"],
+        link: ["rel", "href", "type", "sizes", "media", "as", "crossorigin", "hreflang", "title"],
+        a: ["href", "target", "rel", "title"],
+        img: ["src", "alt", "width", "height", "loading", "decoding"],
+      },
+      /**
+       * No `data:` anywhere, including on `<img>`.
+       *
+       * The section sanitiser allows `data:` images because inline thumbnails
+       * are common in section markup. Head and body-end code has no such use,
+       * and `data:` is how a document gets smuggled past a scheme check — so
+       * the narrower rule applies to the narrower surface.
+       */
+      allowedSchemes: ["http", "https", "mailto", "tel"],
+      allowedSchemesAppliedToAttributes: ["href", "src"],
+      allowProtocolRelative: true,
+      // Dropped whole, contents included, rather than unwrapped into the page.
+      nonTextTags: ["script", "iframe", "object", "embed", "frame", "frameset", "applet", "textarea"],
+      disallowedTagsMode: "discard",
+    });
+
+    return [...styles, cleaned].filter(Boolean).join("");
+  } catch (error) {
+    /**
+     * Fails closed. A parser that could not read this markup is not evidence
+     * that the markup is safe, and this string is about to be written into a
+     * page with `dangerouslySetInnerHTML`.
+     */
+    console.error("[settings] custom code strip failed, emitting nothing:", (error as Error).message);
+    return "";
+  }
 }
 
 function clampString(

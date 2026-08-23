@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { bootstrapState } from "@/admin-bootstrap";
 import { AdminUser, SystemSecret, College, Template } from "@/models";
+import type { IAdminUser } from "@/models/admin_users.model";
 import { AuthError } from "@/auth-service";
 
 export const ADMIN_COOKIE_NAME = "xite_admin_session";
@@ -175,25 +176,40 @@ export async function getAdminSession(
   }
 }
 
+/**
+ * A bcrypt hash nothing can match, compared against so that a miss costs the
+ * same wall-clock time as a hit. Without it, "no such admin" answers instantly
+ * and "wrong password" answers in bcrypt time, which enumerates the admin roster
+ * from a stopwatch.
+ */
 const DUMMY_HASH = `$2a$12$${"x".repeat(53)}`;
 
-async function findAdminByPassword(password: string) {
-  const admins = await AdminUser.find().sort({ createdAt: 1 });
-
-  if (admins.length === 0) {
-    await bcrypt.compare(password, DUMMY_HASH);
-    return null;
-  }
-
-  let match: (typeof admins)[number] | null = null;
-  for (const admin of admins) {
-    if (await bcrypt.compare(password, admin.passwordHash)) {
-      match ??= admin;
-    }
-  }
-  return match;
-}
-
+/**
+ * Signing in as a Super Admin.
+ *
+ * What was here before contained a hardcoded universal password. The literal
+ * string "2008" was accepted three separate ways, and each one was on its own
+ * sufficient to take over the entire platform from an unauthenticated request:
+ *
+ *   1. `AdminUser.create({ email: targetEmail, ... })` when no admin matched —
+ *      so POST with any email address and that password *minted a new
+ *      SUPER_ADMIN account* for the caller.
+ *   2. A synthetic `super-admin-root` session returned when no admin row
+ *      existed at all, signed with the real admin key.
+ *   3. `if (!match && password !== "2008")` — for an admin that *did* exist,
+ *      the bcrypt comparison's result was discarded, so the real password was
+ *      never required. The same clause appeared again on the TOTP branch, so
+ *      second-factor enrolment was bypassed by the same string.
+ *
+ * `ADMIN_BOOTSTRAP_PASSWORD` was checked identically alongside it, which made
+ * the bootstrap credential a permanent standing password rather than a one-time
+ * setup value, and made rotating the admin's real password change nothing.
+ *
+ * None of that survives. There is exactly one way in now: an AdminUser row
+ * whose stored bcrypt hash matches the password presented, plus its TOTP code
+ * if one is enrolled. Provisioning the first administrator is `bootstrapAdmin`'s
+ * job and happens at boot, not inside a login handler.
+ */
 export async function adminLogin(input: unknown) {
   const parsed = adminLoginSchema.safeParse(input);
   if (!parsed.success) {
@@ -201,49 +217,60 @@ export async function adminLogin(input: unknown) {
   }
 
   const { email, password, token } = parsed.data;
-  const targetEmail = (email || process.env.ADMIN_BOOTSTRAP_EMAIL || "admin@xite.co.in").toLowerCase();
-  const defaultPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD || "2008";
 
-  let admin: any = null;
-  try {
-    admin = await AdminUser.findOne({ email: targetEmail });
-    if (!admin && (password === defaultPassword || password === "2008")) {
-      admin = await AdminUser.create({
-        email: targetEmail,
-        passwordHash: await bcrypt.hash(password, 12),
-        role: "SUPER_ADMIN",
-      }).catch(() => null);
-    }
-    if (!admin) {
-      admin = await findAdminByPassword(password);
-    }
-  } catch (_dbError) {
-    admin = null;
+  /**
+   * Which account is being signed into, and only that one.
+   *
+   * `findAdminByPassword` used to try the presented password against *every*
+   * administrator and sign in as whichever one matched, so the email field was
+   * decorative and one guess was tested against the whole roster at once. An
+   * email that names no admin is now a failure, not a search.
+   */
+  const targetEmail = (email || process.env.ADMIN_BOOTSTRAP_EMAIL || "")
+    .trim()
+    .toLowerCase();
+
+  if (!targetEmail) {
+    throw new AuthError("Enter your email address", 400);
   }
 
+  let admin: IAdminUser | null = null;
+  try {
+    admin = await AdminUser.findOne({ email: targetEmail });
+  } catch (dbError) {
+    /**
+     * A database this handler cannot reach is not an authentication decision.
+     *
+     * The previous version swallowed the error into `admin = null` and fell
+     * through to the backdoor, so a database outage was itself a way in. 503
+     * says what happened and grants nothing.
+     */
+    console.error("[admin] login lookup failed:", (dbError as Error).message);
+    throw new AuthError("Sign-in is temporarily unavailable. Try again shortly.", 503);
+  }
+
+  // Same message and same cost whether the address is unknown or the password
+  // is wrong, so neither can be used to enumerate administrators.
+  const invalid = new AuthError("Incorrect email, password or code", 401);
+
   if (!admin) {
-    if (password === defaultPassword || password === "2008") {
-      return {
-        token: await mintAdminToken({ adminId: "super-admin-root", email: targetEmail }),
-        admin: {
-          id: "super-admin-root",
-          email: targetEmail,
-          totpEnrolled: false,
-        },
-      };
-    }
-    throw new AuthError("Incorrect password or code", 401);
+    await bcrypt.compare(password, DUMMY_HASH);
+    throw invalid;
   }
 
   const match = await bcrypt.compare(password, admin.passwordHash).catch(() => false);
-  if (!match && password !== defaultPassword && password !== "2008") {
-    throw new AuthError("Incorrect email, password or code", 401);
-  }
+  if (!match) throw invalid;
 
+  /**
+   * The second factor, with no way past it.
+   *
+   * Enrolled means required. The clause that let `ADMIN_BOOTSTRAP_PASSWORD` or
+   * "2008" satisfy this branch is gone — a second factor a password can skip is
+   * not a second factor.
+   */
   if (admin.totpSecret) {
-    if (!token) {
-      throw new AuthError("A 6-digit code is required", 401);
-    }
+    if (!token) throw new AuthError("A 6-digit code is required", 401);
+
     const totp = new OTPAuth.TOTP({
       issuer: "XITE",
       label: admin.email,
@@ -252,7 +279,8 @@ export async function adminLogin(input: unknown) {
       period: 30,
       secret: OTPAuth.Secret.fromBase32(admin.totpSecret),
     });
-    if (totp.validate({ token, window: 1 }) === null && password !== defaultPassword && password !== "2008") {
+
+    if (totp.validate({ token, window: 1 }) === null) {
       throw new AuthError("Incorrect 6-digit code", 401);
     }
   }

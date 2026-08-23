@@ -94,7 +94,30 @@ import {
   updateDefaultWebsiteConfig,
 } from "@/default-website-service";
 import { generateAiSection } from "@/ai-service";
+import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
 import { optimizeSection } from "@/ai-optimize-service";
+
+/**
+ * Open-access mode is a development convenience and refuses to be one in
+ * production.
+ *
+ * `AUTH_DISABLED=true` makes `getSession()` mint a session for the first
+ * non-demo college to *any* caller with no cookie — every guard in this service
+ * then passes for anonymous requests, against a real tenant's data. It is a
+ * legitimate local mode and an unrecoverable one on the internet, and the only
+ * thing standing between the two was an environment variable in a dashboard.
+ *
+ * Cleared rather than refused to start: an operator who sets this by accident on
+ * a production deploy should get a service that is safe, not a service that is
+ * down. It is loud about it.
+ */
+if (process.env.NODE_ENV === "production" && process.env.AUTH_DISABLED === "true") {
+  console.error(
+    "[api] AUTH_DISABLED=true is ignored in production — it would hand every " +
+      "anonymous request a session for a real college. Unset it.",
+  );
+  process.env.AUTH_DISABLED = "false";
+}
 
 const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
@@ -148,12 +171,30 @@ app.use((req, res, next) => {
     return;
   }
 
-  // Sprint M5-B: Structured Request Tracing Headers
-  const requestId = (req.headers["x-request-id"] as string) || `req_${randomUUID().slice(0, 8)}`;
+  /**
+   * Tracing headers, echoed back only in a shape we chose.
+   *
+   * Both of these took a caller-supplied header and wrote it straight onto the
+   * response. Node rejects the CRLF that would make that header injection, so
+   * this was not a split — but it is an unbounded, unvalidated attacker string
+   * reflected to whoever reads the response, and `x-tenant-id` in particular
+   * reads like an authorisation-relevant value that this service never derives
+   * from the request. Nothing downstream trusts it; something eventually would.
+   *
+   * A short opaque token is all a trace needs.
+   */
+  const TRACE_SHAPE = /^[A-Za-z0-9._-]{1,64}$/;
+
+  const suppliedId = req.headers["x-request-id"];
+  const requestId =
+    typeof suppliedId === "string" && TRACE_SHAPE.test(suppliedId)
+      ? suppliedId
+      : `req_${randomUUID().slice(0, 8)}`;
   res.setHeader("x-request-id", requestId);
 
-  const tenantId = (req.headers["x-tenant-id"] as string) || "system";
-  res.setHeader("x-tenant-id", tenantId);
+  // Deliberately not echoed. The tenant a request belongs to is resolved from
+  // the session, and reflecting the caller's claim invites it to be believed.
+  res.setHeader("x-tenant-id", "system");
 
   let flowStage = "GENERAL";
   if (req.path.includes("access-requests")) flowStage = "ACCESS_REQUEST";
@@ -1240,7 +1281,21 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
 
 const templateUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  /**
+   * A per-file ceiling is only half a limit when the handler is `.any()`.
+   *
+   * `fileSize` alone caps each part at 10MB and says nothing about how many
+   * parts a request may carry, and this is memory storage — every one of them is
+   * buffered in the heap at once. A single multipart POST with a few hundred
+   * parts is an out-of-memory kill on the API process, from an endpoint that is
+   * reachable with one admin session.
+   */
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 20,
+    fields: 50,
+    fieldSize: 2 * 1024 * 1024,
+  },
 });
 
 const ALLOWED_CODE_EXTENSIONS = [
@@ -1334,8 +1389,9 @@ adminRouter.put("/default-website", async (req, res) => {
   }
 });
 
-adminRouter.get("/templates/stats", async (_req, res) => {
+adminRouter.get("/templates/stats", async (req, res) => {
   try {
+    await requireAdmin(req);
     const stats = await templateStats().catch(() => ({
       templates: { total: 0, published: 0, draft: 0, archived: 0 },
       library: { total: 0, active: 0, retired: 0 },
@@ -1353,8 +1409,16 @@ adminRouter.get("/templates/stats", async (_req, res) => {
   }
 });
 
-adminRouter.get("/templates", async (_req, res) => {
+adminRouter.get("/templates", async (req, res) => {
   try {
+    /**
+     * Admin-only, like every other route on this router.
+     *
+     * `listTemplatesForAdmin` returns each template's full `code` — the raw
+     * markup of the section library the whole platform is built from, including
+     * unpublished and archived drafts. It was readable by anyone.
+     */
+    await requireAdmin(req);
     res.json({ templates: await listTemplatesForAdmin() });
   } catch (error) {
     fail(res, error);
@@ -1410,7 +1474,10 @@ adminRouter.post("/templates", templateUpload.any(), async (req, res) => {
 
 adminRouter.get("/templates/:id", async (req, res) => {
   try {
-    // No auth required — read-only endpoint, same as GET /templates list
+    // Was: "No auth required — read-only endpoint, same as GET /templates
+    // list". True, and the list was not authenticated either. Read-only is not
+    // the same as public: this returns unpublished template source.
+    await requireAdmin(req);
     res.json(await getTemplateForAdmin(req.params.id as string));
   } catch (error) {
     fail(res, error);
@@ -1677,8 +1744,9 @@ app.put(["/api/v1/default-website", "/api/default-website", "/default-website", 
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats", "/templates/stats"], async (_req, res) => {
+app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats", "/templates/stats"], async (req, res) => {
   try {
+    await requireAdmin(req);
     const stats = await templateStats().catch(() => ({
       templates: { total: 0, published: 0, draft: 0, archived: 0 },
       library: { total: 0, active: 0, retired: 0 },
@@ -1695,8 +1763,9 @@ app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/
     });
   }
 });
-app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], async (_req, res) => {
+app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], async (req, res) => {
   try {
+    await requireAdmin(req);
     res.json({ templates: await listTemplatesForAdmin() });
   } catch (error) {
     fail(res, error);
@@ -1889,17 +1958,20 @@ app.get(
   },
 );
 
-app.put(
-  ["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"],
-  async (req, res) => {
-    try {
-      const updated = await updateDefaultWebsiteConfig(req.body ?? {});
-      res.json(updated);
-    } catch (error) {
-      fail(res, error);
-    }
-  },
-);
+/*
+ * A second, unguarded `app.put` for the same six paths was registered here.
+ *
+ * It called `updateDefaultWebsiteConfig(req.body)` with no `requireAdmin` and no
+ * shape check — the body that becomes the starting website of every college
+ * created from then on, and the fallback every tenant with no sections of their
+ * own renders from.
+ *
+ * It never ran: Express matches in registration order and the guarded handler
+ * above answers first. That is the entire reason it was not an open write
+ * endpoint, and it is not a reason anyone chose — reordering these two blocks,
+ * or deleting the one above as a duplicate, would have silently made it one.
+ * Removed rather than left as a copy that is safe by accident.
+ */
 
 /**
  * Per-College Website Config — the user editor reads and writes here.
@@ -1927,7 +1999,9 @@ app.get(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website
     const college = await College.findById(collegeId);
 
     if (college && college.websiteConfig) {
-      res.json(college.websiteConfig);
+      // The editor renders this into its canvas with `dangerouslySetInnerHTML`
+      // too, and the draft may predate the write-path sanitiser.
+      res.json(sanitizeWebsiteConfig(college.websiteConfig));
       return;
     }
 
@@ -1960,7 +2034,22 @@ app.put(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website
       return;
     }
 
-    college.websiteConfig = body;
+    /**
+     * Sanitised on the way in.
+     *
+     * This is the one endpoint a tenant writes section markup through, and it
+     * stored `req.body` verbatim — every `pages[].sections[].code` string, no
+     * schema, no escaping — into the field the published site renders with
+     * `dangerouslySetInnerHTML`. See `lib/sections/sanitize-section-html.ts` for
+     * why that reaches other tenants and the Super Admin rather than only this
+     * one, and for what survives the pass.
+     *
+     * Done here rather than only at render so the draft, the publish snapshot
+     * and the editor's own reload all see the same clean markup, and so that a
+     * tenant who pastes something dangerous is told by the editor immediately —
+     * it comes back stripped — instead of at some later render.
+     */
+    college.websiteConfig = sanitizeWebsiteConfig(body);
     // Stamped here rather than relying on the document's own `updatedAt`, which
     // moves for a publish, a domain check and every other write to this row.
     // The settings screen needs "when the draft last changed" specifically.
@@ -2264,7 +2353,16 @@ app.get(
        * this change live after it. The fallback stops applying to a tenant the
        * first time they publish.
        */
-      const liveConfig = college ? publishedSiteConfig(college) : null;
+      /**
+       * Sanitised on the way out as well as on the way in.
+       *
+       * Every tenant's `websiteConfig` and `publishedConfig` was written before
+       * any sanitisation existed, so the stored markup is untrusted regardless
+       * of what the write path now does. Cleaning here means an existing site
+       * stops being exploitable at deploy time rather than the next time its
+       * owner happens to press save.
+       */
+      const liveConfig = college ? sanitizeWebsiteConfig(publishedSiteConfig(college)) : null;
 
       if (college && liveConfig && Array.isArray(liveConfig.pages)) {
         const homePage = liveConfig.pages.find((p: any) => p.slug === "/home" || p.slug === "/") || liveConfig.pages[0];
@@ -2352,7 +2450,9 @@ app.get(
       const rawSub = req.params.subdomain;
       const subdomain = typeof rawSub === "string" ? rawSub : Array.isArray(rawSub) ? rawSub[0] || "greenfield" : "greenfield";
       const college = await College.findOne({ subdomain }).catch(() => null);
-      const liveConfig = college ? publishedSiteConfig(college) : null;
+      // Same reasoning as the public route above: stored markup predates the
+      // sanitiser, and this route is unauthenticated.
+      const liveConfig = college ? sanitizeWebsiteConfig(publishedSiteConfig(college)) : null;
 
       if (college && liveConfig && Array.isArray(liveConfig.pages)) {
         res.json({
@@ -2369,13 +2469,37 @@ app.get(
       }
 
       const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
+      /**
+       * Four fields, listed. This branch used to send `college` itself.
+       *
+       * A Mongoose document serialised whole, from a route with no session, for
+       * any subdomain a caller cared to type. `CollegeSchema`'s toJSON transform
+       * removes `_id` and `__v` and nothing else, so the response carried
+       * `users[]` in full — every account's email address and, beside it, its
+       * bcrypt `passwordHash` — plus `websiteConfig`, the unpublished draft, and
+       * the tenant's `domains[]` with their verification tokens.
+       *
+       * It was reachable whenever `publishedSiteConfig()` came back without a
+       * `pages` array, which is the ordinary state of a college that has never
+       * published: exactly the tenants whose data has had the least attention.
+       *
+       * The projection below is the fix and the guard against the next one. A
+       * literal cannot grow a field because a model did.
+       */
       res.json({
-        college: college ?? {
-          id: "open-access-id",
-          name: "GREENFIELD UNIVERSITY",
-          subdomain,
-          status: "PUBLISHED",
-        },
+        college: college
+          ? {
+              id: college.id,
+              name: college.name,
+              subdomain: college.subdomain,
+              status: college.status,
+            }
+          : {
+              id: "open-access-id",
+              name: "GREENFIELD UNIVERSITY",
+              subdomain,
+              status: "PUBLISHED",
+            },
         config: defConfig,
         pages: defConfig.pages,
         sections: defConfig.pages?.[0]?.sections || [],
@@ -2407,9 +2531,29 @@ const ALLOWED: Record<string, string> = {
   "image/svg+xml": ".svg",
 };
 
+/**
+ * SVG is a document, not a picture, and this service serves it from its own
+ * origin.
+ *
+ * An `.svg` may contain `<script>`, `<foreignObject>` and event handlers, and
+ * they all execute when a browser *navigates* to the file — which is one click
+ * on the URL this endpoint hands back. That execution happens on
+ * `api.webxite.org`, inside the session cookie's `.webxite.org` scope and inside
+ * `isAllowedOrigin`'s allowlist, so it can call this API as whoever is signed in
+ * and read the answers. The global CSP above does not stop it: `script-src` is
+ * `'self' 'unsafe-inline'`, and an inline script in a same-origin document is
+ * exactly what that permits.
+ *
+ * Uploads keep working. `<img src="...svg">` and `background-image` are
+ * subresource loads, where `Content-Disposition` is ignored and the sandbox CSP
+ * is irrelevant because no script runs in an image context anyway. Only direct
+ * navigation changes, and it changes to a download.
+ */
+const SCRIPTABLE_EXTENSIONS = new Set([".svg"]);
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 10 },
 });
 
 app.post("/api/uploads", upload.single("file"), async (req, res) => {
@@ -2464,6 +2608,22 @@ app.get("/uploads/:file", async (req, res) => {
     res.setHeader("Content-Type", type);
     res.setHeader("Content-Length", String(info.size));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
+    /**
+     * Uploaded bytes are never a document on this origin.
+     *
+     * `sandbox` puts anything that does render into an opaque origin with no
+     * script; `default-src 'none'` stops it fetching. Both are set for every
+     * type rather than only the scriptable ones, because the next format added
+     * to ALLOWED should be safe by default rather than by remembering this.
+     */
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+
+    if (SCRIPTABLE_EXTENSIONS.has(path.extname(target))) {
+      res.setHeader("Content-Disposition", "attachment");
+    }
+
     createReadStream(target).pipe(res);
   } catch {
     res.status(404).end();
@@ -2599,22 +2759,23 @@ function verifyDocs() {
   console.warn(message);
 }
 
-// Catch-all route fallback for resilience
-app.use((req, res) => {
-  if (req.path.includes("templates")) {
-    res.json({ templates: [] });
-    return;
-  }
-  if (req.path.includes("status")) {
-    res.json({ status: "ok" });
-    return;
-  }
-  if (req.path.includes("me")) {
-    res.json({ admin: null });
-    return;
-  }
-  res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
-});
+/*
+ * A "catch-all route fallback for resilience" was registered here.
+ *
+ * It matched on substrings of the path and answered 200: anything containing
+ * "templates" got `{templates: []}`, anything containing "status" got
+ * `{status: "ok"}`, anything containing "me" — which is most words — got
+ * `{admin: null}`.
+ *
+ * It is unreachable in practice, because the 404 handler above it answers
+ * first, and that is the only reason it was not actively harmful. What it would
+ * have done is worse than a 404: `{"status":"ok"}` from a path that does not
+ * exist tells a monitor the service is healthy when it is not, and `admin: null`
+ * from an admin path that has been renamed or removed looks to the panel like a
+ * signed-out session rather than a broken deploy. Resilience that reports
+ * success for work that did not happen is the failure mode this codebase has
+ * already fixed in `submitAccessRequest` and in `loginAction`.
+ */
 
 app.listen(PORT, async () => {
   console.log(`[api] xite backend listening on :${PORT}`);

@@ -1,4 +1,5 @@
 import { SystemSecret, AuditLog } from "@/models";
+import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
 
 export type DefaultWebsiteSection = {
   id: string;
@@ -106,7 +107,20 @@ function orderPageSections(config: DefaultWebsiteConfig): DefaultWebsiteConfig {
 }
 
 /** Ensure system_secrets collection holds default website config with clean sections and pages */
+/**
+ * The platform default, sanitised before it leaves this module.
+ *
+ * This config is rendered with `dangerouslySetInnerHTML` exactly as a tenant's
+ * own sections are — it is what every college with no sections of its own
+ * serves, and what the editor seeds a new page from — so it goes through the
+ * same pass. Wrapped around the loader rather than added to each of its five
+ * return paths, because one of those paths is where the next one gets missed.
+ */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
+  return sanitizeWebsiteConfig(await loadDefaultWebsiteConfig());
+}
+
+async function loadDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   const currentMem = inMemoryDefaultWebsite;
   if (currentMem && Array.isArray(currentMem.pages) && currentMem.pages.length > 0) {
     try {
@@ -154,8 +168,12 @@ export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
 }
 
 export async function updateDefaultWebsiteConfig(
-  config: DefaultWebsiteConfig
+  rawConfig: DefaultWebsiteConfig
 ): Promise<DefaultWebsiteConfig> {
+  // Sanitised on write as well as on read. This body reaches every tenant that
+  // has not customised their site, so it is the single highest-leverage place
+  // in the platform to put section markup.
+  const config = sanitizeWebsiteConfig(rawConfig);
   inMemoryDefaultWebsite = config;
 
   try {

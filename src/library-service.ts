@@ -87,8 +87,25 @@ export function sanitizeTemplateCode(rawCode: string): string {
           "crossorigin", "integrity", "defer", "async", "charset",
         ],
       },
-      allowedSchemes: ["http", "https", "mailto", "data", "javascript"],
-      allowedScriptDomains: ["*"],
+      /**
+       * `javascript` was on this list, and `allowedScriptDomains: ["*"]` beside
+       * it, on the reasoning in the docblock above that "admin content is
+       * trusted".
+       *
+       * That reasoning does not survive what these templates become. A template
+       * is the source of the section markup every tenant inserts, and it renders
+       * on `webxite.org` — the platform apex, same origin as the sign-in page,
+       * the editor and the `/admin/*` API rewrite. So the blast radius of one
+       * bad or compromised template is the whole platform, not one page.
+       *
+       * `<script>` stays allowed, because the library genuinely contains
+       * hamburger menus and carousels that need it and removing them would break
+       * live sites. `javascript:` URLs do not: nothing in the library uses one,
+       * they are the sink that never looks like a sink, and a `href` is not
+       * where a menu toggle belongs.
+       */
+      allowedSchemes: ["http", "https", "mailto", "tel", "data"],
+      allowedSchemesAppliedToAttributes: ["href", "src", "action", "formaction", "poster"],
     });
 
     // Step 4: Reattach all preserved styles BEFORE the HTML content.

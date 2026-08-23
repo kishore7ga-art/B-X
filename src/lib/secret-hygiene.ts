@@ -38,6 +38,14 @@ const KNOWN_PUBLISHED_SECRETS = [
   "change-me",
   "secret",
   "password",
+  // Found committed in this repository during the 2026-08-23 audit. "2008" was
+  // the Super Admin password accepted by `adminLogin` and re-applied on every
+  // boot by `bootstrapAdmin`; the other two were account passwords baked into
+  // `access-service.ts` and `lib/auth/demo.ts` in xite-F. All three are burned.
+  "2008",
+  "college123",
+  "greenfield123",
+  "replace-with-a-random-string-of-at-least-32-characters",
 ];
 
 /** Placeholders read as instructions rather than values. */

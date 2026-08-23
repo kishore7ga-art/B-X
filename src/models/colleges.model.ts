@@ -280,4 +280,32 @@ const CollegeSchema = new Schema<ICollege>(
  */
 CollegeSchema.index({ "domains.hostname": 1 }, { unique: true, sparse: true });
 
+/**
+ * The lookups every request makes, and none of them were indexed.
+ *
+ * Users are embedded in the college document, so `login()` resolves an account
+ * with `College.findOne({ "users.email": ... })` and the admin routes resolve
+ * one with `{ "users.id": ... }`. Neither path had an index, which makes both a
+ * full scan of every college document — and a college document carries two
+ * complete website configs made of raw section HTML, so these are among the
+ * largest documents in the database.
+ *
+ * That is a performance problem and an availability one. An unauthenticated
+ * caller can force a full scan of the largest collection ten times per fifteen
+ * minutes per address from the login route alone, and the rate limiter is keyed
+ * per email-plus-address, so varying the email varies the bucket. Indexing is
+ * the fix; the limiter was never going to be one.
+ *
+ * Not unique: `users.email` should be, but making it so on an existing
+ * deployment fails the index build if any duplicate exists, and taking the
+ * database down to enforce a constraint the application already checks is the
+ * wrong trade to make inside a security fix. Uniqueness is listed as a manual
+ * follow-up.
+ */
+CollegeSchema.index({ "users.email": 1 });
+CollegeSchema.index({ "users.id": 1 });
+
+/** `adminSites()` and `adminOverview()` filter on this on every panel load. */
+CollegeSchema.index({ isDemo: 1, createdAt: -1 });
+
 export const College = mongoose.models.College || mongoose.model<ICollege>("College", CollegeSchema);

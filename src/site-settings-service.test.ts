@@ -39,12 +39,29 @@ describe("mayExecuteCustomCode — script only on a tenant's own domain", () => 
  * platform's own cookie scope, so they are enumerated rather than sampled.
  */
 describe("stripExecutable — what a platform subdomain is allowed to render", () => {
+  /**
+   * These assert behaviour rather than bytes.
+   *
+   * They used to compare the output string exactly, which worked while this was
+   * five regexes over the input and every surviving byte came through
+   * untouched. It is `sanitize-html` now — a parser — so void elements come back
+   * self-closing (`<meta />`) and `style` attributes come back with their CSS
+   * reserialised. The markup is equivalent; the bytes are not, and pinning the
+   * bytes would pin the implementation rather than the security property.
+   *
+   * What each case actually needs to prove is "the executable part is gone and
+   * the inert part is still there", so that is what is checked.
+   */
+  const hasNoScript = (html: string) => !/<script|onerror|onclick|onload|javascript:/i.test(html);
+
   it("removes a script element and its contents", () => {
     assert.equal(stripExecutable('<script>alert(1)</script>'), "");
-    assert.equal(
-      stripExecutable('<meta name="a"><script>steal()</script><meta name="b">'),
-      '<meta name="a"><meta name="b">',
-    );
+
+    const out = stripExecutable('<meta name="a"><script>steal()</script><meta name="b">');
+    assert.ok(hasNoScript(out), out);
+    assert.ok(!/steal/.test(out), out);
+    assert.match(out, /<meta name="a"/);
+    assert.match(out, /<meta name="b"/);
   });
 
   it("removes a script with attributes", () => {
@@ -65,26 +82,64 @@ describe("stripExecutable — what a platform subdomain is allowed to render", (
   });
 
   it("removes inline event handlers", () => {
-    assert.equal(stripExecutable('<img src="x" onerror="steal()">'), '<img src="x">');
+    const img = stripExecutable('<img src="x" onerror="steal()">');
+    assert.ok(hasNoScript(img), img);
+    assert.match(img, /src="x"/);
+
     assert.equal(stripExecutable("<div onclick='go()'>hi</div>"), "<div>hi</div>");
-    assert.equal(stripExecutable('<body onload=go()>'), "<body>");
+
+    // `<body>` is not on the allowlist at all — head and body-end code has no
+    // business carrying one — so it goes entirely rather than being emptied.
+    assert.equal(stripExecutable('<body onload=go()>'), "");
+  });
+
+  /**
+   * These two are the bypasses the regex version admitted. `/` is a valid
+   * attribute separator, so `\son` never matched; and the scheme check ran
+   * against raw bytes while the browser decodes entities first.
+   */
+  it("removes handlers that a whitespace-anchored regex misses", () => {
+    const slash = stripExecutable('<img/onerror="steal()" src=x>');
+    assert.ok(hasNoScript(slash), slash);
+
+    const newline = stripExecutable('<img src=x\n  onerror\n  =\n  "steal()">');
+    assert.ok(hasNoScript(newline), newline);
   });
 
   it("removes javascript: and data: URLs", () => {
     assert.equal(stripExecutable('<a href="javascript:alert(1)">x</a>'), "<a>x</a>");
-    assert.equal(stripExecutable('<img src="data:text/html;base64,PHNjcmlwdD4=">'), "<img>");
+
+    const entity = stripExecutable('<a href="&#106;avascript:alert(1)">x</a>');
+    assert.equal(entity, "<a>x</a>");
+
+    const dataImg = stripExecutable('<img src="data:text/html;base64,PHNjcmlwdD4=">');
+    assert.ok(!/data:/i.test(dataImg), dataImg);
   });
 
   // The point of stripping rather than escaping: the tenant asked for markup,
   // and the harmless majority of it should still work.
   it("keeps markup that cannot execute", () => {
-    const meta = '<meta name="google-site-verification" content="abc123">';
-    assert.equal(stripExecutable(meta), meta);
+    const meta = stripExecutable('<meta name="google-site-verification" content="abc123">');
+    assert.match(meta, /name="google-site-verification"/);
+    assert.match(meta, /content="abc123"/);
 
-    const styles = '<link rel="stylesheet" href="https://fonts.example/f.css">';
-    assert.equal(stripExecutable(styles), styles);
+    const styles = stripExecutable('<link rel="stylesheet" href="https://fonts.example/f.css">');
+    assert.match(styles, /rel="stylesheet"/);
+    assert.match(styles, /href="https:\/\/fonts\.example\/f\.css"/);
 
+    /**
+     * The CSS body specifically, because this is the case the parser would
+     * otherwise silently eat: sanitize-html drops the text content of a `<style>`
+     * element even when the tag is allowed, so the block is lifted out before
+     * sanitisation and reattached after.
+     */
     assert.equal(stripExecutable("<style>.a{color:red}</style>"), "<style>.a{color:red}</style>");
+  });
+
+  it("keeps a stylesheet but strips CSS that reaches outside CSS", () => {
+    const out = stripExecutable("<style>.a{color:red;width:expression(alert(1))}</style>");
+    assert.match(out, /color:red/);
+    assert.ok(!/expression\s*\(/i.test(out), out);
   });
 
   it("handles empty input", () => {

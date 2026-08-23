@@ -59,4 +59,17 @@ const AccessRequestSchema = new Schema<IAccessRequest>(
   }
 );
 
+/**
+ * Both of these are on unauthenticated paths.
+ *
+ * `login()` reads `{ applicantEmail }` for every failed sign-in, to tell someone
+ * waiting in the approval queue why their password is not working; and
+ * activation reads `{ activationToken }` on every redemption attempt. Without
+ * an index each is a scan of the whole access-request collection, which is the
+ * one collection that grows with public traffic.
+ */
+AccessRequestSchema.index({ applicantEmail: 1, createdAt: -1 });
+AccessRequestSchema.index({ activationToken: 1 }, { sparse: true });
+AccessRequestSchema.index({ status: 1, createdAt: -1 });
+
 export const AccessRequest = mongoose.models.AccessRequest || mongoose.model<IAccessRequest>("AccessRequest", AccessRequestSchema);

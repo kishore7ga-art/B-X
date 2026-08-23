@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import bcrypt from "bcryptjs";
 import { AdminUser, SystemSecret, ThemePalette, ThemeFont, Template } from "@/models";
 
@@ -11,6 +13,32 @@ export type BootstrapOutcome =
 
 let lastOutcome: BootstrapOutcome = "idle";
 
+/**
+ * Admin passwords this repository has published, plus a length floor.
+ *
+ * Kept beside `secret-hygiene.ts`'s list rather than merged into it because the
+ * two answer different questions — that one guards signing keys, this one
+ * guards a human credential — but both exist for the same reason: a value that
+ * has appeared in a public file is burned, whatever it is later used for.
+ */
+const PUBLISHED_ADMIN_PASSWORDS = [
+  "2008",
+  "changeme",
+  "change-me",
+  "password",
+  "admin",
+  "replace-with-secure-admin-password",
+  "college123",
+  "greenfield123",
+];
+
+function isUnusableBootstrapPassword(value: string): boolean {
+  const lower = value.trim().toLowerCase();
+  if (lower.length < 12) return true;
+  if (PUBLISHED_ADMIN_PASSWORDS.includes(lower)) return true;
+  return /^(your-|<|replace-with|placeholder)/.test(lower);
+}
+
 export function bootstrapState() {
   return {
     varsSet: Boolean(
@@ -21,29 +49,106 @@ export function bootstrapState() {
   };
 }
 
-const DEFAULT_ADMIN = {
-  email: "admin@xite.co.in",
-  password: "2008",
-};
+/**
+ * The address the first Super Admin is created at when none is configured.
+ *
+ * There is deliberately no password beside it any more. This constant used to
+ * read `{ email: "admin@xite.co.in", password: "2008" }`, and that pair was
+ * applied on *every* boot — the "will not be applied again" marker below was
+ * written but never read — so a deployment that had rotated its admin password
+ * had it silently reset to a four-digit literal published in this repository on
+ * the next container restart. `adminLogin` accepted the same literal directly,
+ * which made it a universal key rather than merely a weak one.
+ *
+ * A first administrator is still created when nothing is configured, because a
+ * platform whose admin panel cannot be opened is a platform nobody can operate.
+ * The password is now generated per deployment and printed once to the server
+ * log, which is an operator-only channel — it is not in the image, not in git,
+ * and not the same on two installations.
+ */
+const DEFAULT_ADMIN_EMAIL = "admin@xite.co.in";
 
 const DEFAULT_APPLIED_MARKER = "admin_default_applied";
+
+/**
+ * A password worth generating: 32 base64url characters of CSPRNG output. Long
+ * enough that the one log line below is the only place it can come from.
+ */
+function generatedPassword(): string {
+  return randomBytes(24).toString("base64url");
+}
 
 export async function bootstrapAdmin() {
   const envEmail = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
   const envPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD;
   const fromEnv = Boolean(envEmail && envPassword);
 
-  const email = fromEnv ? envEmail! : DEFAULT_ADMIN.email;
-  const password = fromEnv ? envPassword! : DEFAULT_ADMIN.password;
+  const email = fromEnv ? envEmail! : DEFAULT_ADMIN_EMAIL;
 
   try {
+    /**
+     * Without configuration, this runs exactly once per database.
+     *
+     * The marker is read now as well as written. Re-running the unconfigured
+     * branch is what turned a first-boot convenience into a standing password
+     * reset, so a database that has already been bootstrapped is left alone —
+     * whatever the administrator has since changed their password to stays.
+     */
+    if (!fromEnv) {
+      const alreadyApplied = await SystemSecret.findOne({
+        name: DEFAULT_APPLIED_MARKER,
+      }).catch(() => null);
+
+      if (alreadyApplied) {
+        lastOutcome = "matched";
+        await bootstrapTemplates();
+        return;
+      }
+    }
+
+    const password = fromEnv ? envPassword! : generatedPassword();
+
     if (password.length < 1) {
       lastOutcome = "refused";
       console.error("[admin] bootstrap refused — password is empty.");
       return;
     }
 
+    /**
+     * A configured password that is a known placeholder is refused outright.
+     *
+     * Creating an administrator whose password is a string from this
+     * repository's own documentation is worse than creating none: the panel
+     * opens, looks configured, and is open to whoever read the file.
+     */
+    if (fromEnv && isUnusableBootstrapPassword(password)) {
+      lastOutcome = "refused";
+      console.error(
+        "[admin] bootstrap refused — ADMIN_BOOTSTRAP_PASSWORD is a known " +
+          "placeholder or shorter than 12 characters. Generate one with " +
+          "`openssl rand -base64 24` and redeploy.",
+      );
+      return;
+    }
+
     const existing = await AdminUser.findOne({ email });
+
+    if (!existing && !fromEnv) {
+      // The generated password exists only here and in this one log line.
+      console.warn(
+        [
+          "",
+          "  FIRST SUPER ADMIN CREATED — PASSWORD SHOWN ONCE",
+          "",
+          `    email:    ${email}`,
+          `    password: ${password}`,
+          "",
+          "  Sign in, change it, and do not rely on this line surviving in the",
+          "  log. It is not printed again on any later boot.",
+          "",
+        ].join("\n"),
+      );
+    }
 
     if (!existing) {
       try {
@@ -62,6 +167,13 @@ export async function bootstrapAdmin() {
           throw err;
         }
       }
+    } else if (!fromEnv) {
+      /**
+       * An administrator already exists and nothing was configured, so there is
+       * nothing to apply. This branch used to overwrite their stored hash with
+       * the committed default on every single boot.
+       */
+      lastOutcome = "matched";
     } else if (await bcrypt.compare(password, existing.passwordHash)) {
       lastOutcome = "matched";
       console.log(`[admin] ${email} already has this password.`);
@@ -69,10 +181,7 @@ export async function bootstrapAdmin() {
       existing.passwordHash = await bcrypt.hash(password, 12);
       await existing.save();
       lastOutcome = "reset";
-      console.log(
-        `[admin] reset the password for ${email} from ` +
-          `${fromEnv ? "the environment" : "the committed default"}.`,
-      );
+      console.log(`[admin] reset the password for ${email} from the environment.`);
     }
 
     if (fromEnv) {
@@ -89,11 +198,6 @@ export async function bootstrapAdmin() {
       { name: DEFAULT_APPLIED_MARKER, value: new Date().toISOString() },
       { upsert: true }
     ).catch(() => {});
-
-    console.warn(
-      `[admin] This deployment is using the committed default password for ` +
-        `${email}. It will not be applied again.`,
-    );
 
     await bootstrapTemplates();
   } catch (error) {

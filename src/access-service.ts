@@ -11,7 +11,19 @@ import {
 } from "@/auth-service";
 import { AccessRequest, College, AuditLog } from "@/models";
 import { subdomainFromName } from "@/lib/college-types";
+import { verifyGoogleIdToken } from "@/google-identity";
 import { getDefaultWebsiteConfig } from "@/default-website-service";
+
+/**
+ * One work factor for every password this service stores, and one length floor.
+ *
+ * They were spread across four call sites at two different values - cost 8 on
+ * the access-request form, 12 on activation and admin reset - and the cheapest
+ * one governed most accounts, because the form's hash is the one that survives
+ * approval. The floor was 8 characters on activation and absent on the form.
+ */
+export const PASSWORD_COST = 12;
+export const MIN_ACCOUNT_PASSWORD_LENGTH = 10;
 
 export const accessRequestSchema = z.object({
   name: z
@@ -24,7 +36,23 @@ export const accessRequestSchema = z.object({
     .trim()
     .toLowerCase()
     .email("Enter a valid email"),
-  password: z.string().trim().optional(),
+  /**
+   * Optional, but when given it becomes the account's real password at
+   * approval - so it carries the same floor as every other password on the
+   * platform. It had none: `z.string().trim().optional()` accepted one
+   * character, and `approveAccessRequest` copied the hash straight onto the
+   * created user.
+   */
+  password: z
+    .string()
+    .trim()
+    .min(
+      MIN_ACCOUNT_PASSWORD_LENGTH,
+      `Password must be at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters`,
+    )
+    .max(200, "Password is too long")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
   organization: z.string().trim().max(160, "Organization name is too long").optional(),
   message: z.string().trim().max(2000, "Message is too long").optional(),
 });
@@ -46,18 +74,47 @@ export async function submitAccessRequest(input: unknown) {
 
     let passwordHash: string | null = null;
     if (password && password.trim()) {
-      passwordHash = await bcrypt.hash(password.trim(), 8);
+      /**
+       * Cost 12, not 8.
+       *
+       * This hash is not a throwaway: `approveAccessRequest` copies it verbatim
+       * onto the created account, so cost 8 here set the work factor for most
+       * real user passwords on the platform - roughly sixteen times cheaper to
+       * grind than the 12 used everywhere else in this codebase.
+       */
+      passwordHash = await bcrypt.hash(password.trim(), PASSWORD_COST);
     }
 
     const orgName = organization || name;
     const reqSubdomain = subdomainFromName(orgName);
 
     if (pending) {
-      pending.collegeName = orgName;
-      pending.applicantName = name;
-      if (passwordHash) pending.passwordHash = passwordHash;
-      pending.createdAt = new Date();
-      await pending.save();
+      /**
+       * A second request for an address that already has one changes nothing.
+       *
+       * This endpoint is public and unauthenticated - it has to be, it is the
+       * front door - and it used to overwrite the pending row's `passwordHash`,
+       * `collegeName` and `applicantName` with whatever the new caller sent.
+       * Nothing proved the second caller was the first.
+       *
+       * So: submit a request naming somebody else's work address and a password
+       * of your choosing, wait for the Super Admin to approve the row they
+       * already had in their queue, and `approveAccessRequest` creates that
+       * college's owner account carrying *your* hash. A takeover completed by
+       * the administrator, against an application they believed they were
+       * reading, with nothing anywhere recording that the row had changed hands.
+       *
+       * Re-submitting is still answered 202 with the same body, because callers
+       * must not be able to tell whether an address is already in the queue. It
+       * simply does not write.
+       */
+      await AuditLog.create({
+        action: "ACCESS_REQUEST_DUPLICATE_IGNORED",
+        tenantId: reqSubdomain,
+        details: { email: cleanEmail },
+      }).catch(() => null);
+
+      return { received: true as const };
     } else {
       await AccessRequest.create({
         collegeName: orgName,
@@ -181,13 +238,37 @@ export async function approveAccessRequest(
   const rawToken = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
 
+  /**
+   * The password the new account is created with.
+   *
+   * The last branch used to be `bcrypt.hash("college123", 12)` - one literal,
+   * committed to this repository, shared by every account approved without a
+   * password of its own. The account is created ACTIVE and
+   * `POST /api/v1/auth/login` accepts it immediately, so knowing any approved
+   * applicant's email address was enough to sign in as the owner of their
+   * college. This is the common branch, not an edge case: it is what every
+   * request submitted without a password gets.
+   *
+   * It is a CSPRNG value nobody is ever told now. That is deliberately not a
+   * usable credential - the way into such an account is the activation link the
+   * approve route emails, which sets a password the applicant chooses. Filling
+   * the field with randomness rather than leaving it empty keeps the account the
+   * same shape as every other, so no code path has to reason about a user with
+   * no hash.
+   */
   let passwordHash: string;
   if (customPassword && customPassword.trim()) {
-    passwordHash = await bcrypt.hash(customPassword.trim(), 12);
+    if (customPassword.trim().length < MIN_ACCOUNT_PASSWORD_LENGTH) {
+      throw new AuthError(
+        `A password set here must be at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters.`,
+        400,
+      );
+    }
+    passwordHash = await bcrypt.hash(customPassword.trim(), PASSWORD_COST);
   } else if (request.passwordHash) {
     passwordHash = request.passwordHash;
   } else {
-    passwordHash = await bcrypt.hash("college123", 12);
+    passwordHash = await bcrypt.hash(randomBytes(32).toString("base64url"), PASSWORD_COST);
   }
 
   const cleanEmail = request.applicantEmail.trim().toLowerCase();
@@ -305,7 +386,11 @@ export const activatePasswordSchema = z.object({
   token: tokenSchema,
   password: z
     .string({ error: "Choose a password" })
-    .min(8, "Password must be at least 8 characters"),
+    .min(
+      MIN_ACCOUNT_PASSWORD_LENGTH,
+      `Password must be at least ${MIN_ACCOUNT_PASSWORD_LENGTH} characters`,
+    )
+    .max(200, "Password is too long"),
 });
 
 export const activateGoogleSchema = z.object({
@@ -349,7 +434,7 @@ export async function activateWithPassword(input: unknown) {
     throw EXPIRED_INVITE;
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(password, PASSWORD_COST);
   const cleanEmail = request.applicantEmail.toLowerCase().trim();
 
   let college = await College.findOne({ "users.email": cleanEmail });
@@ -422,10 +507,26 @@ export async function activateWithGoogle(input: unknown) {
     throw EXPIRED_INVITE;
   }
 
-async function verifyGoogleIdToken(credential: string): Promise<{ email: string }> {
-  return { email: credential };
-}
-
+  /**
+   * Verified against Google's published keys, not believed.
+   *
+   * A local function was declared here that read, in full:
+   *
+   *     async function verifyGoogleIdToken(credential) { return { email: credential }; }
+   *
+   * It shadowed the real implementation in `google-identity.ts` - signature
+   * check, issuer pinning, audience pinning against GOOGLE_CLIENT_ID, and an
+   * `email_verified` requirement - with a function that echoed its own argument
+   * back as the identity. The `identity.email !== request.applicantEmail`
+   * comparison below therefore compared the invited address against a string the
+   * caller had just chosen, and passed whenever the caller typed it.
+   *
+   * That comparison is the whole security boundary of activation-by-Google, as
+   * both `google-identity.ts` and `.env.example` say at length: an invite is a
+   * bearer token in an email, and without the match anyone who intercepts one
+   * redeems it with their own account. It was documented, relied upon, and not
+   * running.
+   */
   const identity = await verifyGoogleIdToken(credential);
   const cleanEmail = request.applicantEmail.toLowerCase().trim();
 
@@ -433,7 +534,10 @@ async function verifyGoogleIdToken(credential: string): Promise<{ email: string 
     throw new AuthError("Google account email does not match the invited address", 400);
   }
 
-  const dummyPasswordHash = await bcrypt.hash(randomBytes(16).toString("hex"), 12);
+  const dummyPasswordHash = await bcrypt.hash(
+    randomBytes(32).toString("base64url"),
+    PASSWORD_COST,
+  );
   let college = await College.findOne({ "users.email": cleanEmail });
   let userId = new mongoose.Types.ObjectId().toString();
 
