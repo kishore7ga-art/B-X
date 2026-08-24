@@ -15,6 +15,8 @@ export interface ISectionItem {
   category?: string;
   code?: string;
   sortOrder?: number;
+  /** Which library template this section shows; the variant cycle's identity. */
+  templateId?: string | null;
   variantIndex?: number;
   [key: string]: any;
 }
@@ -156,6 +158,16 @@ const SectionItemSchema = new Schema<ISectionItem>(
     category: { type: String },
     code: { type: String, default: "" },
     sortOrder: { type: Number, default: 0 },
+    /**
+     * Which library template this section is showing.
+     *
+     * Declared rather than left to `strict: false`. This is the field the
+     * variant swap cycles on — the whole reason swapping survives a user
+     * editing a section's text — and it was persisting only because this
+     * schema happens to accept unknown paths. A field load-bearing for a
+     * feature should not depend on that staying true.
+     */
+    templateId: { type: String, default: null },
     variantIndex: { type: Number, default: 0 },
   },
   { _id: false, strict: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }

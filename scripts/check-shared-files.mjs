@@ -30,6 +30,18 @@ const SHARED = [
   "src/lib/sections/categories.ts",
 ];
 
+/**
+ * Files shared with xite-admin rather than with each other.
+ *
+ * `section-runtime.ts` is the rendering environment every section is authored
+ * against — the Admin previews a section in an iframe built from it, and the
+ * editor and the published site build their canvas from it. Three surfaces
+ * agreeing "by construction" only holds while the file is actually identical,
+ * and nothing checked. It is the one file where drift is invisible until a
+ * section renders differently in the studio than it does live.
+ */
+const SHARED_WITH_ADMIN = ["src/lib/section-runtime.ts"];
+
 const MANIFEST = "shared-files.lock.json";
 
 /** Line endings differ between checkouts on Windows; content does not. */
@@ -40,7 +52,7 @@ const digest = (path) =>
     .slice(0, 16);
 
 const current = Object.fromEntries(
-  SHARED.filter(existsSync).map((path) => [path, digest(path)]),
+  [...SHARED, ...SHARED_WITH_ADMIN].filter(existsSync).map((path) => [path, digest(path)]),
 );
 
 if (process.argv.includes("--update")) {
