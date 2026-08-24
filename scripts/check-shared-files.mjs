@@ -23,6 +23,11 @@ const SHARED = [
   "src/lib/json-stable.ts",
   "src/lib/auth/cookie-domain.ts",
   "src/lib/api-contract.ts",
+  // How a section's category is decided. Four disagreeing copies of this rule
+  // is what let a template be a `navbar` to one screen and a `custom` to
+  // another — the reason a section could swap into a variant of a different
+  // kind, or find no variants at all.
+  "src/lib/sections/categories.ts",
 ];
 
 const MANIFEST = "shared-files.lock.json";

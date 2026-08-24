@@ -31,6 +31,14 @@ const REQUIRED = [
   ["get", "/api/v1/billing/payment-methods"],
   ["post", "/api/v1/billing/payment-methods"],
   ["delete", "/api/v1/billing/payment-methods/{id}"],
+  // Editor builder rebuild: per-page writes, reordering, the tenant-facing
+  // section library, and the theme id.
+  ["put", "/api/v1/my-website/pages/{slug}"],
+  ["delete", "/api/v1/my-website/pages/{slug}"],
+  ["patch", "/api/v1/my-website/pages/{slug}/order"],
+  ["get", "/api/v1/section-library"],
+  ["get", "/api/v1/my-theme"],
+  ["put", "/api/v1/my-theme"],
 ];
 
 /**

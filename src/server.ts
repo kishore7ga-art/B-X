@@ -93,9 +93,17 @@ import {
   getDefaultWebsiteConfig,
   updateDefaultWebsiteConfig,
 } from "@/default-website-service";
-import { generateAiSection } from "@/ai-service";
 import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
-import { optimizeSection } from "@/ai-optimize-service";
+import {
+  deletePage,
+  loadDraft,
+  prepareConfig,
+  reorderPageSections,
+  saveDraft,
+  savePage,
+} from "@/website-config-service";
+import { getSectionLibrary } from "@/section-library-service";
+import { EDITOR_THEME_IDS, EDITOR_FONT_IDS } from "@/lib/editor-themes";
 
 /**
  * Open-access mode is a development convenience and refuses to be one in
@@ -866,20 +874,6 @@ const LIMITS = {
    * oracle while the POST beside it is limited.
    */
   activate: { max: 10, windowMs: 15 * 60 * 1000 },
-  /**
-   * Generating or rewriting a section with Gemini.
-   *
-   * The only bucket here that is about money rather than guessing. Each call
-   * spends against GEMINI_API_KEY and holds a connection for up to sixty
-   * seconds, and both routes were reachable without a session — an uncapped
-   * billing endpoint on the public internet.
-   *
-   * Keyed per address like the rest, which is the floor rather than the answer:
-   * these routes now require a session, so the real cap is per account. Set a
-   * hard monthly quota in the Google console as the backstop that does not
-   * depend on this file being right.
-   */
-  ai: { max: 20, windowMs: 60 * 60 * 1000 },
 } as const;
 
 const LONGEST_WINDOW_MS = Math.max(
@@ -1096,34 +1090,6 @@ app.post("/api/v1/access-requests", async (req, res) => {
   }
 });
 
-/**
- * AI-Assisted Section Generation Endpoint.
- *
- * Generates a themed homepage section from a prompt, for the college that owns
- * the current session.
- *
- * Requires that session. It did not, and the cost of that is not abstract: this
- * calls Gemini on our key, so an unauthenticated POST loop is a bill. Session
- * first, then the limiter, so an anonymous caller is rejected before it can
- * consume anyone's quota.
- */
-app.post("/api/v1/ai/generate-section", async (req, res) => {
-  try {
-    await requireSession(req);
-
-    if (rateLimit("ai", req)) {
-      res
-        .status(429)
-        .json({ error: "Too many AI requests. Try again in a little while." });
-      return;
-    }
-
-    const result = await generateAiSection(req.body ?? {});
-    res.json(result);
-  } catch (error) {
-    fail(res, error);
-  }
-});
 
 /**
  * What the activation page reads before it draws the form.
@@ -1647,51 +1613,6 @@ adminRouter.get("/library", async (req, res) => {
   }
 });
 
-/**
- * AI Fix & Responsive — optimizes an existing Xite section for responsiveness.
- *
- * Calls the Gemini API server-side; the API key is never sent to the browser.
- * Protected by requireAdmin — only authenticated admins may call this.
- */
-/**
- * Rewrites a section's markup with Gemini, for the admin studio.
- *
- * Requires an admin session. The previous version verified one and then
- * continued regardless, reasoning that `GEMINI_API_KEY` being a server-side
- * secret was itself the gate. It is not: the key is what pays for the call, not
- * what authorises it, and "the secret is on the server" is true of every
- * credential behind every unauthenticated endpoint ever exploited.
- *
- * The comment justified the bypass by pointing at the other write endpoints
- * doing the same thing. That was accurate, and it was the problem — the
- * workaround had become the house style. The cookie-domain mismatch it was
- * built around is fixed by setting SESSION_COOKIE_DOMAIN, not by removing the
- * check that noticed it.
- */
-adminRouter.post("/ai/optimize-section", async (req, res) => {
-  try {
-    await requireAdmin(req);
-
-    if (rateLimit("ai", req)) {
-      res
-        .status(429)
-        .json({ error: "Too many AI requests. Try again in a little while." });
-      return;
-    }
-
-    if (!process.env.GEMINI_API_KEY) {
-      res
-        .status(503)
-        .json({ error: "AI optimization is not configured on this deployment" });
-      return;
-    }
-
-    const result = await optimizeSection(req.body ?? {});
-    res.json(result);
-  } catch (error) {
-    fail(res, error);
-  }
-});
 
 
 // Top-level direct endpoint registrations for status and session checks
@@ -2005,76 +1926,182 @@ app.get(
  *
  * Both routes require an active user session — a college must be logged in.
  */
+/**
+ * A `:slug` route parameter, as a plain string.
+ *
+ * Express 5 types params on array-registered routes as `string | string[]`, and
+ * decodes them once itself. Decoding a second time is what turns a page named
+ * `50%-scholarship` into a URIError and a 500, so the second pass is attempted
+ * and discarded on failure rather than trusted.
+ */
+function slugParam(value: string | string[] | undefined): string {
+  const raw = Array.isArray(value) ? value[0] ?? "" : value ?? "";
+  if (!raw.includes("%")) return raw;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 app.get(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website"], async (req, res) => {
   try {
-    const session = await getSession(req.headers.cookie).catch(() => null);
-    if (!session) {
-      const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
-      res.json(defConfig);
-      return;
-    }
-    const collegeId = session.collegeId;
-    const college = await College.findById(collegeId);
+    const session = await requireSession(req);
+    const draft = await loadDraft(session.collegeId);
 
-    if (college && college.websiteConfig) {
-      // The editor renders this into its canvas with `dangerouslySetInnerHTML`
-      // too, and the draft may predate the write-path sanitiser.
-      res.json(sanitizeWebsiteConfig(college.websiteConfig));
+    // A college that has never saved anything starts from the platform default.
+    // Seeded on read rather than at signup so a default the Super Admin changes
+    // still reaches colleges created before the change but not yet edited.
+    if (draft.pages.length === 0) {
+      res.json(prepareConfig(await getDefaultWebsiteConfig().catch(() => ({ pages: [] }))));
       return;
     }
 
-    const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
-    res.json(defConfig);
+    res.json(draft);
   } catch (error) {
     fail(res, error);
   }
 });
 
+/**
+ * Replace the whole draft.
+ *
+ * Kept for the editor's explicit Save and for importing a config wholesale.
+ * Ordinary edits go through the per-page route below, which cannot rewrite a
+ * page the client was not looking at.
+ */
 app.put(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website"], async (req, res) => {
   try {
-    const session = await getSession(req.headers.cookie).catch(() => null);
+    const session = await requireSession(req);
     const body = req.body ?? {};
+    if (!Array.isArray(body.pages)) {
+      throw new BadRequest("Invalid config: a pages array is required.");
+    }
+    res.json(await saveDraft(session.collegeId, body));
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
-    if (!session) {
-      res.json(body.pages ? body : { pages: [] });
-      return;
+/**
+ * One page, saved on its own.
+ *
+ * This is the write path for every ordinary edit, and it is what keeps pages
+ * from bleeding into each other. The full-config PUT above had to reconstruct
+ * every page from browser state on every save, so a page the editor had loaded
+ * stale — or had never loaded — was overwritten with whatever that tab happened
+ * to be holding. Editing Home rewrote About. Here the server owns every page
+ * except the one named in the URL.
+ */
+app.put(["/api/v1/my-website/pages/:slug", "/api/my-website/pages/:slug"], async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const body = req.body ?? {};
+    res.json(await savePage(session.collegeId, slugParam(req.params.slug), body));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Reorder one page's sections, by id.
+ *
+ * Separate from the save above because it is the one edit that has to land on
+ * the click. Move-up used to persist by re-sending every page's full markup
+ * through a 2-second debounce that the next click restarted, so two quick
+ * presses and a refresh wrote nothing at all — the reported "order does not
+ * persist". A list of ids is small enough to send synchronously and cannot lose
+ * an edit made anywhere else.
+ */
+app.patch(
+  ["/api/v1/my-website/pages/:slug/order", "/api/my-website/pages/:slug/order"],
+  async (req, res) => {
+    try {
+      const session = await requireSession(req);
+      const sectionIds = (req.body ?? {}).sectionIds;
+      res.json(
+        await reorderPageSections(session.collegeId, slugParam(req.params.slug), sectionIds),
+      );
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+app.delete(["/api/v1/my-website/pages/:slug", "/api/my-website/pages/:slug"], async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    res.json(await deletePage(session.collegeId, slugParam(req.params.slug)));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * The section library a tenant may read.
+ *
+ * The editor asked `/api/v1/admin/templates` for this, which requires an admin
+ * session; a college session fails it, so every tenant's template list was
+ * empty and the Add Section picker showed all nineteen categories as "Not in
+ * library". Same collection, tenant-appropriate projection: published and
+ * non-archived only, one resolved category per row, deterministic order.
+ */
+app.get(["/api/v1/section-library", "/api/section-library"], async (req, res) => {
+  try {
+    await requireSession(req);
+    res.json(await getSectionLibrary());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * The editor theme.
+ *
+ * Stored as an id, never as colours. The editor used to apply a theme by
+ * rewriting every section's HTML with a find-and-replace over a dozen hardcoded
+ * hex values — so the theme was not a setting at all, it was a destructive
+ * migration of the tenant's own markup, and switching back could not restore
+ * what the previous switch had overwritten. An id is reversible, is one field,
+ * and means the published site can render the same theme without re-deriving it.
+ */
+app.get(["/api/v1/my-theme", "/api/my-theme"], async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const college = await College.findById(session.collegeId).select("themePaletteId themeFontId").lean();
+    res.json({
+      themeId: (college as { themePaletteId?: string | null } | null)?.themePaletteId ?? null,
+      fontId: (college as { themeFontId?: string | null } | null)?.themeFontId ?? null,
+    });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.put(["/api/v1/my-theme", "/api/my-theme"], async (req, res) => {
+  try {
+    const session = await requireSession(req);
+    const body = req.body ?? {};
+    const themeId = typeof body.themeId === "string" ? body.themeId.trim() : null;
+    const fontId = typeof body.fontId === "string" ? body.fontId.trim() : null;
+
+    // Validated against the list the frontend renders, so an id that no theme
+    // answers to cannot be stored and then applied to nothing on the live site.
+    if (themeId && !EDITOR_THEME_IDS.includes(themeId)) {
+      throw new BadRequest(`Unknown theme "${themeId}".`);
+    }
+    if (fontId && !EDITOR_FONT_IDS.includes(fontId)) {
+      throw new BadRequest(`Unknown font pack "${fontId}".`);
     }
 
-    const collegeId = session.collegeId;
-    if (!body.pages || !Array.isArray(body.pages)) {
-      res.status(400).json({ error: "Invalid config: pages array required" });
-      return;
-    }
+    const college = await College.findById(session.collegeId);
+    if (!college) throw new NotFound("This account is not linked to a college.");
 
-    const college = await College.findById(collegeId);
-    if (!college) {
-      res.json(body);
-      return;
-    }
-
-    /**
-     * Sanitised on the way in.
-     *
-     * This is the one endpoint a tenant writes section markup through, and it
-     * stored `req.body` verbatim — every `pages[].sections[].code` string, no
-     * schema, no escaping — into the field the published site renders with
-     * `dangerouslySetInnerHTML`. See `lib/sections/sanitize-section-html.ts` for
-     * why that reaches other tenants and the Super Admin rather than only this
-     * one, and for what survives the pass.
-     *
-     * Done here rather than only at render so the draft, the publish snapshot
-     * and the editor's own reload all see the same clean markup, and so that a
-     * tenant who pastes something dangerous is told by the editor immediately —
-     * it comes back stripped — instead of at some later render.
-     */
-    college.websiteConfig = sanitizeWebsiteConfig(body);
-    // Stamped here rather than relying on the document's own `updatedAt`, which
-    // moves for a publish, a domain check and every other write to this row.
-    // The settings screen needs "when the draft last changed" specifically.
-    college.draftUpdatedAt = new Date();
+    if (themeId !== null) college.themePaletteId = themeId;
+    if (fontId !== null) college.themeFontId = fontId;
     await college.save();
 
-    res.json(college.websiteConfig);
+    res.json({ themeId: college.themePaletteId ?? null, fontId: college.themeFontId ?? null });
   } catch (error) {
     fail(res, error);
   }
@@ -2401,6 +2428,20 @@ app.get(
           sections: pageSections,
           publishedVersion: college.publishedVersion ?? 0,
           publishedAt: college.publishedAt ?? null,
+          /**
+           * The theme the tenant chose, so their live site renders in it.
+           *
+           * Two ids rather than a palette. The theme is applied by the renderer
+           * as CSS custom properties keyed on these, so the section markup that
+           * was published stays exactly as it was authored — which is what
+           * makes a theme change something a tenant can undo, and what stops a
+           * republish from baking one theme's colours into their content
+           * permanently.
+           */
+          theme: {
+            themeId: college.themePaletteId ?? null,
+            fontId: college.themeFontId ?? null,
+          },
           /**
            * The settings the renderer has to honour: whether to serve the site
            * at all, whether search engines may index it, and what custom markup

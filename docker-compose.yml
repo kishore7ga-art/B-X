@@ -40,7 +40,6 @@ services:
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
       # Server-side only. Never prefixed NEXT_PUBLIC_ or VITE_ — those reach the
       # browser bundle.
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MAIL_FROM: ${MAIL_FROM:-noreply@webxite.org}
       # Seeding rewrites reference data. Running it on every container restart

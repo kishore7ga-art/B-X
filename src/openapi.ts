@@ -259,53 +259,6 @@ export const openApiDocument = {
         },
       },
     },
-    "/api/v1/ai/generate-section": {
-      post: {
-        tags: ["AI"],
-        summary: "Generate AI Section",
-        description: "Generates custom themed homepage sections from user prompts.",
-        security: [],
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  prompt: str,
-                  sectionType: str,
-                  subdomain: str,
-                },
-                required: ["prompt"],
-              },
-            },
-          },
-        },
-        responses: {
-          "200": json(
-            {
-              type: "object",
-              properties: {
-                section: {
-                  type: "object",
-                  properties: {
-                    id: str,
-                    title: str,
-                    sectionType: str,
-                    code: str,
-                    sortOrder: int,
-                    subdomain: str,
-                  },
-                },
-              },
-            },
-            "Generated AI section object.",
-          ),
-          ...errors([400, "Invalid prompt or parameters."]),
-        },
-      },
-    },
-
     "/api/v1/me": {
       get: {
         tags: ["Auth"],
@@ -388,6 +341,168 @@ export const openApiDocument = {
           200: { description: "Updated college website configuration." },
           400: { description: "Invalid configuration structure." },
           401: { description: "Not authenticated." },
+        },
+      },
+    },
+
+    "/api/v1/my-website/pages/{slug}": {
+      put: {
+        tags: ["Tenant Data"],
+        summary: "Replace one page, leaving every other page untouched",
+        description:
+          "The write path for every ordinary editor edit. The full-config PUT above " +
+          "has to reconstruct every page from browser state, so a page the client " +
+          "had loaded stale was overwritten with whatever that tab was holding — " +
+          "editing Home rewrote About. Here the server owns every page except the " +
+          "one named in the URL. `sortOrder` is assigned from array position on the " +
+          "way in, so it and the array can never disagree.",
+        security: SESSION_COOKIE,
+        parameters: [
+          {
+            name: "slug",
+            in: "path",
+            required: true,
+            schema: str,
+            description: "Page slug, URL-encoded. `/about`, `about` and `About` all name the same page.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  title: str,
+                  sections: { type: "array", items: { type: "object" } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "The saved page, normalised." },
+          ...errors([400, "A page slug is required."], [401, "Not signed in."]),
+        },
+      },
+      delete: {
+        tags: ["Tenant Data"],
+        summary: "Delete a page and everything on it",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "slug", in: "path", required: true, schema: str }],
+        responses: {
+          200: { description: "The remaining config." },
+          ...errors([401, "Not signed in."]),
+        },
+      },
+    },
+
+    "/api/v1/my-website/pages/{slug}/order": {
+      patch: {
+        tags: ["Tenant Data"],
+        summary: "Reorder one page's sections, by id",
+        description:
+          "Separate from the page save because it is the one edit that has to land " +
+          "on the click rather than after a debounce. Ids only — no markup — so it " +
+          "cannot lose an edit made in another tab and cannot be truncated by a " +
+          "payload limit. Sections the caller does not mention keep their relative " +
+          "order at the end rather than being deleted.",
+        security: SESSION_COOKIE,
+        parameters: [{ name: "slug", in: "path", required: true, schema: str }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { sectionIds: { type: "array", items: str } },
+                required: ["sectionIds"],
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "The page, in its new order." },
+          ...errors(
+            [400, "sectionIds must be an array of section ids."],
+            [401, "Not signed in."],
+            [404, "No page at that slug."],
+          ),
+        },
+      },
+    },
+
+    "/api/v1/section-library": {
+      get: {
+        tags: ["Tenant Data"],
+        summary: "The section library a tenant may read",
+        description:
+          "Published, non-archived templates only, each with a category resolved " +
+          "server-side and a deterministic order — the order the editor's variant " +
+          "swap cycles through. The editor previously read `/api/v1/admin/templates` " +
+          "for this, which requires an admin session, so every tenant's library was " +
+          "empty and Swap Variant always reported a cycle of one.",
+        security: SESSION_COOKIE,
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                sections: { type: "array", items: { type: "object" } },
+                byCategory: { type: "object" },
+              },
+            },
+            "The library, flat and grouped by category.",
+          ),
+          ...errors([401, "Not signed in."]),
+        },
+      },
+    },
+
+    "/api/v1/my-theme": {
+      get: {
+        tags: ["Tenant Data"],
+        summary: "The editor theme and font pack for the signed-in college",
+        security: SESSION_COOKIE,
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: { themeId: nullableStr, fontId: nullableStr },
+            },
+            "The stored ids, or null where none has been chosen.",
+          ),
+          ...errors([401, "Not signed in."]),
+        },
+      },
+      put: {
+        tags: ["Tenant Data"],
+        summary: "Choose an editor theme",
+        description:
+          "Stored as an id, never as colours. Applying a theme used to mean " +
+          "rewriting every section's HTML with a find-and-replace over a dozen " +
+          "hardcoded hex values, which made the theme a destructive migration of " +
+          "the tenant's own markup rather than a setting. An id is reversible and " +
+          "lets the published site render the same theme without re-deriving it. " +
+          "An id no renderer answers to is rejected rather than stored.",
+        security: SESSION_COOKIE,
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { themeId: str, fontId: str },
+              },
+            },
+          },
+        },
+        responses: {
+          200: json(
+            { type: "object", properties: { themeId: nullableStr, fontId: nullableStr } },
+            "The stored ids.",
+          ),
+          ...errors([400, "Unknown theme or font pack."], [401, "Not signed in."]),
         },
       },
     },
@@ -1169,54 +1284,6 @@ export const openApiDocument = {
             "The admin, or null when nobody is signed in.",
           ),
           ...errors([503, "Admin panel not configured."]),
-        },
-      },
-    },
-    "/api/v1/admin/ai/optimize-section": {
-      post: {
-        tags: ["Admin", "AI"],
-        summary: "AI Fix & Responsive — optimize an existing section",
-        description:
-          "Sends the provided Xite section code to the Gemini API and returns " +
-          "an improved version with responsive CSS, fixed layout, and mobile " +
-          "navigation. The Gemini API key is stored exclusively on the server " +
-          "and is never returned in any response.",
-        security: SESSION_COOKIE,
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                properties: {
-                  code: { type: "string", description: "The Xite section HTML/CSS/JS code to optimize." },
-                },
-                required: ["code"],
-              },
-            },
-          },
-        },
-        responses: {
-          "200": json(
-            {
-              type: "object",
-              properties: {
-                code: { type: "string", description: "Optimized embeddable Xite section code." },
-              },
-              required: ["code"],
-            },
-            "Optimized section code returned by the AI.",
-          ),
-          ...errors(
-            [400, "Missing or invalid section code."],
-            [401, "Not signed in."],
-            [413, "Section code too large for AI processing."],
-            [422, "AI safety filter declined the content."],
-            [429, "AI service rate limit reached — retry shortly."],
-            [502, "AI service unavailable or returned an invalid response."],
-            [503, "AI optimization not configured on this deployment."],
-            [504, "AI request timed out."],
-          ),
         },
       },
     },
