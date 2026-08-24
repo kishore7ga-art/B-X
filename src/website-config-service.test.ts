@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { canonicalSlug, normalizeConfig, pageIdFor } from "@/website-config-service";
+import {
+  canonicalSlug,
+  normalizeConfig,
+  pageIdFor,
+  restoreTemplateScripts,
+} from "@/website-config-service";
 
 const section = (over: Record<string, unknown> = {}) => ({
   id: "s1",
@@ -186,5 +191,31 @@ describe("normalizeConfig — pages stay separate", () => {
     assert.deepEqual(normalizeConfig(null), { pages: [] });
     assert.deepEqual(normalizeConfig({ pages: "nope" }), { pages: [] });
     assert.deepEqual(normalizeConfig({ pages: [null, 7, "x"] }), { pages: [] });
+  });
+});
+
+describe("restoreTemplateScripts — a section built by JavaScript", () => {
+  it("leaves a config with no templateIds alone", async () => {
+    const config = { pages: [{ slug: "/home", title: "Home", sections: [section()] }] };
+    assert.equal(await restoreTemplateScripts(config), config);
+  });
+
+  it("survives junk without throwing", async () => {
+    assert.deepEqual(await restoreTemplateScripts(null), null);
+    assert.deepEqual(await restoreTemplateScripts({ pages: "nope" }), { pages: "nope" });
+    assert.deepEqual(await restoreTemplateScripts({}), {});
+  });
+
+  it("does not reach the database when nothing references a template", async () => {
+    // The guard that keeps `GET /my-website` at one query for the common case:
+    // a config whose sections were all hand-added carries no templateId, so
+    // there is nothing to look up.
+    const config = {
+      pages: [
+        { slug: "/home", title: "Home", sections: [section({ templateId: null })] },
+        { slug: "/about", title: "About", sections: [] },
+      ],
+    };
+    assert.equal(await restoreTemplateScripts(config), config);
   });
 });

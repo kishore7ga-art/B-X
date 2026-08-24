@@ -18,6 +18,8 @@
 import { College } from "@/models";
 import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
 import { resolveCategory, UNCATEGORISED } from "@/lib/sections/categories";
+import { Template } from "@/models";
+import { sanitizeTemplateCode } from "@/library-service";
 import { BadRequest, NotFound } from "@/errors";
 
 export type StoredSection = {
@@ -336,4 +338,120 @@ export async function deletePage(collegeId: string, slug: string): Promise<Store
   const canonical = canonicalSlug(slug);
   const draft = await loadDraft(collegeId);
   return persist(collegeId, { pages: draft.pages.filter((p) => p.slug !== canonical) });
+}
+
+/* ── Restoring the scripts a save had to strip ─────────────────────────── */
+
+/**
+ * Puts back the JavaScript an admin-authored section came with.
+ *
+ * ── The bug ───────────────────────────────────────────────────────────────
+ *
+ * Two sanitisers guard two paths, and they disagree about `<script>` on
+ * purpose: `sanitizeTemplateCode` allows it, because the library genuinely
+ * contains carousels, sliders and hamburger menus; `sanitizeSectionHtml`
+ * discards it, because a tenant's own markup renders on the platform apex
+ * beside the sign-in page.
+ *
+ * A section moves across that boundary the first time it is saved. So:
+ *
+ *   1. The admin publishes a slider whose slides are built by its script.
+ *   2. A tenant adds it. The editor runs the script; the slides appear.
+ *   3. The autosave writes it through `PUT /my-website`, which strips the script.
+ *   4. On reload the markup is there and the script is not, so the section
+ *      renders as an empty rectangle — its own background and padding, and
+ *      nothing inside.
+ *
+ * That is the black band. Not empty space between sections: a section whose
+ * content was assembled by code that no longer runs.
+ *
+ * ── Why restore rather than relax the sanitiser ───────────────────────────
+ *
+ * Letting `<script>` through `PUT /my-website` would fix the symptom and open
+ * the hole the sanitiser exists to close — arbitrary tenant script on
+ * `webxite.org`, same origin as the editor, the sign-in page and the `/admin/*`
+ * rewrite.
+ *
+ * So the script is never taken from the request. It is looked up from the
+ * `Template` row the section came from, by `templateId`, and only for templates
+ * that are still published and unarchived. A tenant can put any `templateId`
+ * they like in a request body and the worst they achieve is running a script an
+ * administrator already published to the whole platform.
+ *
+ * Applied on read — the editor's `GET /my-website` and the public site — so
+ * nothing is written back and the stored draft stays exactly as sanitised.
+ */
+
+const SCRIPT_BLOCK = /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi;
+
+export async function restoreTemplateScripts<T>(config: T): Promise<T> {
+  const source = config as { pages?: unknown } | null;
+  if (!source || !Array.isArray(source.pages)) return config;
+
+  // Which templates are actually referenced, so one query covers the whole site.
+  const ids = new Set<string>();
+  for (const page of source.pages) {
+    const sections = (page as { sections?: unknown })?.sections;
+    if (!Array.isArray(sections)) continue;
+    for (const section of sections) {
+      const id = (section as { templateId?: unknown })?.templateId;
+      if (typeof id === "string" && id) ids.add(id);
+    }
+  }
+  if (ids.size === 0) return config;
+
+  let scriptsByTemplate = new Map<string, string>();
+  try {
+    const rows = await Template.find({
+      _id: { $in: Array.from(ids) },
+      archivedAt: null,
+      isPublished: true,
+    }).select("code");
+
+    for (const row of rows) {
+      const code = typeof row.code === "string" ? row.code : "";
+      const blocks = code.match(SCRIPT_BLOCK);
+      if (!blocks || blocks.length === 0) continue;
+      // Sanitised through the policy that governs the library, so a template
+      // edited before that policy existed is still cleaned on the way out.
+      const cleaned = sanitizeTemplateCode(blocks.join("\n"));
+      if (cleaned.trim()) scriptsByTemplate.set(String(row.id ?? row._id), cleaned);
+    }
+  } catch (error) {
+    // A lookup that fails costs a section its interactivity, which is a much
+    // smaller failure than refusing to serve the site at all.
+    console.error("[website-config] could not restore template scripts:", error);
+    scriptsByTemplate = new Map();
+  }
+
+  if (scriptsByTemplate.size === 0) return config;
+
+  return {
+    ...(source as object),
+    pages: source.pages.map((page) => {
+      const entry = page as { sections?: unknown };
+      if (!Array.isArray(entry.sections)) return page;
+
+      return {
+        ...(entry as object),
+        sections: entry.sections.map((section) => {
+          const item = section as { templateId?: unknown; code?: unknown };
+          const id = typeof item.templateId === "string" ? item.templateId : "";
+          const scripts = id ? scriptsByTemplate.get(id) : undefined;
+          if (!scripts) return section;
+
+          const code = typeof item.code === "string" ? item.code : "";
+          // A section that still has its own script keeps it; this only fills a
+          // gap, it never duplicates.
+          if (SCRIPT_BLOCK.test(code)) {
+            SCRIPT_BLOCK.lastIndex = 0;
+            return section;
+          }
+          SCRIPT_BLOCK.lastIndex = 0;
+
+          return { ...(item as object), code: `${code}\n${scripts}` };
+        }),
+      };
+    }),
+  } as T;
 }

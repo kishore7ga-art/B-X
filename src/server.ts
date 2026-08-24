@@ -99,6 +99,7 @@ import {
   loadDraft,
   prepareConfig,
   reorderPageSections,
+  restoreTemplateScripts,
   saveDraft,
   savePage,
 } from "@/website-config-service";
@@ -1942,11 +1943,26 @@ app.get(["/api/v1/my-website", "/api/my-website", "/v1/my-website", "/my-website
     // Seeded on read rather than at signup so a default the Super Admin changes
     // still reaches colleges created before the change but not yet edited.
     if (draft.pages.length === 0) {
-      res.json(prepareConfig(await getDefaultWebsiteConfig().catch(() => ({ pages: [] }))));
+      res.json(
+        await restoreTemplateScripts(
+          prepareConfig(await getDefaultWebsiteConfig().catch(() => ({ pages: [] }))),
+        ),
+      );
       return;
     }
 
-    res.json(draft);
+    /**
+     * Scripts put back on the way out.
+     *
+     * `PUT /my-website` strips `<script>` from tenant markup, which is right —
+     * it renders on the platform apex. But a section whose content is *built*
+     * by its script (a slider, a carousel, a tab panel) then comes back as an
+     * empty rectangle with its own background and padding: the reported black
+     * band. The script is looked up from the admin-authored template the
+     * section came from, never taken from a request. See
+     * `restoreTemplateScripts`.
+     */
+    res.json(await restoreTemplateScripts(draft));
   } catch (error) {
     fail(res, error);
   }
@@ -2396,7 +2412,18 @@ app.get(
        * stops being exploitable at deploy time rather than the next time its
        * owner happens to press save.
        */
-      const liveConfig = college ? sanitizeWebsiteConfig(publishedSiteConfig(college)) : null;
+      /**
+       * Sanitised, then given back the scripts an admin-authored section needs.
+       *
+       * A published section whose content is built by its own JavaScript — a
+       * slider, a carousel, a tab panel — otherwise renders on the live site as
+       * an empty band, because `sanitizeSectionHtml` stripped that script when
+       * the tenant saved. The script comes from the `Template` row by
+       * `templateId`, never from anything a tenant submitted.
+       */
+      const liveConfig = college
+        ? await restoreTemplateScripts(sanitizeWebsiteConfig(publishedSiteConfig(college)))
+        : null;
 
       if (college && liveConfig && Array.isArray(liveConfig.pages)) {
         const homePage = liveConfig.pages.find((p: any) => p.slug === "/home" || p.slug === "/") || liveConfig.pages[0];
@@ -2500,7 +2527,18 @@ app.get(
       const college = await College.findOne({ subdomain }).catch(() => null);
       // Same reasoning as the public route above: stored markup predates the
       // sanitiser, and this route is unauthenticated.
-      const liveConfig = college ? sanitizeWebsiteConfig(publishedSiteConfig(college)) : null;
+      /**
+       * Sanitised, then given back the scripts an admin-authored section needs.
+       *
+       * A published section whose content is built by its own JavaScript — a
+       * slider, a carousel, a tab panel — otherwise renders on the live site as
+       * an empty band, because `sanitizeSectionHtml` stripped that script when
+       * the tenant saved. The script comes from the `Template` row by
+       * `templateId`, never from anything a tenant submitted.
+       */
+      const liveConfig = college
+        ? await restoreTemplateScripts(sanitizeWebsiteConfig(publishedSiteConfig(college)))
+        : null;
 
       if (college && liveConfig && Array.isArray(liveConfig.pages)) {
         res.json({
