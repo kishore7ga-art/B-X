@@ -25,7 +25,7 @@
 
 import { Template } from "@/models";
 import { resolveCategory, UNCATEGORISED, type SectionCategoryId } from "@/lib/sections/categories";
-import { sanitizeSectionHtml } from "@/lib/sections/sanitize-section-html";
+import { sanitizeTemplateCode } from "@/library-service";
 
 export type LibrarySection = {
   id: string;
@@ -77,10 +77,26 @@ export async function getSectionLibrary(): Promise<SectionLibrary> {
     const rawCode = row.code ?? "";
     if (typeof rawCode !== "string" || !rawCode.trim()) continue;
 
-    // Sanitised here, not at render. The editor injects this markup with
-    // `dangerouslySetInnerHTML` the moment a variant is swapped in, and the
-    // published site renders whatever that left behind.
-    const code = sanitizeSectionHtml(rawCode);
+    /**
+     * Served as the admin authored it, under the *template* policy.
+     *
+     * This called `sanitizeSectionHtml` — the policy for markup a **tenant**
+     * submits, which discards `<script>` outright. Applying it here re-judged
+     * admin-authored content by the tenant rule and silently stripped the
+     * scripts that `sanitizeTemplateCode` had deliberately allowed on the way
+     * in, so every hamburger menu and carousel in the library arrived at the
+     * editor dead.
+     *
+     * `sanitizeTemplateCode` is idempotent and is the policy that governs this
+     * collection, so re-applying it is a cheap assertion that what is stored
+     * still passes the rule it was admitted under — and it changes nothing that
+     * was written through `POST /admin/templates`.
+     *
+     * Note for whoever reads this next: a template's script survives here and
+     * does **not** survive `PUT /api/v1/my-website`, because tenant markup
+     * renders on the platform apex. `sanitize-policies.test.ts` pins both.
+     */
+    const code = sanitizeTemplateCode(rawCode);
     if (!code.trim()) continue;
 
     const key = dedupeKey(code);

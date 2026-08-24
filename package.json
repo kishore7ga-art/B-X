@@ -20,7 +20,8 @@
     "prebuild": "node scripts/check-shared-files.mjs && node scripts/check-openapi-coverage.mjs",
     "admin": "node scripts/admin.mjs",
     "test:unit": "tsx --test \"src/**/*.test.ts\"",
-    "check:openapi": "node scripts/check-openapi-coverage.mjs"
+    "check:openapi": "node scripts/check-openapi-coverage.mjs",
+    "test:api": "node scripts/test-api-e2e.mjs"
   },
   "dependencies": {
     "@types/sanitize-html": "^2.16.1",
@@ -42,6 +43,7 @@
     "@types/multer": "^2.0.0",
     "@types/node": "^20",
     "tsx": "^4.23.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "mongodb-memory-server": "^10"
   }
 }

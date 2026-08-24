@@ -236,34 +236,31 @@ export async function libraryVariantsForAdmin() {
   return [];
 }
 
+/**
+ * One template, by its id.
+ *
+ * Exact match, or `NotFound`. Both of the things this used to do instead were
+ * wrong in the same direction — answering confidently when it did not know:
+ *
+ *  - **It fabricated a template.** A miss returned a synthetic row with a title
+ *    derived from the id, empty `code`, `isPublished: true` and `createdAt` set
+ *    to now. So a stale bookmark to a deleted template opened an editor on a
+ *    plausible-looking blank section, which the admin could then edit and save.
+ *
+ *  - **It guessed by name.** Before giving up it tried
+ *    `row.name.includes(id) || id.includes(row.id)`, so `GET /templates/hero`
+ *    returned whichever template happened to have "hero" in its name. The PATCH
+ *    beside it resolves by exact id only, so the admin could open one template
+ *    and save to a different one — or to nothing.
+ *
+ * This is the same fault as the `findOneAndDelete({ name: id })` fallback that
+ * was removed from `delete-section`: an identifier lookup that falls back to a
+ * fuzzy search on a human-readable field.
+ */
 export async function getTemplateForAdmin(id: string): Promise<TemplateRow> {
   const templates = await listTemplatesForAdmin();
-  let template = templates.find((row) => row.id === id);
-  if (!template) {
-    template = templates.find(
-      (row) =>
-        row.name.toLowerCase().includes(id.toLowerCase()) ||
-        id.toLowerCase().includes(row.id.toLowerCase())
-    );
-  }
-  if (!template) {
-    const cleanTitle = id.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-    return {
-      id,
-      name: cleanTitle,
-      description: `Template section for ${cleanTitle}`,
-      thumbnailUrl: null,
-      code: "",
-      isPublished: true,
-      archivedAt: null,
-      createdAt: new Date().toISOString(),
-      createdByEmail: null,
-      colleges: 0,
-      collegeSections: 0,
-      deletable: true,
-      slots: [],
-    };
-  }
+  const template = templates.find((row) => row.id === id);
+  if (!template) throw new NotFound("Template not found");
   return template;
 }
 

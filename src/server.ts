@@ -1306,12 +1306,39 @@ async function requireAdmin(req: express.Request) {
  * is tighter than the login limiter and keyed separately.
  */
 const handleAdminLogin = async (req: express.Request, res: express.Response) => {
+  /**
+   * Which bucket this attempt is charged to.
+   *
+   * The email, when one was given, so an attacker grinding one account cannot
+   * lock out every other administrator from the same address — the same
+   * reasoning `rateLimitSubject` already documents for college sign-in. When no
+   * email is given the request resolves to `ADMIN_BOOTSTRAP_EMAIL`, so the
+   * bucket falls back to the address, which is the honest key for "whoever this
+   * is, they are guessing at the default account".
+   */
+  const attemptedEmail = typeof req.body?.email === "string" ? req.body.email : "";
+
   try {
-    if (rateLimit("adminLogin", req)) {
+    /**
+     * Checked without charging.
+     *
+     * This used to call `rateLimit()`, which *records* an attempt as a side
+     * effect — so every sign-in was charged, including the correct ones. Five
+     * successful logins in a quarter hour locked the administrator out of an
+     * account they had just proved they owned, and because the bucket was keyed
+     * on the address alone rather than the account, one person doing that shut
+     * out everyone else behind the same office IP.
+     *
+     * This is the exact bug `isRateLimited` was split out to fix for college
+     * sign-in — its comment says "counting successes was locking people out of
+     * an account they were signing into correctly" — and admin login was left
+     * on the old path.
+     */
+    if (rateLimitExceeded("adminLogin", req, attemptedEmail)) {
       // The exact wait, not a shrug. The panel renders a countdown from this;
       // when it had to guess it guessed five minutes against a fifteen-minute
       // bucket and locked the operator into a loop of expired timers.
-      const wait = retryAfterSeconds("adminLogin", rateLimitSubject(req));
+      const wait = retryAfterSeconds("adminLogin", rateLimitSubject(req, attemptedEmail));
       if (wait > 0) res.setHeader("Retry-After", String(wait));
       res.status(429).json({
         error:
@@ -1330,6 +1357,17 @@ const handleAdminLogin = async (req: express.Request, res: express.Response) => 
     );
     res.json({ admin });
   } catch (error) {
+    /**
+     * Charged here, and only for a wrong credential.
+     *
+     * A 503 because the database is unreachable, or because the admin panel is
+     * unconfigured, is this service's fault and must not spend the operator's
+     * five attempts — that turns a backend outage into a lockout on top of it.
+     */
+    const status = error instanceof AuthError ? error.status : 0;
+    if (status === 400 || status === 401) {
+      rateLimit("adminLogin", req, attemptedEmail);
+    }
     fail(res, error);
   }
 };
@@ -1466,23 +1504,36 @@ adminRouter.put("/default-website", async (req, res) => {
   }
 });
 
+/**
+ * Library counters for the admin dashboard.
+ *
+ * The `catch` here used to answer *every* failure — including the
+ * `requireAdmin` rejection — with a 200 and a payload of zeros. So the guard
+ * was decorative: an anonymous caller never saw 401, they saw a valid-looking
+ * response. It also meant the panel could not tell "you are signed out" from
+ * "the library is empty", which are not the same instruction to the operator.
+ *
+ * Auth failures now propagate. The zero-fallback survives for exactly what it
+ * was for: a stats *computation* that fails on an otherwise healthy request,
+ * where counters of zero beside a working template list is a smaller lie than
+ * blanking the screen.
+ */
 adminRouter.get("/templates/stats", async (req, res) => {
   try {
     await requireAdmin(req);
-    const stats = await templateStats().catch(() => ({
-      templates: { total: 0, published: 0, draft: 0, archived: 0 },
-      library: { total: 0, active: 0, retired: 0 },
-      byType: [],
-      collegesOnTemplates: 0,
-    }));
-    res.json(stats);
+    res.json(
+      await templateStats().catch((error) => {
+        console.error("[admin/templates/stats] counters unavailable:", error);
+        return {
+          templates: { total: 0, published: 0, draft: 0, archived: 0 },
+          library: { total: 0, active: 0, retired: 0 },
+          byType: [],
+          collegesOnTemplates: 0,
+        };
+      }),
+    );
   } catch (error) {
-    res.json({
-      templates: { total: 0, published: 0, draft: 0, archived: 0 },
-      library: { total: 0, active: 0, retired: 0 },
-      byType: [],
-      collegesOnTemplates: 0,
-    });
+    fail(res, error);
   }
 });
 
