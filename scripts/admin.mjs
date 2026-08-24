@@ -36,12 +36,33 @@ import mongoose from "mongoose";
 import dns from "node:dns";
 import * as OTPAuth from "otpauth";
 
-// Same workaround as src/config/db.ts — Atlas SRV lookups fail on some Windows
-// resolvers, and this script is run from operator laptops as often as servers.
+/**
+ * Prefer A records over AAAA, which is the Node 17 change that breaks Atlas SRV
+ * lookups on hosts advertising IPv6 without a route to it. Ordering only — it
+ * does not change who answers.
+ *
+ * `dns.setServers(["8.8.8.8", "1.1.1.1"])` used to sit beside this. It is
+ * process-wide, so it replaces the resolver for everything this process looks
+ * up, and on a machine using a corporate or split-horizon resolver it makes the
+ * cluster *less* reachable rather than more. `src/config/db.ts` moved it behind
+ * `DNS_SERVERS` for the same reason; this is the recovery tool, so it follows.
+ *
+ *   DNS_SERVERS=8.8.8.8,1.1.1.1 node scripts/admin.mjs list
+ */
 try {
   dns.setDefaultResultOrder("ipv4first");
-  dns.setServers(["8.8.8.8", "1.1.1.1"]);
 } catch {}
+
+const dnsServers = (process.env.DNS_SERVERS ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
+if (dnsServers.length > 0) {
+  try {
+    dns.setServers(dnsServers);
+  } catch {}
+}
 
 const AdminUser = mongoose.model(
   "AdminUser",
