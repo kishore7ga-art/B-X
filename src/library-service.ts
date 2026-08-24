@@ -1,5 +1,7 @@
 import { z } from "zod";
 import sanitizeHtml from "sanitize-html";
+
+import { SVG_ATTRIBUTES, SVG_TAGS } from "@/lib/sections/svg-allowlist";
 import { SectionType } from "@/lib/sections/types";
 
 import { type AdminSession, recordAudit } from "@/admin-service";
@@ -75,16 +77,24 @@ export function sanitizeTemplateCode(rawCode: string): string {
       allowedTags: sanitizeHtml.defaults.allowedTags.concat([
         "html", "body", "head", "title", "meta", "link", "style", "script",
         "header", "footer", "nav", "section", "article", "aside", "main",
-        "figure", "figcaption", "svg", "path", "g", "use", "polygon",
-        "rect", "circle", "line", "polyline", "button", "form", "input",
-        "label", "select", "textarea", "option", "iframe", "template", "slot"
+        "figure", "figcaption", "button", "form", "input",
+        "label", "select", "textarea", "option", "iframe", "template", "slot",
+        // Inline SVG from the shared list rather than the eleven tags that used
+        // to be spelled out here. `<defs>`, `<clipPath>`, `<linearGradient>`
+        // and `<stop>` were all missing, so a university crest lost its shield
+        // mask and its gradient and came out as line-art.
+        ...SVG_TAGS,
       ]),
       allowedAttributes: {
         "*": [
           "class", "id", "style", "title", "role", "aria-*", "data-*", "name",
           "type", "value", "placeholder", "src", "href", "alt", "rel", "target",
-          "width", "height", "xmlns", "viewBox", "d", "fill", "stroke",
           "crossorigin", "integrity", "defer", "async", "charset",
+          // Everything an inline SVG needs, shared with the tenant policy. The
+          // five that used to be here — xmlns, viewBox, d, fill, stroke — keep
+          // a `<path>` visible and lose everything that positions, masks or
+          // fills it.
+          ...SVG_ATTRIBUTES,
         ],
       },
       /**

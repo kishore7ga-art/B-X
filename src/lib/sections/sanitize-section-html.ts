@@ -73,6 +73,8 @@ export function safeCss(css: string): string {
     .replace(DANGEROUS_CSS, "/* removed */");
 }
 
+import { SVG_ATTRIBUTES, SVG_TAGS } from "@/lib/sections/svg-allowlist";
+
 const ALLOWED_TAGS = [
   // Structure
   "div", "span", "section", "header", "footer", "nav", "main", "aside",
@@ -93,9 +95,11 @@ const ALLOWED_TAGS = [
   // `action` and `formaction` are not allowed attributes below.
   "form", "label", "input", "textarea", "select", "option", "optgroup",
   "button", "fieldset", "legend", "progress", "meter",
-  // Inline SVG, which is how every icon in the library is drawn.
-  "svg", "path", "g", "use", "defs", "symbol", "circle", "ellipse", "rect",
-  "line", "polyline", "polygon", "text", "tspan", "title", "desc",
+  // Inline SVG, which is how every icon and logo in the library is drawn.
+  // From the shared list, so this policy and the Admin template policy cannot
+  // disagree about what an SVG is — they did, and a crest rendered one way in
+  // the Admin preview and another way live.
+  ...SVG_TAGS,
   "linearGradient", "radialGradient", "stop", "clipPath", "mask", "pattern",
   "filter", "feGaussianBlur", "feOffset", "feMerge", "feMergeNode",
   "feColorMatrix", "feBlend", "feFlood", "feComposite",
@@ -116,15 +120,11 @@ const ALLOWED_ATTRIBUTES: sanitizeHtml.IOptions["allowedAttributes"] = {
   "*": [
     "style", "class", "id", "title", "role", "dir", "lang", "hidden",
     "aria-*", "data-*",
-    // SVG presentation and geometry
-    "viewBox", "viewbox", "xmlns", "xmlns:xlink", "fill", "fill-rule",
-    "fill-opacity", "stroke", "stroke-width", "stroke-linecap",
-    "stroke-linejoin", "stroke-dasharray", "stroke-opacity", "opacity",
-    "d", "cx", "cy", "r", "rx", "ry", "x", "y", "x1", "y1", "x2", "y2",
-    "points", "transform", "offset", "stop-color", "stop-opacity",
-    "gradientUnits", "gradientTransform", "patternUnits", "clip-path",
-    "preserveAspectRatio", "width", "height", "text-anchor",
-    "font-size", "font-family", "font-weight", "letter-spacing",
+    // SVG presentation, geometry, paint servers and masking. Shared with the
+    // template policy: an allowlist that keeps `<path>` but drops `fill-rule`
+    // renders a social icon inside out, because that attribute is what makes
+    // the hole in a glyph a hole.
+    ...SVG_ATTRIBUTES,
   ],
   a: ["href", "target", "rel", "download", "name"],
   img: ["src", "srcset", "sizes", "alt", "loading", "decoding", "width", "height"],
