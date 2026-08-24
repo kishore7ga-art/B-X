@@ -87,7 +87,7 @@ import { mailerConfigured, sendActivationEmail } from "@/mailer";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
 import { BadRequest, NotFound } from "@/errors";
-import { connectDB, mongoose } from "@/db";
+import { connectDB, dbReady, dbServable, mongoUri, mongoose } from "@/db";
 import { College, Template } from "@/models";
 import {
   getDefaultWebsiteConfig,
@@ -408,6 +408,15 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    /**
+     * Headers a cross-origin caller may actually read.
+     *
+     * Without this the browser hands JavaScript a 429 with no `Retry-After`,
+     * however carefully the server set it — response headers are hidden from
+     * cross-origin script unless they are named here. The admin panel is on a
+     * different origin from this API, so every header it needs must be listed.
+     */
+    res.setHeader("Access-Control-Expose-Headers", "Retry-After");
   }
   if (req.method === "OPTIONS") {
     res.sendStatus(204);
@@ -415,6 +424,52 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+/*
+ * Ordering note: this sits *after* the CORS middleware on purpose.
+ *
+ * Placed before it, the 503 below goes out with no `Access-Control-Allow-Origin`
+ * header — so a browser refuses to let the admin panel read it and reports a
+ * CORS failure instead. The operator is then told their origin is blocked when
+ * the actual fault is the database, which is precisely the misdiagnosis this
+ * gate exists to prevent.
+ */
+/**
+ * One answer for "the database is not available", instead of eleven.
+ *
+ * Three route handlers each carried their own copy of: check `readyState`,
+ * call `mongoose.connect` inline, and on failure return
+ * `"DB reconnect failed: " + err.message`. That is three problems in one
+ * pattern. It reconnects from inside a request, so a burst of traffic during an
+ * outage opens a burst of handshakes. It leaks the driver's message — which
+ * carries the cluster hostname and replica-set topology — to the caller. And it
+ * was only ever on the three endpoints somebody happened to be debugging, so
+ * every other route failed by hanging until mongoose's buffer timed out.
+ *
+ * Reconnection belongs to the watchdog, which is a single timer. This gate only
+ * *reports*, and it distinguishes the two states that matter:
+ *
+ *   connecting  — mongoose buffers the operation and it will be served shortly,
+ *                 so the request is let through.
+ *   disconnected — nothing will serve it, so say so immediately rather than
+ *                 making the caller wait out a buffer timeout.
+ *
+ * `/api/health` and the docs stay reachable: an operator diagnosing an outage
+ * needs the health endpoint most precisely when it is failing.
+ */
+const READINESS_EXEMPT = /^\/(api\/health|health|docs|openapi\.json|favicon\.ico)/;
+
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") return next();
+  if (READINESS_EXEMPT.test(req.path)) return next();
+  if (dbServable()) return next();
+
+  res.setHeader("Retry-After", "15");
+  res.status(503).json({
+    error: "The database is unavailable. This is being retried; try again shortly.",
+  });
+});
+
 
 app.use(
   cors({
@@ -900,6 +955,30 @@ function isRateLimited(action: keyof typeof LIMITS, subject: string) {
 }
 
 /**
+ * How long until this bucket lets the caller try again, in whole seconds.
+ *
+ * The limiter already stores the timestamp of every attempt in the window, so
+ * this is knowable exactly rather than guessable: the oldest attempt still
+ * counting falls out of the window at `oldest + windowMs`, and that is the
+ * moment a slot frees.
+ *
+ * Worth computing because the alternative is what the admin panel did — pick a
+ * number, be wrong, and tell the operator to come back before the lockout has
+ * expired. `0` means the bucket is not full.
+ */
+function retryAfterSeconds(action: keyof typeof LIMITS, subject: string): number {
+  const { max, windowMs } = LIMITS[action];
+  const now = Date.now();
+  const recent = (attempts.get(`${action}:${subject}`) ?? []).filter(
+    (at) => now - at < windowMs,
+  );
+  if (recent.length < max) return 0;
+
+  const oldest = Math.min(...recent);
+  return Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+}
+
+/**
  * Charges one failed attempt against a bucket.
  */
 function tooManyAttempts(action: keyof typeof LIMITS, ip: string) {
@@ -1229,7 +1308,17 @@ async function requireAdmin(req: express.Request) {
 const handleAdminLogin = async (req: express.Request, res: express.Response) => {
   try {
     if (rateLimit("adminLogin", req)) {
-      res.status(429).json({ error: "Too many attempts. Try again later." });
+      // The exact wait, not a shrug. The panel renders a countdown from this;
+      // when it had to guess it guessed five minutes against a fifteen-minute
+      // bucket and locked the operator into a loop of expired timers.
+      const wait = retryAfterSeconds("adminLogin", rateLimitSubject(req));
+      if (wait > 0) res.setHeader("Retry-After", String(wait));
+      res.status(429).json({
+        error:
+          wait > 0
+            ? `Too many attempts. Try again in ${Math.ceil(wait / 60)} minute(s).`
+            : "Too many attempts. Try again later.",
+      });
       return;
     }
 
@@ -1280,12 +1369,34 @@ const ALLOWED_CODE_EXTENSIONS = [
 
 const adminRouter = express.Router();
 
+/**
+ * Whether this panel can serve at all. Deliberately unauthenticated — it is what
+ * the login screen reads *before* anyone can sign in, to explain why they cannot.
+ *
+ * Two things it no longer does. It answered a failure with
+ * `{configured: true, email: "admin@xite.co.in"}`: a fabricated address on a
+ * domain the platform has migrated away from, and a claim to be configured when
+ * the check had just failed — which hid the "not configured" banner on exactly
+ * the fault that banner exists to describe. And because `hasAccounts` was absent
+ * from that object, the panel read it as `false` and told the operator no Super
+ * Admin existed, on what was only a transient error.
+ *
+ * It also returned `bootstrap: {varsSet, lastRun}`, telling any anonymous caller
+ * whether the bootstrap environment variables are set. Nothing renders it.
+ *
+ * The two booleans the panel actually uses, or an honest 503.
+ */
 adminRouter.get("/status", async (_req, res) => {
   try {
-    const info = await adminStatus().catch(() => ({ configured: true, email: "admin@xite.co.in" }));
-    res.json({ status: "ok", ...info });
+    const info = await adminStatus();
+    res.json({
+      status: "ok",
+      configured: info.configured,
+      hasAccounts: Boolean(info.hasAccounts),
+    });
   } catch (error) {
-    res.json({ status: "ok", configured: true, email: "admin@xite.co.in" });
+    console.error("[admin/status] could not determine admin configuration:", error);
+    res.status(503).json({ error: "Could not determine admin configuration." });
   }
 });
 
@@ -1615,46 +1726,38 @@ adminRouter.get("/library", async (req, res) => {
 
 
 
-// Top-level direct endpoint registrations for status and session checks
-app.get(["/api/v1/admin/status", "/api/admin/status", "/admin/status", "/v1/admin/status", "/status"], async (_req, res) => {
-  try {
-    const info = await adminStatus().catch(() => ({ configured: true, hasAccounts: true }));
-    res.json({ status: "ok", ...info });
-  } catch (error) {
-    res.json({ status: "ok", configured: true, hasAccounts: true });
-  }
-});
 
-app.get(["/api/v1/admin/me", "/api/admin/me", "/admin/me", "/v1/admin/me", "/me"], async (req, res) => {
-  try {
-    const session = await getAdminSession(req.headers.cookie).catch(() => null);
-    res.json({ admin: session ?? null });
-  } catch (error) {
-    res.json({ admin: null });
-  }
-});
 
 // Explicit Express 5 individual path mounts for adminRouter
+/*
+ * Seven top-level duplicates of `adminRouter` routes were removed from here:
+ * GET /status, /me, /overview, /sites, /templates, /templates/stats and
+ * POST /templates, each registered at four or five path aliases.
+ *
+ * They were a second, parallel implementation of the same admin API, and which
+ * one answered depended on nothing more principled than line number. Express
+ * matches in registration order, and two of them — /status and /me — sat
+ * *above* `app.use("/api/v1/admin", adminRouter)`, so they shadowed the router
+ * entirely for the canonical prefix while the other five were shadowed *by* it.
+ *
+ * That is not a theoretical hazard. Tightening `adminRouter.get("/status")` —
+ * to stop it fabricating `{configured: true, email: "admin@xite.co.in"}` on a
+ * failed lookup and to stop it returning the bootstrap state to anonymous
+ * callers — changed nothing at all, because the copy at the top of this section
+ * was the one answering. The fix looked applied, deployed, and did nothing.
+ *
+ * The four `app.use(..., adminRouter)` mounts below already serve every
+ * prefixed alias these registered (/api/v1/admin, /api/admin, /v1/admin,
+ * /admin). What is gone is the bare root forms — GET /status, /me, /templates
+ * and friends — which nothing in this workspace calls, are in no OpenAPI
+ * document, and had no business sitting at the root of an API alongside
+ * /api/health and /docs.
+ */
+
 app.use("/api/v1/admin", adminRouter);
 app.use("/api/admin", adminRouter);
 app.use("/v1/admin", adminRouter);
 app.use("/admin", adminRouter);
-app.get(["/api/v1/admin/overview", "/api/admin/overview", "/admin/overview", "/overview"], async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json(await adminOverview());
-  } catch (error) {
-    fail(res, error);
-  }
-});
-app.get(["/api/v1/admin/sites", "/api/admin/sites", "/admin/sites", "/sites"], async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json({ sites: await adminSites() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
 app.get(["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"], async (_req, res) => {
   try {
     res.json(await getDefaultWebsiteConfig());
@@ -1683,208 +1786,43 @@ app.put(["/api/v1/default-website", "/api/default-website", "/default-website", 
     fail(res, error);
   }
 });
-app.get(["/api/v1/admin/templates/stats", "/api/admin/templates/stats", "/admin/templates/stats", "/templates/stats"], async (req, res) => {
-  try {
-    await requireAdmin(req);
-    const stats = await templateStats().catch(() => ({
-      templates: { total: 0, published: 0, draft: 0, archived: 0 },
-      library: { total: 0, active: 0, retired: 0 },
-      byType: [],
-      collegesOnTemplates: 0,
-    }));
-    res.json(stats);
-  } catch (error) {
-    res.json({
-      templates: { total: 0, published: 0, draft: 0, archived: 0 },
-      library: { total: 0, active: 0, retired: 0 },
-      byType: [],
-      collegesOnTemplates: 0,
-    });
-  }
-});
-app.get(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], async (req, res) => {
-  try {
-    await requireAdmin(req);
-    res.json({ templates: await listTemplatesForAdmin() });
-  } catch (error) {
-    fail(res, error);
-  }
-});
-
-// Ultra-simple section save — no audit, no post-processing, direct DB write
-app.post(["/api/v1/admin/save-section", "/api/admin/save-section", "/admin/save-section"], async (req, res) => {
-  console.log("[save-section] START", JSON.stringify({ name: req.body?.name, category: req.body?.category, codeLen: req.body?.code?.length ?? 0 }));
-  try {
-    // This was "soft auth" — the session was read for the audit trail and a
-    // failure was ignored, because the admin panel's cookie was not reaching the
-    // API across admin.webxite.org / api.webxite.org. That is what
-    // SESSION_COOKIE_DOMAIN fixed; the workaround outlived the bug and left an
-    // open write endpoint on the section library.
-    const session = await requireAdmin(req);
-
-    if (!req.body?.name || !req.body?.code) {
-      return res.status(400).json({ error: "name and code are required" });
-    }
-    // Check if DB is connected
-    if (mongoose.connection.readyState !== 1) {
-      try {
-        const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
-        if (uri) await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
-      } catch (reconnectErr: any) {
-        return res.status(503).json({ error: "DB reconnect failed: " + reconnectErr.message });
-      }
-    }
-    let existing = req.body?.id ? await Template.findById(req.body.id).catch(() => null) : null;
-    if (!existing && req.body?.name) {
-      existing = await Template.findOne({ name: req.body.name }).catch(() => null);
-    }
-    if (existing) {
-      existing.code = req.body.code;
-      existing.category = req.body.category || existing.category;
-      existing.isPublished = req.body.isPublished ?? true;
-      if (req.body.name) existing.name = req.body.name;
-      await existing.save();
-      console.log("[save-section] UPDATED", existing._id.toString());
-      return res.json({ success: true, id: existing._id.toString(), name: existing.name, action: "updated" });
-    }
-    const doc = await Template.create({
-      name: req.body.name,
-      category: req.body.category || null,
-      description: req.body.description || null,
-      code: req.body.code,
-      isPublished: req.body.isPublished ?? true,
-      createdByEmail: session?.email || "admin",
-    });
-    console.log("[save-section] CREATED", doc._id.toString());
-    return res.status(201).json({ success: true, id: doc._id.toString(), name: doc.name, action: "created" });
-  } catch (err: any) {
-    console.error("[save-section] ERROR:", err.message);
-    // Through `fail`, not a hardcoded 500: `requireAdmin` rejects with an
-    // Unauthorized error, and answering that as a server fault tells the admin
-    // panel to retry rather than to sign in.
-    return fail(res, err);
-  }
-});
 
 
-// Updates a section in the shared library. Admin-only: the library is what
-// every tenant's editor offers.
-app.patch("/api/v1/admin/update-section/:id", async (req, res) => {
-  console.log("[update-section] START", req.params.id);
-  try {
-    await requireAdmin(req);
-    if (!req.params.id) {
-      return res.status(400).json({ error: "id is required" });
-    }
-    if (mongoose.connection.readyState !== 1) {
-      try {
-        const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
-        if (uri) await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
-      } catch (e: any) {
-        return res.status(503).json({ error: "DB reconnect failed: " + e.message });
-      }
-    }
-    const id = req.params.id;
-    let existing = await Template.findById(id).catch(() => null);
-    if (!existing && req.body?.name) {
-      existing = await Template.findOne({ name: req.body.name }).catch(() => null);
-    }
-    if (!existing) {
-      return res.status(404).json({ error: "Template not found" });
-    }
-    if (req.body?.code !== undefined) existing.code = req.body.code;
-    if (req.body?.name) existing.name = req.body.name;
-    if (req.body?.category) existing.category = req.body.category;
-    if (req.body?.isPublished !== undefined) existing.isPublished = Boolean(req.body.isPublished);
-    await existing.save();
-    console.log("[update-section] SAVED", existing._id.toString());
-    return res.json({ success: true, id: existing._id.toString(), name: existing.name });
-  } catch (err: any) {
-    console.error("[update-section] ERROR:", err.message);
-    // Through `fail`, not a hardcoded 500: `requireAdmin` rejects with an
-    // Unauthorized error, and answering that as a server fault tells the admin
-    // panel to retry rather than to sign in.
-    return fail(res, err);
-  }
-});
 
-// Removes a section from the shared library. Admin-only, for the same reason.
-app.delete("/api/v1/admin/delete-section/:id", async (req, res) => {
-  console.log("[delete-section] START", req.params.id);
-  try {
-    await requireAdmin(req);
-    if (!req.params.id) {
-      return res.status(400).json({ error: "id is required" });
-    }
-    if (mongoose.connection.readyState !== 1) {
-      try {
-        const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
-        if (uri) await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
-      } catch (e: any) {
-        return res.status(503).json({ error: "DB reconnect failed: " + e.message });
-      }
-    }
-    const id = req.params.id;
-    // Try by ObjectId first, then by name as fallback
-    let result = await Template.findByIdAndDelete(id).catch(() => null);
-    if (!result) {
-      // Maybe it's a name-based id from localStorage
-      result = await Template.findOneAndDelete({ name: id }).catch(() => null);
-    }
-    if (!result) {
-      return res.status(404).json({ error: "Template not found" });
-    }
-    console.log("[delete-section] DELETED", result._id.toString());
-    return res.json({ success: true, id: result._id.toString(), name: result.name });
-  } catch (err: any) {
-    console.error("[delete-section] ERROR:", err.message);
-    // Through `fail`, not a hardcoded 500: `requireAdmin` rejects with an
-    // Unauthorized error, and answering that as a server fault tells the admin
-    // panel to retry rather than to sign in.
-    return fail(res, err);
-  }
-});
 
-app.post(["/api/v1/admin/templates", "/api/admin/templates", "/admin/templates", "/templates"], templateUpload.any(), async (req, res) => {
 
-  try {
-    // Was: `requireAdmin(req).catch(() => null) ?? { adminId: "system-admin" }`,
-    // which turned a rejected session into a fabricated administrator and signed
-    // the audit trail with a name nobody holds.
-    const session = await requireAdmin(req);
-    let code: string | undefined = undefined;
-    const files = (req.files as Express.Multer.File[]) ?? (req.file ? [req.file] : []);
-    if (files.length > 0) {
-      const validFiles: Express.Multer.File[] = [];
-      for (const file of files) {
-        const filename = file.originalname.toLowerCase();
-        const isValidExt = ALLOWED_CODE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-        if (!isValidExt || file.buffer.includes(0)) continue;
-        validFiles.push(file);
-      }
-      if (validFiles.length === 0) {
-        res.status(400).json({ error: "No valid text or code files found in upload." });
-        return;
-      }
-      code = validFiles.length === 1 ? validFiles[0]!.buffer.toString("utf-8") : validFiles.map((f) => `<!-- File: ${f.originalname || f.filename} -->\n${f.buffer.toString("utf-8")}`).join("\n\n");
-    } else if (typeof req.body?.code === "string") {
-      code = req.body.code;
-    }
-    const isPublishedValue = req.body?.isPublished === undefined ? true : req.body.isPublished === "true" || req.body.isPublished === true;
-    const payload = {
-      name: req.body?.name,
-      category: req.body?.category || undefined,
-      description: req.body?.description || undefined,
-      thumbnailUrl: req.body?.thumbnailUrl || undefined,
-      isPublished: isPublishedValue,
-      code,
-    };
-    res.status(201).json(await createTemplate(payload, session));
-  } catch (error) {
-    console.error("[POST /api/v1/admin/templates] FULL ERROR:", error);
-    fail(res, error);
-  }
-});
+
+/*
+ * Three routes were removed from here: POST /api/v1/admin/save-section,
+ * PATCH /api/v1/admin/update-section/:id and DELETE /api/v1/admin/delete-section/:id.
+ *
+ * They were a second way to write the Template collection, added as a
+ * "no audit, no post-processing, direct DB write" shortcut while the admin
+ * panel's cookie was not reaching this API. `adminRouter` already owned
+ * POST /templates, PATCH /templates/:id and DELETE /templates/:id, so every
+ * template write had two doors with different behaviour behind them, and the
+ * panel called both — the shortcut first, then the canonical one as a
+ * "fallback", on the strength of comments claiming the shortcut needed no auth.
+ * That had stopped being true when `requireAdmin` was added to all three.
+ *
+ * What that cost, concretely:
+ *
+ *   - A transient failure on the first door produced a *duplicate* row via the
+ *     second, rather than a retry.
+ *   - Delete escalated silently: `delete-section` failing for any reason sent
+ *     the operator's click to `templates/:id?hard=true`, which is a permanent
+ *     delete rather than an archive.
+ *   - `delete-section` fell back to `Template.findOneAndDelete({ name: id })`
+ *     when the id was not an ObjectId — so a stale client passing a *name*
+ *     deleted the template with that name. The comment said this was for
+ *     "a name-based id from localStorage", which is exactly the client-side
+ *     cache that has now been removed.
+ *   - Each carried its own inline `mongoose.connect` retry and returned
+ *     `"DB reconnect failed: " + err.message` to the caller, leaking the
+ *     cluster hostname and replica-set topology. That is now one readiness gate.
+ *
+ * The canonical routes on `adminRouter` do the same work with an audit trail.
+ */
 
 app.get(
   ["/api/v1/default-website", "/api/default-website", "/default-website", "/api/v1/admin/default-website", "/api/admin/default-website", "/admin/default-website"],
@@ -2853,7 +2791,7 @@ app.listen(PORT, async () => {
   // without needing a Dokploy redeploy.
   setInterval(async () => {
     if (mongoose.connection.readyState !== 1) {
-      const uri = process.env.MONGODB_URI || process.env.DATABASE_URL;
+      const uri = mongoUri();
       if (!uri) return;
       console.log("[db-watchdog] Connection lost — attempting reconnect...");
       try {

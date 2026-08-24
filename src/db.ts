@@ -1,4 +1,4 @@
 import mongoose from "mongoose";
-import { connectDB } from "@/config/db";
+import { connectDB, dbReady, dbServable, mongoUri } from "@/config/db";
 
-export { connectDB, mongoose };
+export { connectDB, dbReady, dbServable, mongoUri, mongoose };
