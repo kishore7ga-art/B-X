@@ -13,10 +13,11 @@
  * `npm run check:shared` fails the build in either if they drift.
  */
 
-/** The 19 kinds of section the platform knows how to file. */
+/** The 20 kinds of section the platform knows how to file. */
 export const SECTION_CATEGORY_IDS = [
   "navbar",
   "hero",
+  "cta",
   "highlights",
   "about",
   "vision",
@@ -46,7 +47,7 @@ const CATEGORY_SET: ReadonlySet<string> = new Set(SECTION_CATEGORY_IDS);
 /**
  * Alias -> canonical id, longest match first.
  *
- * Order matters and is load-bearing in two places. "admission" has to be tested
+ * Order matters and is load-bearing in three places. "admission" has to be tested
  * before "mission", or every Admissions section is filed under Vision & Mission.
  * "campus life" has to be tested before "campus", or the Gallery rule swallows
  * "Campus Facilities".
@@ -59,6 +60,10 @@ const ALIASES: ReadonlyArray<readonly [string, SectionCategoryId]> = [
   ["topbar", "navbar"],
   ["top bar", "navbar"],
   ["menu bar", "navbar"],
+  // call to action — before "apply", or every CTA files under Admissions
+  ["call to action", "cta"],
+  ["call-to-action", "cta"],
+  ["cta", "cta"],
   // hero
   ["hero", "hero"],
   ["banner", "hero"],
