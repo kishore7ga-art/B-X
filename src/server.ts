@@ -66,6 +66,8 @@ import {
 import { getSettings, publicSettingsFor, updateSettings } from "@/site-settings-service";
 import {
   addDomain,
+  adminListDomains,
+  adminSetDomainEnabled,
   collegeIdForHost,
   disconnectDomain,
   listDomains,
@@ -88,6 +90,8 @@ import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
 import { BadRequest, NotFound } from "@/errors";
 import { connectDB, dbReady, dbServable, mongoUri, mongoose } from "@/db";
+import { startDomainMonitor } from "@/domain-monitor";
+import { domainRouter } from "@/domain-router";
 import { College, Template } from "@/models";
 import {
   getDefaultWebsiteConfig,
@@ -1463,6 +1467,78 @@ adminRouter.get("/overview", async (req, res) => {
   try {
     await requireAdmin(req);
     res.json(await adminOverview());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Domains, across every tenant.
+ *
+ * The Super Admin had no view of this at all. A tenant could see their own
+ * domains and nobody could see the whole roster — so "which domains are failing
+ * right now" was answerable only by querying the database, and a failing domain
+ * belonging to a tenant who had stopped checking was invisible indefinitely.
+ */
+adminRouter.get("/domains", async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ domains: await adminListDomains() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/** Re-run the real checks against one domain, on demand. */
+adminRouter.post("/domains/:collegeId/:domainId/verify", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(
+      await verifyDomain(
+        slugParam(req.params.collegeId),
+        slugParam(req.params.domainId),
+        session.email,
+      ),
+    );
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Switch a domain off, or back on.
+ *
+ * Off is the lever that matters: a domain being used for something it should
+ * not be needs to stop resolving without waiting for the tenant to agree. The
+ * row is kept either way, because the audit trail is the point.
+ */
+adminRouter.post("/domains/:collegeId/:domainId/disable", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(
+      await adminSetDomainEnabled(
+        slugParam(req.params.collegeId),
+        slugParam(req.params.domainId),
+        false,
+        session.email,
+      ),
+    );
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.post("/domains/:collegeId/:domainId/reactivate", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(
+      await adminSetDomainEnabled(
+        slugParam(req.params.collegeId),
+        slugParam(req.params.domainId),
+        true,
+        session.email,
+      ),
+    );
   } catch (error) {
     fail(res, error);
   }
@@ -2867,9 +2943,44 @@ app.listen(PORT, async () => {
   console.log(`[api] xite backend listening on :${PORT}`);
   console.log(`[api] CORS origins: ${ORIGINS.length ? ORIGINS.join(", ") : "(any)"}`);
   console.log(`[api] docs: /docs`);
+
+  /**
+   * Started before the database is awaited, and deliberately.
+   *
+   * `connectDB` retries eight times with a fifteen-second selection timeout, so
+   * anything sequenced after it waits up to two minutes — and if the database
+   * is unreachable at boot it throws, so anything inside that block never runs
+   * at all. Either way a deployment that came up before Atlas did would never
+   * start the monitor, and no domain would be re-checked until somebody
+   * redeployed. The watchdog reconnects the database; nothing was reconnecting
+   * this.
+   *
+   * The first pass is a minute away and tolerates a database that is not there
+   * yet: it logs the failure and returns. That is by far the cheaper mistake.
+   */
+  startDomainMonitor();
+
+  /**
+   * Resolved at boot so its verdict is in the deploy log.
+   *
+   * `domainRouter()` is lazy and would otherwise first run on somebody's
+   * verification, hours later, printing "edge routing is not configured" into a
+   * request log nobody reads. Whether custom domains can be served at all is a
+   * deployment fact, and it belongs beside the CORS origins and the port.
+   */
+  domainRouter();
   try {
     await connectDB();
     await bootstrapAdmin();
+    /**
+     * Domains re-check themselves from here on.
+     *
+     * Started after the database is up, because the first pass reads rows. It
+     * closes the two halves of the same gap: a domain waiting on DNS never
+     * advanced without somebody pressing Check, and a domain that had reached
+     * ACTIVE was never re-read, so one that quietly broke months later kept a
+     * green tick while visitors got nothing.
+     */
   } catch (err) {
     console.error("[api] Database startup error:", err);
   }

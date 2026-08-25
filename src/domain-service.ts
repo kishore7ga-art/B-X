@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { promises as dns } from "node:dns";
 
 import { AuditLog, College } from "@/models";
+import { resolvesToPublicAddress } from "@/lib/net/public-address";
+import { domainRouter } from "@/domain-router";
 import type { ICollege, ICustomDomain, DomainStatus, SslStatus } from "@/models/colleges.model";
 
 /**
@@ -402,6 +404,30 @@ async function checkRouting(hostname: string): Promise<VerificationOutcome> {
  * tenant needs to see. Nothing here can make a certificate exist.
  */
 async function checkSsl(hostname: string): Promise<{ status: SslStatus; error: string | null }> {
+  /**
+   * Where this name resolves, before anything connects to it.
+   *
+   * This is the one place in the service that opens a socket to an address a
+   * tenant chose, which makes it the one place that can be turned into a
+   * Server-Side Request Forgery. Nothing stopped `evil.example` from carrying
+   * an A record for `169.254.169.254` — the cloud metadata endpoint — or for a
+   * database that only listens on the private network. `normalizeHostname`
+   * validates syntax and `assertNotPlatformHost` refuses names we own; neither
+   * looks at resolution, and resolution is the half an attacker controls.
+   *
+   * It was weaker than it looks against literals, too: `127.0.0.1` passes an
+   * LDH label check, so it survived normalisation and arrived here as an
+   * ordinary domain.
+   *
+   * Refusing is reported as an error rather than as PENDING, because a name
+   * pointing into private space is not a certificate that has yet to be issued.
+   * It is a domain that will never be servable, and the tenant should be told.
+   */
+  const address = await resolvesToPublicAddress(hostname, DNS_TIMEOUT_MS);
+  if (!address.allowed) {
+    return { status: "ERROR", error: address.reason };
+  }
+
   try {
     const response = await withTimeout(
       fetch(`https://${hostname}/api/health`, {
@@ -468,16 +494,48 @@ export async function verifyDomain(
       lastError = routing.error;
       sslStatus = "NONE";
     } else {
-      const ssl = await checkSsl(domain.hostname);
-      sslStatus = ssl.status;
-      if (ssl.status === "ACTIVE") {
-        status = "ACTIVE";
-        lastError = null;
-      } else {
-        // Ownership and routing are proven; the certificate is not there yet.
-        // That is a real, temporary state and it is named as one.
+      /**
+       * The zone is ours and the records point here. Now the edge has to be
+       * carrying the host, and that is a separate fact from DNS.
+       *
+       * It was previously assumed. Verification checked ownership, records and
+       * TLS, and TLS answers from the platform's wildcard certificate whether or
+       * not the reverse proxy knows this particular hostname — so a domain could
+       * reach ACTIVE and return 502 to every visitor, with a green tick in the
+       * dashboard and nothing anywhere saying why.
+       *
+       * `ensure` is idempotent, so re-verifying an already-routed host is free.
+       */
+      const routed = await domainRouter().ensure(domain.hostname);
+
+      if (routed.state === "FAILED") {
         status = "VERIFIED";
-        lastError = ssl.error ?? "Waiting for the HTTPS certificate to be issued.";
+        sslStatus = "NONE";
+        lastError = routed.detail;
+      } else {
+        const ssl = await checkSsl(domain.hostname);
+        sslStatus = ssl.status;
+
+        if (routed.state === "NOT_CONFIGURED") {
+          /**
+           * Deliberately not ACTIVE, even when TLS answers.
+           *
+           * Nothing has been told to serve this hostname, so whether it works is
+           * down to somebody having added it to the proxy by hand. Reporting
+           * that as ACTIVE is the failure this whole change exists to remove:
+           * the operator needs to read what is actually outstanding.
+           */
+          status = "VERIFIED";
+          lastError = routed.detail;
+        } else if (ssl.status === "ACTIVE") {
+          status = "ACTIVE";
+          lastError = null;
+        } else {
+          // Ownership, records and routing are proven; the certificate is not
+          // there yet. That is a real, temporary state and it is named as one.
+          status = "VERIFIED";
+          lastError = ssl.error ?? "Waiting for the HTTPS certificate to be issued.";
+        }
       }
     }
   }
@@ -571,6 +629,23 @@ export async function disconnectDomain(
   const domain = (college.domains ?? []).find((d) => d.id === domainId);
   if (!domain) throw Object.assign(new Error("Domain not found"), { status: 404 });
 
+  /**
+   * Taken off the edge as well as out of the database.
+   *
+   * Removing the row alone leaves the proxy still carrying the hostname, so it
+   * keeps answering — and `collegeIdForHost` no longer resolves it, which is a
+   * host that reaches the platform and maps to nothing. Failures here are
+   * logged and not fatal: the tenant asked to disconnect, and refusing because
+   * an edge did not answer would leave them attached to a domain they have
+   * given up.
+   */
+  const unrouted = await domainRouter().remove(domain.hostname);
+  if (unrouted.state === "FAILED") {
+    console.error(
+      `[domains] DOMAIN_ROUTING_REMOVE_FAILED hostname=${domain.hostname} detail=${unrouted.detail}`,
+    );
+  }
+
   await College.updateOne({ _id: collegeId }, { $pull: { domains: { id: domainId } } });
 
   await AuditLog.create({
@@ -606,6 +681,123 @@ export async function collegeIdForHost(rawHost: string): Promise<{
 
   if (!college) return null;
   return { collegeId: String(college._id), subdomain: college.subdomain };
+}
+
+/**
+ * Every custom domain on the platform, for the Super Admin.
+ *
+ * There was no way to see this. Domains were visible only to the tenant that
+ * owned them, one tenant at a time, so "which domains are broken right now" had
+ * no answer short of a database query — and the failures that matter most are
+ * exactly the ones a tenant has stopped looking at.
+ *
+ * Cross-tenant by design and therefore admin-only. The route that serves it
+ * goes through `requireAdmin` like every other route on that router.
+ */
+export type AdminDomainRow = DomainView & {
+  collegeId: string;
+  collegeName: string;
+  subdomain: string;
+};
+
+export async function adminListDomains(): Promise<AdminDomainRow[]> {
+  const colleges = (await College.find({ "domains.0": { $exists: true } })
+    .select("_id name subdomain domains")
+    .lean()) as unknown as ({
+    _id: unknown;
+    name: string;
+    subdomain: string;
+    domains: ICustomDomain[];
+  })[];
+
+  const rows: AdminDomainRow[] = [];
+
+  for (const college of colleges) {
+    for (const domain of college.domains ?? []) {
+      rows.push({
+        ...toView(domain),
+        collegeId: String(college._id),
+        collegeName: college.name,
+        subdomain: college.subdomain,
+      });
+    }
+  }
+
+  // Anything not working first: an admin opening this screen is looking for
+  // what is wrong, not for an alphabetical list.
+  const rank = (status: DomainStatus): number =>
+    status === "FAILED" ? 0 : status === "PENDING_VERIFICATION" ? 1 : status === "VERIFIED" ? 2 : status === "ACTIVE" ? 3 : 4;
+
+  return rows.sort(
+    (a, b) => rank(a.status) - rank(b.status) || a.hostname.localeCompare(b.hostname),
+  );
+}
+
+/**
+ * Switches a domain off, or back on, from the Super Admin.
+ *
+ * `DISABLED` is not in `DomainStatus`; `DISCONNECTED` already means "this host
+ * must not be served" and `collegeIdForHost` already refuses it. Adding a
+ * second word for the same state would mean two things to check on every
+ * resolution, and one of them would eventually be missed.
+ *
+ * Re-enabling returns the domain to `PENDING_VERIFICATION` rather than to
+ * whatever it was. Nothing is known about the world since it was switched off,
+ * and the monitor will establish it within the minute. Restoring `ACTIVE` from
+ * memory would be asserting a fact nobody has checked.
+ */
+export async function adminSetDomainEnabled(
+  collegeId: string,
+  domainId: string,
+  enabled: boolean,
+  actorEmail: string | null,
+): Promise<DomainView> {
+  const college = (await College.findById(collegeId).lean()) as ICollege | null;
+  if (!college) throw Object.assign(new Error("College not found"), { status: 404 });
+
+  const domain = (college.domains ?? []).find((d) => d.id === domainId);
+  if (!domain) throw Object.assign(new Error("Domain not found"), { status: 404 });
+
+  const now = new Date();
+  const status: DomainStatus = enabled ? "PENDING_VERIFICATION" : "DISCONNECTED";
+
+  // The edge is told either way, or a disabled domain keeps being served.
+  const routed = enabled
+    ? await domainRouter().ensure(domain.hostname)
+    : await domainRouter().remove(domain.hostname);
+
+  await College.updateOne(
+    { _id: collegeId, "domains.id": domainId },
+    {
+      $set: {
+        "domains.$.status": status,
+        "domains.$.sslStatus": enabled ? domain.sslStatus : "NONE",
+        "domains.$.lastError": enabled
+          ? "Re-enabled. Waiting for the next verification pass."
+          : "Disabled by a platform administrator.",
+        "domains.$.isPrimary": enabled ? domain.isPrimary : false,
+        "domains.$.updatedAt": now,
+      },
+    },
+  );
+
+  await AuditLog.create({
+    action: enabled ? "DOMAIN_REACTIVATED" : "DOMAIN_DISABLED",
+    tenantId: collegeId,
+    details: { hostname: domain.hostname, actor: actorEmail, routing: routed.state },
+  }).catch(() => null);
+
+  console.log(
+    `[domains] ${enabled ? "DOMAIN_REACTIVATED" : "DOMAIN_DISABLED"} ` +
+      `hostname=${domain.hostname} tenantId=${collegeId} routing=${routed.state}`,
+  );
+
+  return toView({
+    ...domain,
+    status,
+    isPrimary: enabled ? domain.isPrimary : false,
+    updatedAt: now,
+  });
 }
 
 export const __testing = {

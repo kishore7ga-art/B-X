@@ -1287,6 +1287,86 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/admin/domains": {
+      get: {
+        tags: ["Admin"],
+        summary: "Every custom domain on the platform",
+        description:
+          "Cross-tenant, admin-only. There was previously no view of this at all: " +
+          "a tenant could see their own domains and nobody could see the roster, so " +
+          "a failing domain belonging to a tenant who had stopped checking was " +
+          "invisible indefinitely. Sorted worst-first — an admin opening this " +
+          "screen is looking for what is broken.",
+        security: SESSION_COOKIE,
+        responses: {
+          200: json(
+            { type: "object", properties: { domains: { type: "array", items: { type: "object" } } } },
+            "Every domain, with its tenant.",
+          ),
+          ...errors([401, "Not signed in."]),
+        },
+      },
+    },
+
+    "/api/v1/admin/domains/{collegeId}/{domainId}/verify": {
+      post: {
+        tags: ["Admin"],
+        summary: "Re-run the real DNS and TLS checks against one domain",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "collegeId", in: "path", required: true, schema: str },
+          { name: "domainId", in: "path", required: true, schema: str },
+        ],
+        responses: {
+          200: json({ type: "object" }, "The domain, as observed."),
+          ...errors([401, "Not signed in."], [404, "No such domain."]),
+        },
+      },
+    },
+
+    "/api/v1/admin/domains/{collegeId}/{domainId}/disable": {
+      post: {
+        tags: ["Admin"],
+        summary: "Stop serving a domain",
+        description:
+          "Sets the domain to DISCONNECTED and removes the host from the edge. The " +
+          "row is kept, because the audit trail is the point. `DISCONNECTED` is " +
+          "reused rather than adding a second word for the same state — " +
+          "`collegeIdForHost` already refuses it, and two words would mean two " +
+          "checks on every resolution, one of which would eventually be missed.",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "collegeId", in: "path", required: true, schema: str },
+          { name: "domainId", in: "path", required: true, schema: str },
+        ],
+        responses: {
+          200: json({ type: "object" }, "The domain, now disconnected."),
+          ...errors([401, "Not signed in."], [404, "No such domain."]),
+        },
+      },
+    },
+
+    "/api/v1/admin/domains/{collegeId}/{domainId}/reactivate": {
+      post: {
+        tags: ["Admin"],
+        summary: "Switch a disabled domain back on",
+        description:
+          "Returns the domain to PENDING_VERIFICATION rather than to whatever it " +
+          "was. Nothing is known about the world since it was switched off, and the " +
+          "monitor will establish it within the minute; restoring ACTIVE from memory " +
+          "would assert a fact nobody has checked.",
+        security: SESSION_COOKIE,
+        parameters: [
+          { name: "collegeId", in: "path", required: true, schema: str },
+          { name: "domainId", in: "path", required: true, schema: str },
+        ],
+        responses: {
+          200: json({ type: "object" }, "The domain, awaiting verification."),
+          ...errors([401, "Not signed in."], [404, "No such domain."]),
+        },
+      },
+    },
+
     "/api/v1/admin/overview": {
       get: {
         tags: ["Admin"],

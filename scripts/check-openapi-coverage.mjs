@@ -39,6 +39,11 @@ const REQUIRED = [
   ["get", "/api/v1/section-library"],
   ["get", "/api/v1/my-theme"],
   ["put", "/api/v1/my-theme"],
+  // Domain control plane: the Super Admin had no view of domains at all.
+  ["get", "/api/v1/admin/domains"],
+  ["post", "/api/v1/admin/domains/{collegeId}/{domainId}/verify"],
+  ["post", "/api/v1/admin/domains/{collegeId}/{domainId}/disable"],
+  ["post", "/api/v1/admin/domains/{collegeId}/{domainId}/reactivate"],
 ];
 
 /**
