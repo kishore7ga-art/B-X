@@ -88,10 +88,37 @@ A domain reaches `ACTIVE` only when all four pass in the same call.
 | Status | Means |
 | :--- | :--- |
 | `PENDING_VERIFICATION` | the TXT record is not visible yet |
-| `VERIFIED` | ownership proven; records, edge or certificate outstanding — `lastError` says which |
+| `VERIFIED` | ownership proven; records, edge or certificate outstanding — `stage` says which |
 | `ACTIVE` | all four checks passed |
 | `FAILED` | checked repeatedly and still not working |
 | `DISCONNECTED` | removed by the tenant, or disabled by an admin. Never served |
+
+### `stage` — what is outstanding
+
+`status` says how far along a domain is. **`stage` says what is being waited
+on**, and they are not the same question: three quite different situations all
+sit at `VERIFIED`, and only one of them is the tenant's to fix.
+
+| `stage` | Waiting on | Whose |
+| :--- | :--- | :--- |
+| `ownership` | the `_xite-verify` TXT record | the tenant |
+| `routing` | CNAME/A pointing here | the tenant |
+| `edge` | the host being added to the proxy | us |
+| `tls` | the certificate | automatic |
+| `done` | nothing — all four passed | — |
+
+It is set on **every branch of `verifyDomain`**, beside the `status` and
+`lastError` it belongs with, rather than derived afterwards. It was derivable
+from `lastError` only by reading the sentence, which is not something a UI can
+do — so the tenant screen printed one line of prose and left them to work out
+whether they were being asked to act or to wait.
+
+Rows written before the field exists are read through `stageFromStatus`. Only
+the two ends can be known: `ACTIVE` is `done`, anything unverified is
+`ownership`. A `VERIFIED` row is reported as `routing` — the first of its three
+possibilities, the only one the tenant can act on, and the one the next pass
+corrects within the minute. Guessing `tls` would tell somebody to wait when
+they need to act, which is the worse error.
 
 ---
 
@@ -260,6 +287,17 @@ All three Dokploy variables are needed together; with any missing, routing is
   safe default. Wire it, add one domain, and read the `DOMAIN_ROUTING_*` line
   before trusting it.
 - **DNS rebinding has a residual window.** See §4.
-- **The tenant-facing UI was not redesigned.** `DomainSettingsModal` renders
-  `lastError`, so the new messages surface, but the screen is unchanged.
+- **The tenant-facing UI now shows the four checks.** `DomainSettingsModal`
+  renders `domainChecklist()` — one row per check, marked passed, current,
+  blocked or failed, each naming whose it is. Two states it used to get wrong
+  are fixed with it: a domain that had passed every check while its certificate
+  was still issuing was labelled "Pending verification", and a domain an admin
+  had **disabled** was told to add a TXT record and press a Check button that
+  returns 404 for it. Both sent tenants to edit a zone that was already correct.
+  Covered by `publishing-client.test.ts` in `xite-F`.
+
+- **The Super Admin roster has routes but no screen.** `GET /admin/domains` and
+  the verify / disable / reactivate routes are live and tested; nothing in
+  `xite-admin` calls them yet, so cross-tenant domain triage is still a curl
+  away rather than a page.
 - **No DNS-provider automation, by design.** See §2.

@@ -4,7 +4,13 @@ import { promises as dns } from "node:dns";
 import { AuditLog, College } from "@/models";
 import { resolvesToPublicAddress } from "@/lib/net/public-address";
 import { domainRouter } from "@/domain-router";
-import type { ICollege, ICustomDomain, DomainStatus, SslStatus } from "@/models/colleges.model";
+import type {
+  ICollege,
+  ICustomDomain,
+  DomainStage,
+  DomainStatus,
+  SslStatus,
+} from "@/models/colleges.model";
 
 /**
  * Custom domains: add, verify, activate, change, disconnect.
@@ -46,6 +52,15 @@ export type DomainView = {
   id: string;
   hostname: string;
   status: DomainStatus;
+  /**
+   * Which of the four checks is outstanding.
+   *
+   * Reported alongside `status` rather than instead of it, because they answer
+   * different questions: `status` is how far along the domain is, `stage` is
+   * what is being waited on. Three different situations share the status
+   * `VERIFIED`, and only one of them is the tenant's to fix.
+   */
+  stage: DomainStage;
   sslStatus: SslStatus;
   isPrimary: boolean;
   verifiedAt: Date | null;
@@ -183,6 +198,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
+/**
+ * The stage a row written before `stage` existed must be showing.
+ *
+ * Only the ends can be known for certain: `ACTIVE` passed everything, and
+ * anything not yet verified is waiting on ownership. A `VERIFIED` row is one of
+ * three things and the record does not say which, so it is reported as
+ * `routing` — the first of the three, the only one the tenant can act on, and
+ * the one the next check will correct within the minute if it is wrong.
+ * Guessing `tls` instead would tell somebody to wait when they need to act.
+ */
+function stageFromStatus(status: DomainStatus): DomainStage {
+  if (status === "ACTIVE") return "done";
+  if (status === "VERIFIED") return "routing";
+  return "ownership";
+}
+
 function toView(domain: ICustomDomain): DomainView {
   const { cname, apexIp } = routingTarget();
   const apex = isApex(domain.hostname);
@@ -191,6 +222,7 @@ function toView(domain: ICustomDomain): DomainView {
     id: domain.id,
     hostname: domain.hostname,
     status: domain.status,
+    stage: domain.stage ?? stageFromStatus(domain.status),
     sslStatus: domain.sslStatus,
     isPrimary: Boolean(domain.isPrimary),
     verifiedAt: domain.verifiedAt ?? null,
@@ -267,6 +299,7 @@ export async function addDomain(
     verificationCheckedAt: null,
     verifiedAt: null,
     lastError: null,
+    stage: "ownership",
     sslStatus: "NONE",
     sslCheckedAt: null,
     isPrimary: false,
@@ -482,9 +515,21 @@ export async function verifyDomain(
   let sslStatus: SslStatus = domain.sslStatus;
   let verifiedAt = domain.verifiedAt ?? null;
 
+  /**
+   * Which check this pass stopped at.
+   *
+   * Set on every branch below, beside the `status` and `lastError` it belongs
+   * with, rather than worked out afterwards from those two. Three of these
+   * branches produce the same `VERIFIED`, and the difference between them —
+   * whether the tenant must act or simply wait — survives only if it is
+   * recorded here, at the point it is known.
+   */
+  let stage: DomainStage;
+
   if (!ownership.ok) {
     status = "PENDING_VERIFICATION";
     lastError = ownership.error;
+    stage = "ownership";
   } else {
     verifiedAt = verifiedAt ?? now;
     const routing = await checkRouting(domain.hostname);
@@ -493,6 +538,7 @@ export async function verifyDomain(
       status = "VERIFIED";
       lastError = routing.error;
       sslStatus = "NONE";
+      stage = "routing";
     } else {
       /**
        * The zone is ours and the records point here. Now the edge has to be
@@ -512,6 +558,7 @@ export async function verifyDomain(
         status = "VERIFIED";
         sslStatus = "NONE";
         lastError = routed.detail;
+        stage = "edge";
       } else {
         const ssl = await checkSsl(domain.hostname);
         sslStatus = ssl.status;
@@ -527,14 +574,17 @@ export async function verifyDomain(
            */
           status = "VERIFIED";
           lastError = routed.detail;
+          stage = "edge";
         } else if (ssl.status === "ACTIVE") {
           status = "ACTIVE";
           lastError = null;
+          stage = "done";
         } else {
           // Ownership, records and routing are proven; the certificate is not
           // there yet. That is a real, temporary state and it is named as one.
           status = "VERIFIED";
           lastError = ssl.error ?? "Waiting for the HTTPS certificate to be issued.";
+          stage = "tls";
         }
       }
     }
@@ -545,6 +595,7 @@ export async function verifyDomain(
     {
       $set: {
         "domains.$.status": status,
+        "domains.$.stage": stage,
         "domains.$.lastError": lastError,
         "domains.$.sslStatus": sslStatus,
         "domains.$.sslCheckedAt": now,
@@ -564,6 +615,7 @@ export async function verifyDomain(
   return toView({
     ...domain,
     status,
+    stage,
     lastError,
     sslStatus,
     sslCheckedAt: now,
@@ -771,6 +823,10 @@ export async function adminSetDomainEnabled(
     {
       $set: {
         "domains.$.status": status,
+        // Re-enabling starts the checks over: nothing is known about the world
+        // since the domain was switched off. Disabling has no outstanding check
+        // at all, and `ownership` is where it will resume from if it comes back.
+        "domains.$.stage": "ownership",
         "domains.$.sslStatus": enabled ? domain.sslStatus : "NONE",
         "domains.$.lastError": enabled
           ? "Re-enabled. Waiting for the next verification pass."
@@ -795,6 +851,7 @@ export async function adminSetDomainEnabled(
   return toView({
     ...domain,
     status,
+    stage: "ownership",
     isPrimary: enabled ? domain.isPrimary : false,
     updatedAt: now,
   });
@@ -802,6 +859,7 @@ export async function adminSetDomainEnabled(
 
 export const __testing = {
   normalizeHostname,
+  stageFromStatus,
   assertNotPlatformHost,
   isApex,
   routingTarget,

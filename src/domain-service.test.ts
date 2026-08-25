@@ -124,3 +124,31 @@ describe("isApex — which DNS record the tenant is told to create", () => {
     assert.equal(isApex("college.edu.in"), false);
   });
 });
+
+describe("stageFromStatus — reading a row written before `stage` existed", () => {
+  const { stageFromStatus } = __testing;
+
+  it("knows the two ends for certain", () => {
+    assert.equal(stageFromStatus("ACTIVE"), "done");
+    assert.equal(stageFromStatus("PENDING_VERIFICATION"), "ownership");
+  });
+
+  it("reports a VERIFIED row as waiting on routing", () => {
+    // VERIFIED is three different situations — the records do not point here,
+    // the edge has not been told to serve the host, or the certificate has not
+    // been issued — and an old row does not say which.
+    //
+    // Routing is the honest guess: it is the first of the three and the only
+    // one the tenant can act on, and the next check corrects it within the
+    // minute if it is wrong. Guessing `tls` would tell somebody to sit and wait
+    // when the records are what need fixing, which is the worse error.
+    assert.equal(stageFromStatus("VERIFIED"), "routing");
+  });
+
+  it("sends a failed or disconnected row back to the first check", () => {
+    // Nothing downstream is known to hold, and re-checking from the top is
+    // cheap. Claiming a later stage would assert a fact nobody has observed.
+    assert.equal(stageFromStatus("FAILED"), "ownership");
+    assert.equal(stageFromStatus("DISCONNECTED"), "ownership");
+  });
+});

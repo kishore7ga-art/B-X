@@ -76,6 +76,24 @@ export interface ISiteSettings {
   updatedAt?: Date | null;
 }
 
+/**
+ * Which of the four checks a domain is currently waiting on.
+ *
+ * `status` says how far along a domain is; this says *what is outstanding*, and
+ * they are not the same question. Three quite different situations all sit at
+ * `VERIFIED` — the records do not point here yet, the edge has not been told to
+ * serve the host, or the certificate has not been issued — and a tenant looking
+ * at the screen needs to know which one they are in, because only the first is
+ * theirs to fix.
+ *
+ * It was derivable from `lastError` by reading the sentence. That is not a
+ * thing a UI can do, so the tenant page showed one line of prose and left them
+ * to work out whether they were being asked to act or to wait.
+ *
+ * `done` means all four passed.
+ */
+export type DomainStage = "ownership" | "routing" | "edge" | "tls" | "done";
+
 export interface ICustomDomain {
   id: string;
   /** Normalised: lowercase, trimmed, no scheme, no port, no trailing dot. */
@@ -87,6 +105,8 @@ export interface ICustomDomain {
   verifiedAt?: Date | null;
   /** Why the last check failed, shown to the tenant verbatim. */
   lastError?: string | null;
+  /** Which check is outstanding. Absent on rows written before this existed. */
+  stage?: DomainStage;
   sslStatus: SslStatus;
   sslCheckedAt?: Date | null;
   /** The host canonical for this tenant. At most one per college. */
@@ -222,6 +242,11 @@ const CustomDomainSchema = new Schema<ICustomDomain>(
     verificationCheckedAt: { type: Date, default: null },
     verifiedAt: { type: Date, default: null },
     lastError: { type: String, default: null },
+    stage: {
+      type: String,
+      enum: ["ownership", "routing", "edge", "tls", "done"],
+      default: "ownership",
+    },
     sslStatus: { type: String, enum: ["NONE", "PENDING", "ACTIVE", "ERROR"], default: "NONE" },
     sslCheckedAt: { type: Date, default: null },
     isPrimary: { type: Boolean, default: false },
