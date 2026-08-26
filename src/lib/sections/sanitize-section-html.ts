@@ -222,11 +222,47 @@ export function sanitizeSectionHtml(raw: unknown): string {
 }
 
 /** One page's sections, sanitised in place. Shape and ordering are untouched. */
+/**
+ * A stored value as plain data, whatever it arrived as.
+ *
+ * ── The bug this exists to close ───────────────────────────────────────────
+ *
+ * Everything below rebuilds objects by spreading them, and spreading a
+ * **Mongoose subdocument** does not copy its fields. It copies its internals —
+ * `__parentArray`, `$__parent`, `_doc`, `$isNew` — because the fields are
+ * getters on the prototype and the real values live inside `_doc`. So a page
+ * that went through here came out as
+ *
+ *     { __parentArray: […], $__parent: …, _doc: …, sections: […] }
+ *
+ * with no `slug` and no `title`.
+ *
+ * That was survivable for exactly as long as nothing read them. The public site
+ * endpoint hands the renderer a flattened `sections` array *and* a `pages`
+ * array; only the first was ever used, so the damage sat in the second,
+ * unnoticed. It surfaced the moment published sites gained per-page URLs, and
+ * it surfaced in the worst possible way: `/about` on a real tenant's site
+ * returned 404, while the platform default — a plain object out of
+ * `system_secrets`, never a Mongoose document — kept working perfectly. The
+ * one tenant shape that mattered was the one shape that broke.
+ *
+ * `toObject()` is the documented way to get the fields; `lean()` at the query
+ * would work too, but only for the queries somebody remembers to change.
+ * Doing it here means every caller is safe whichever it passes.
+ */
+function plain(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  const doc = value as { toObject?: () => Record<string, unknown> };
+  return typeof doc.toObject === "function"
+    ? doc.toObject()
+    : (value as Record<string, unknown>);
+}
+
 function sanitizeSections(sections: unknown): unknown {
   if (!Array.isArray(sections)) return sections;
   return sections.map((section) => {
-    if (!section || typeof section !== "object") return section;
-    const entry = section as Record<string, unknown>;
+    const entry = plain(section);
+    if (!entry) return section;
     if (typeof entry.code !== "string") return entry;
     return { ...entry, code: sanitizeSectionHtml(entry.code) };
   });
@@ -244,14 +280,14 @@ function sanitizeSections(sections: unknown): unknown {
 export function sanitizeWebsiteConfig<T>(config: T): T {
   if (!config || typeof config !== "object") return config;
 
-  const source = config as Record<string, unknown>;
-  if (!Array.isArray(source.pages)) return config;
+  const source = plain(config);
+  if (!source || !Array.isArray(source.pages)) return config;
 
   return {
     ...source,
     pages: source.pages.map((page) => {
-      if (!page || typeof page !== "object") return page;
-      const entry = page as Record<string, unknown>;
+      const entry = plain(page);
+      if (!entry) return page;
       return { ...entry, sections: sanitizeSections(entry.sections) };
     }),
   } as T;

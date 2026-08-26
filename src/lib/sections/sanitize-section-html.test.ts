@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { describe, it, test } from "node:test";
 
 import {
   sanitizeSectionHtml,
@@ -197,4 +197,72 @@ test("sanitizeWebsiteConfig cleans every section and preserves structure", () =>
 test("sanitizeWebsiteConfig leaves a config it does not understand alone", () => {
   assert.equal(sanitizeWebsiteConfig(null), null);
   assert.deepEqual(sanitizeWebsiteConfig({ pages: "nope" }), { pages: "nope" });
+});
+
+/**
+ * Config sanitisation over a Mongoose document.
+ *
+ * Spreading a Mongoose subdocument copies its internals rather than its fields,
+ * because the fields are prototype getters over `_doc`. Everything in
+ * `sanitizeWebsiteConfig` rebuilds objects by spreading, so a page arrived
+ * carrying `__parentArray` and `_doc` and no `slug`.
+ *
+ * It survived only because nothing read a page's slug. The moment published
+ * sites gained per-page URLs, `/about` on a real tenant returned 404 while the
+ * platform default — a plain object, never a document — worked perfectly.
+ */
+describe("sanitizeWebsiteConfig — a stored config, whatever shape it arrives in", () => {
+  /** The shape Mongoose hands back: fields behind getters, values in `_doc`. */
+  function asMongooseDoc<T extends Record<string, unknown>>(fields: T) {
+    return {
+      _doc: fields,
+      $__: {},
+      $isNew: false,
+      __parentArray: [],
+      toObject: () => ({ ...fields }),
+    };
+  }
+
+  it("keeps a page's slug and title when the page is a document", () => {
+    const config = {
+      pages: [
+        asMongooseDoc({ slug: "/home", title: "Home", sections: [{ id: "a", code: "<p>hi</p>" }] }),
+        asMongooseDoc({ slug: "/about", title: "About", sections: [] }),
+      ],
+    };
+
+    const out = sanitizeWebsiteConfig(config) as unknown as {
+      pages: { slug?: string; title?: string; sections: unknown[] }[];
+    };
+
+    assert.deepEqual(out.pages.map((p) => p.slug), ["/home", "/about"]);
+    assert.deepEqual(out.pages.map((p) => p.title), ["Home", "About"]);
+  });
+
+  it("does not leak Mongoose internals into the response", () => {
+    const config = { pages: [asMongooseDoc({ slug: "/home", sections: [] })] };
+    const out = sanitizeWebsiteConfig(config) as unknown as { pages: Record<string, unknown>[] };
+    for (const key of ["__parentArray", "$__", "_doc", "$isNew"]) {
+      assert.ok(!(key in out.pages[0]!), `${key} leaked into the sanitised page`);
+    }
+  });
+
+  it("still sanitises the markup inside a document's sections", () => {
+    const config = {
+      pages: [
+        asMongooseDoc({
+          slug: "/home",
+          sections: [asMongooseDoc({ id: "a", code: '<img src=x onerror="alert(1)">' })],
+        }),
+      ],
+    };
+    const out = sanitizeWebsiteConfig(config) as unknown as { pages: { sections: { code: string }[] }[] };
+    assert.ok(!out.pages[0]!.sections[0]!.code.includes("onerror"));
+  });
+
+  it("leaves a plain config exactly as it was", () => {
+    const config = { pages: [{ slug: "/home", title: "Home", sections: [] }] };
+    const out = sanitizeWebsiteConfig(config) as { pages: { slug: string }[] };
+    assert.equal(out.pages[0]!.slug, "/home");
+  });
 });
