@@ -2,7 +2,13 @@ import sanitizeHtml from "sanitize-html";
 
 import { AuditLog, College } from "@/models";
 import { safeCss } from "@/lib/sections/sanitize-section-html";
-import type { ICollege, ISiteSettings } from "@/models/colleges.model";
+import type {
+  IAeoSettings,
+  ICollege,
+  IFaqEntry,
+  IGeoSettings,
+  ISiteSettings,
+} from "@/models/colleges.model";
 
 /**
  * SEO, maintenance mode and custom code injection.
@@ -21,9 +27,36 @@ export const MAX_CUSTOM_CODE_BYTES = 20_000;
 export const MAX_SEO_TITLE = 120;
 export const MAX_SEO_DESCRIPTION = 320;
 export const MAX_MAINTENANCE_MESSAGE = 500;
+export const MAX_GEO_FIELD = 160;
+export const MAX_SERVICE_AREAS = 20;
+export const MAX_SAME_AS = 20;
+export const MAX_FAQS = 30;
+export const MAX_FAQ_QUESTION = 300;
+export const MAX_FAQ_ANSWER = 1_200;
+
+/**
+ * The schema.org types a tenant of this platform may declare itself as.
+ *
+ * An allowlist rather than a free string, because this value is emitted as
+ * `"@type"` in JSON-LD: an arbitrary one produces structured data that
+ * validates as nothing, which is worse than emitting none — a search engine
+ * that cannot parse the block discards every fact in it, including the
+ * correct ones.
+ */
+export const ORGANIZATION_TYPES = [
+  "CollegeOrUniversity",
+  "EducationalOrganization",
+  "School",
+  "HighSchool",
+  "Organization",
+] as const;
+
+export const DEFAULT_ORGANIZATION_TYPE = "CollegeOrUniversity";
 
 export const DEFAULT_SETTINGS: ISiteSettings = {
-  seo: { indexingEnabled: true, title: null, description: null },
+  seo: { indexingEnabled: true, title: null, description: null, ogImageUrl: null },
+  geo: null,
+  aeo: null,
   maintenance: { enabled: false, message: null },
   customCode: { headHtml: null, bodyEndHtml: null },
   updatedAt: null,
@@ -193,13 +226,229 @@ function clampCode(value: unknown, field: string): string | null {
   return trimmed;
 }
 
+/**
+ * An absolute http(s) URL, or nothing.
+ *
+ * These end up in `<meta property="og:image">` and in a JSON-LD `sameAs` array,
+ * both of which a browser and a crawler will follow. A relative path there
+ * resolves against whichever host is rendering — which for this platform means
+ * one tenant's image URL resolving on another tenant's domain — and a
+ * `javascript:` URL in a `<link>` or an anchor built from `sameAs` is script
+ * execution. Parsed rather than pattern-matched, so a scheme cannot be smuggled
+ * past with an entity or leading whitespace.
+ */
+function clampUrl(value: unknown, field: string): string | null {
+  const text = clampString(value, 2_000, field);
+  if (!text) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw Object.assign(
+      new Error(`${field} must be a full web address, starting with https://`),
+      { status: 400 },
+    );
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw Object.assign(
+      new Error(`${field} must be an http or https address.`),
+      { status: 400 },
+    );
+  }
+
+  return parsed.toString();
+}
+
+/** A latitude or longitude, or nothing. Rejects the string "NaN" and friends. */
+function clampCoordinate(value: unknown, field: string, limit: number): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = typeof value === "number" ? value : Number(String(value).trim());
+  if (!Number.isFinite(numeric)) {
+    throw Object.assign(new Error(`${field} must be a number.`), { status: 400 });
+  }
+  if (numeric < -limit || numeric > limit) {
+    throw Object.assign(
+      new Error(`${field} must be between -${limit} and ${limit}.`),
+      { status: 400 },
+    );
+  }
+  return numeric;
+}
+
+/** ISO-3166-1 alpha-2, or nothing. */
+function clampCountry(value: unknown): string | null {
+  const text = clampString(value, 8, "Country");
+  if (!text) return null;
+  const upper = text.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(upper)) {
+    throw Object.assign(
+      new Error("Country must be a two-letter country code, such as IN or US."),
+      { status: 400 },
+    );
+  }
+  return upper;
+}
+
+function clampStringList(
+  value: unknown,
+  { max, maxLength, field, url }: { max: number; maxLength: number; field: string; url?: boolean },
+): string[] {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw Object.assign(new Error(`${field} must be a list.`), { status: 400 });
+  }
+  if (value.length > max) {
+    throw Object.assign(
+      new Error(`${field} holds at most ${max} entries.`),
+      { status: 400 },
+    );
+  }
+  return value
+    .map((entry) => (url ? clampUrl(entry, field) : clampString(entry, maxLength, field)))
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function normalizeGeo(value: unknown): IGeoSettings | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object") {
+    throw Object.assign(new Error("Location must be an object."), { status: 400 });
+  }
+  const raw = value as Record<string, unknown>;
+
+  const latitude = clampCoordinate(raw.latitude, "Latitude", 90);
+  const longitude = clampCoordinate(raw.longitude, "Longitude", 180);
+
+  /**
+   * Both coordinates or neither.
+   *
+   * One of the pair locates nothing, and emitted alone it produces an `ICBM`
+   * meta tag and a `GeoCoordinates` node that a consumer has to discard. A
+   * half-filled form is a mistake worth naming rather than storing.
+   */
+  if ((latitude === null) !== (longitude === null)) {
+    throw Object.assign(
+      new Error("Give both a latitude and a longitude, or neither."),
+      { status: 400 },
+    );
+  }
+
+  const geo: IGeoSettings = {
+    streetAddress: clampString(raw.streetAddress, MAX_GEO_FIELD, "Street address"),
+    locality: clampString(raw.locality, MAX_GEO_FIELD, "City"),
+    region: clampString(raw.region, MAX_GEO_FIELD, "Region"),
+    postalCode: clampString(raw.postalCode, 32, "Postal code"),
+    country: clampCountry(raw.country),
+    latitude,
+    longitude,
+    telephone: clampString(raw.telephone, 40, "Telephone"),
+    serviceAreas: clampStringList(raw.serviceAreas, {
+      max: MAX_SERVICE_AREAS,
+      maxLength: MAX_GEO_FIELD,
+      field: "Service area",
+    }),
+  };
+
+  // An object in which every field is empty is the tenant clearing the section.
+  // Storing it would make "has a location" true for a site that has none, and
+  // the renderer keys the whole geo block on that question.
+  const hasAnything =
+    Object.entries(geo).some(([key, val]) =>
+      key === "serviceAreas" ? (val as string[]).length > 0 : val !== null,
+    );
+
+  return hasAnything ? geo : null;
+}
+
+function normalizeAeo(value: unknown): IAeoSettings | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object") {
+    throw Object.assign(new Error("Answer-engine settings must be an object."), { status: 400 });
+  }
+  const raw = value as Record<string, unknown>;
+
+  const organizationType = clampString(raw.organizationType, 64, "Organisation type");
+  if (
+    organizationType &&
+    !(ORGANIZATION_TYPES as readonly string[]).includes(organizationType)
+  ) {
+    throw Object.assign(
+      new Error(`Organisation type must be one of: ${ORGANIZATION_TYPES.join(", ")}.`),
+      { status: 400 },
+    );
+  }
+
+  let foundingYear: number | null = null;
+  if (raw.foundingYear !== undefined && raw.foundingYear !== null && raw.foundingYear !== "") {
+    const year = Number(raw.foundingYear);
+    const thisYear = new Date().getFullYear();
+    if (!Number.isInteger(year) || year < 1000 || year > thisYear) {
+      throw Object.assign(
+        new Error(`Founding year must be a whole year between 1000 and ${thisYear}.`),
+        { status: 400 },
+      );
+    }
+    foundingYear = year;
+  }
+
+  const faqsRaw = raw.faqs;
+  let faqs: IFaqEntry[] = [];
+  if (faqsRaw !== undefined && faqsRaw !== null) {
+    if (!Array.isArray(faqsRaw)) {
+      throw Object.assign(new Error("Questions must be a list."), { status: 400 });
+    }
+    if (faqsRaw.length > MAX_FAQS) {
+      throw Object.assign(
+        new Error(`At most ${MAX_FAQS} questions.`),
+        { status: 400 },
+      );
+    }
+    faqs = faqsRaw
+      .map((entry) => {
+        const item = (entry ?? {}) as Record<string, unknown>;
+        const question = clampString(item.question, MAX_FAQ_QUESTION, "Question");
+        const answer = clampString(item.answer, MAX_FAQ_ANSWER, "Answer");
+        // A question with no answer is not a FAQ entry, and `FAQPage` requires
+        // both — a half-filled row would invalidate the whole block.
+        return question && answer ? { question, answer } : null;
+      })
+      .filter((entry): entry is IFaqEntry => entry !== null);
+  }
+
+  const aeo: IAeoSettings = {
+    organizationType,
+    legalName: clampString(raw.legalName, MAX_GEO_FIELD, "Legal name"),
+    foundingYear,
+    sameAs: clampStringList(raw.sameAs, {
+      max: MAX_SAME_AS,
+      maxLength: 2_000,
+      field: "Profile link",
+      url: true,
+    }),
+    faqs,
+  };
+
+  const hasAnything =
+    aeo.organizationType !== null ||
+    aeo.legalName !== null ||
+    aeo.foundingYear !== null ||
+    (aeo.sameAs?.length ?? 0) > 0 ||
+    (aeo.faqs?.length ?? 0) > 0;
+
+  return hasAnything ? aeo : null;
+}
+
 function withDefaults(settings: ISiteSettings | null | undefined): ISiteSettings {
   return {
     seo: {
       indexingEnabled: settings?.seo?.indexingEnabled ?? DEFAULT_SETTINGS.seo.indexingEnabled,
       title: settings?.seo?.title ?? null,
       description: settings?.seo?.description ?? null,
+      ogImageUrl: settings?.seo?.ogImageUrl ?? null,
     },
+    geo: settings?.geo ?? null,
+    aeo: settings?.aeo ?? null,
     maintenance: {
       enabled: settings?.maintenance?.enabled ?? false,
       message: settings?.maintenance?.message ?? null,
@@ -253,7 +502,14 @@ export async function updateSettings(
   if (!college) throw Object.assign(new Error("College not found"), { status: 404 });
 
   const body = (patch ?? {}) as {
-    seo?: { indexingEnabled?: unknown; title?: unknown; description?: unknown };
+    seo?: {
+      indexingEnabled?: unknown;
+      title?: unknown;
+      description?: unknown;
+      ogImageUrl?: unknown;
+    };
+    geo?: unknown;
+    aeo?: unknown;
     maintenance?: { enabled?: unknown; message?: unknown };
     customCode?: { headHtml?: unknown; bodyEndHtml?: unknown };
   };
@@ -273,7 +529,16 @@ export async function updateSettings(
         body.seo?.description === undefined
           ? current.seo.description ?? null
           : clampString(body.seo.description, MAX_SEO_DESCRIPTION, "SEO description"),
+      ogImageUrl:
+        body.seo?.ogImageUrl === undefined
+          ? current.seo.ogImageUrl ?? null
+          : clampUrl(body.seo.ogImageUrl, "Social preview image"),
     },
+    // Whole-object replacement rather than a field merge, because these two are
+    // edited as a form: clearing the street address has to be able to clear it,
+    // and a per-field merge cannot tell "left blank" from "not sent".
+    geo: body.geo === undefined ? current.geo ?? null : normalizeGeo(body.geo),
+    aeo: body.aeo === undefined ? current.aeo ?? null : normalizeAeo(body.aeo),
     maintenance: {
       enabled:
         body.maintenance?.enabled === undefined
@@ -335,18 +600,25 @@ export async function updateSettings(
  * subdomain. The renderer does not get to make that decision, because there
  * would then be two places that could get it wrong.
  */
-export function publicSettingsFor(
-  college: ICollege,
-  opts: { onOwnDomain: boolean },
-): {
+export type PublicSiteSettings = {
   indexingEnabled: boolean;
   seoTitle: string | null;
   seoDescription: string | null;
+  ogImageUrl: string | null;
+  /** The institution's own name, for `og:site_name` and the structured data. */
+  siteName: string;
+  geo: IGeoSettings | null;
+  aeo: IAeoSettings | null;
   maintenanceEnabled: boolean;
   maintenanceMessage: string | null;
   headHtml: string;
   bodyEndHtml: string;
-} {
+};
+
+export function publicSettingsFor(
+  college: ICollege,
+  opts: { onOwnDomain: boolean },
+): PublicSiteSettings {
   const settings = withDefaults(college.settings);
   const executable = opts.onOwnDomain && mayExecuteCustomCode(college);
 
@@ -354,6 +626,18 @@ export function publicSettingsFor(
     indexingEnabled: settings.seo.indexingEnabled,
     seoTitle: settings.seo.title ?? null,
     seoDescription: settings.seo.description ?? null,
+    ogImageUrl: settings.seo.ogImageUrl ?? null,
+    siteName: college.name,
+    /**
+     * Sent to the renderer as data, never as markup.
+     *
+     * The renderer builds the meta tags and the JSON-LD from these fields
+     * itself, so nothing a tenant types can become a tag: a `</script>` in a
+     * FAQ answer closes the block it is serialised into, and that is the one
+     * way structured data turns into script injection.
+     */
+    geo: settings.geo ?? null,
+    aeo: settings.aeo ?? null,
     maintenanceEnabled: settings.maintenance.enabled,
     maintenanceMessage: settings.maintenance.message ?? null,
     headHtml: executable
@@ -365,4 +649,13 @@ export function publicSettingsFor(
   };
 }
 
-export const __testing = { withDefaults, clampString, clampCode };
+export const __testing = {
+  withDefaults,
+  clampString,
+  clampCode,
+  clampUrl,
+  clampCoordinate,
+  clampCountry,
+  normalizeGeo,
+  normalizeAeo,
+};

@@ -42,13 +42,83 @@ export type StoredSection = {
   sortOrder: number;
 };
 
+/**
+ * A page's own search metadata, normalised.
+ *
+ * Every field is nullable, and `null` means "inherit from the site". A page
+ * saved before this existed reads back as all-null, so nothing about its
+ * published output changes until a tenant fills a field in.
+ */
+export type StoredPageSeo = {
+  title: string | null;
+  description: string | null;
+  ogImageUrl: string | null;
+  /** True or false override the site's indexing switch; null defers to it. */
+  indexable: boolean | null;
+};
+
 export type StoredPage = {
   /** Stable page identity, independent of the slug the user may rename. */
   id: string;
   slug: string;
   title: string;
+  seo: StoredPageSeo;
   sections: StoredSection[];
 };
+
+export const EMPTY_PAGE_SEO: StoredPageSeo = {
+  title: null,
+  description: null,
+  ogImageUrl: null,
+  indexable: null,
+};
+
+/** How long a page-level SEO field may be. Same limits as the site's. */
+const MAX_PAGE_SEO_TITLE = 120;
+const MAX_PAGE_SEO_DESCRIPTION = 320;
+
+function trimTo(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, max);
+}
+
+/**
+ * A URL a page may point a social preview at.
+ *
+ * Absolute http(s) only. This is emitted into `<meta property="og:image">`, and
+ * a relative path there resolves against whichever host is serving — which on
+ * this platform means one tenant's path resolving on another tenant's domain.
+ * Anything unparseable is dropped rather than rejected: unlike the settings
+ * form, this arrives inside a page save, and failing that whole save over a
+ * malformed image URL would lose the tenant's section edits with it.
+ */
+function pageImageUrl(value: unknown): string | null {
+  const text = trimTo(value, 2_000);
+  if (!text) return null;
+  try {
+    const parsed = new URL(text);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePageSeo(raw: unknown): StoredPageSeo {
+  if (!raw || typeof raw !== "object") return { ...EMPTY_PAGE_SEO };
+  const entry = raw as Record<string, unknown>;
+
+  return {
+    title: trimTo(entry.title, MAX_PAGE_SEO_TITLE),
+    description: trimTo(entry.description, MAX_PAGE_SEO_DESCRIPTION),
+    ogImageUrl: pageImageUrl(entry.ogImageUrl),
+    indexable:
+      entry.indexable === null || entry.indexable === undefined || entry.indexable === ""
+        ? null
+        : Boolean(entry.indexable),
+  };
+}
 
 export type StoredConfig = { pages: StoredPage[] };
 
@@ -176,6 +246,7 @@ function normalizePage(raw: unknown): StoredPage | null {
     id: asString(entry.id) || pageIdFor(slug),
     slug,
     title: asString(entry.title) || titleFromSlug(slug),
+    seo: normalizePageSeo(entry.seo),
     sections: normalizeSections(entry.sections),
   };
 }
@@ -258,7 +329,7 @@ export async function saveDraft(collegeId: string, raw: unknown): Promise<Stored
 export async function savePage(
   collegeId: string,
   slug: string,
-  page: { title?: unknown; sections?: unknown },
+  page: { title?: unknown; sections?: unknown; seo?: unknown },
 ): Promise<StoredPage> {
   const canonical = canonicalSlug(slug);
   if (!canonical) throw new BadRequest("A page slug is required.");
@@ -270,11 +341,22 @@ export async function savePage(
     id: existing?.id ?? pageIdFor(canonical),
     slug: canonical,
     title: asString(page.title) || existing?.title || titleFromSlug(canonical),
+    // Omitting `seo` keeps what is stored. The editor saves a page on every
+    // debounced keystroke and does not always carry the settings drawer's
+    // state with it; treating "not sent" as "clear it" would erase a tenant's
+    // meta description the next time they corrected a heading.
+    seo: page.seo === undefined ? existing?.seo ?? null : page.seo,
     sections: page.sections,
   });
   // `normalizePage` only returns null for an unusable slug, which `canonical`
   // has already ruled out. A page with no sections is a real page.
-  const resolved = next ?? { id: pageIdFor(canonical), slug: canonical, title: titleFromSlug(canonical), sections: [] };
+  const resolved = next ?? {
+    id: pageIdFor(canonical),
+    slug: canonical,
+    title: titleFromSlug(canonical),
+    seo: { ...EMPTY_PAGE_SEO },
+    sections: [],
+  };
   const sanitized = sanitizeWebsiteConfig({ pages: [resolved] }).pages[0]!;
 
   const pages = existing

@@ -21,9 +21,34 @@ export interface ISectionItem {
   [key: string]: any;
 }
 
+/**
+ * A page's own search metadata.
+ *
+ * Every field is nullable and the whole object is optional, because every page
+ * already in the database predates it. A page that says nothing inherits the
+ * site's settings, which is what all of them did before this existed — so
+ * adding the field changes no published output until somebody fills one in.
+ */
+export interface IPageSeo {
+  title?: string | null;
+  description?: string | null;
+  /** Absolute URL of the image social platforms should preview. */
+  ogImageUrl?: string | null;
+  /**
+   * Whether this one page may be indexed.
+   *
+   * Null means "whatever the site says". False overrides an indexable site —
+   * a thank-you page or a duplicate landing page that should not be found on
+   * its own — and true does not override a site with indexing switched off,
+   * because that switch is the tenant saying the site is not ready.
+   */
+  indexable?: boolean | null;
+}
+
 export interface IPageItem {
   slug: string;
   title: string;
+  seo?: IPageSeo | null;
   sections: ISectionItem[];
 }
 
@@ -55,13 +80,71 @@ export type DomainStatus =
  */
 export type SslStatus = "NONE" | "PENDING" | "ACTIVE" | "ERROR";
 
+/**
+ * Where this institution physically is.
+ *
+ * A college is a place, and the searches that matter to one — "engineering
+ * college in Coimbatore", "colleges near me" — are resolved geographically.
+ * None of that was expressible: the platform had a description field and
+ * nothing else, so every site on it was a place-less document.
+ *
+ * Stored as components rather than one address string because both consumers
+ * need the parts. `PostalAddress` in the structured data has a field per line,
+ * and the `geo.region` meta tag is the region code alone.
+ */
+export interface IGeoSettings {
+  streetAddress?: string | null;
+  /** City or town. */
+  locality?: string | null;
+  /** State or province — ISO-3166-2 where the tenant knows it, e.g. `IN-TN`. */
+  region?: string | null;
+  postalCode?: string | null;
+  /** ISO-3166-1 alpha-2, uppercase. */
+  country?: string | null;
+  /** Decimal degrees. Both or neither: half a coordinate locates nothing. */
+  latitude?: number | null;
+  longitude?: number | null;
+  telephone?: string | null;
+  /** Places this institution serves or recruits from, for local relevance. */
+  serviceAreas?: string[];
+}
+
+/** A question a person asks and the answer this institution gives. */
+export interface IFaqEntry {
+  question: string;
+  answer: string;
+}
+
+/**
+ * What this institution *is*, in a form a machine can quote.
+ *
+ * Answer engines and rich results read structured data, not prose. A page of
+ * beautifully written HTML says nothing an aggregator can cite; twelve lines of
+ * JSON-LD naming the organisation, its type, its address and its answers to
+ * common questions does. This is the source for both.
+ */
+export interface IAeoSettings {
+  /** schema.org type. The default suits this platform's tenants. */
+  organizationType?: string | null;
+  /** The registered name, when it differs from the display name. */
+  legalName?: string | null;
+  foundingYear?: number | null;
+  /** Canonical profiles elsewhere — the `sameAs` array, for entity resolution. */
+  sameAs?: string[];
+  faqs?: IFaqEntry[];
+}
+
 export interface ISiteSettings {
   seo: {
     /** When false, the published site emits `noindex, nofollow`. */
     indexingEnabled: boolean;
     title?: string | null;
     description?: string | null;
+    /** Absolute URL of the default social preview image for the site. */
+    ogImageUrl?: string | null;
   };
+  geo?: IGeoSettings | null;
+  aeo?: IAeoSettings | null;
   maintenance: {
     /** When true, visitors get the maintenance page instead of the site. */
     enabled: boolean;
@@ -193,10 +276,24 @@ const SectionItemSchema = new Schema<ISectionItem>(
   { _id: false, strict: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
+const PageSeoSchema = new Schema<IPageSeo>(
+  {
+    title: { type: String, default: null },
+    description: { type: String, default: null },
+    ogImageUrl: { type: String, default: null },
+    // Three states, so `null` can mean "inherit" — a Boolean with a default of
+    // true would silently overrule the site's own indexing switch on every page
+    // written before this field existed.
+    indexable: { type: Boolean, default: null },
+  },
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+);
+
 const PageItemSchema = new Schema<IPageItem>(
   {
     slug: { type: String, required: true },
     title: { type: String, required: true },
+    seo: { type: PageSeoSchema, default: null },
     sections: { type: [SectionItemSchema], default: [] },
   },
   { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
@@ -209,13 +306,52 @@ const WebsiteConfigSchema = new Schema<IWebsiteConfig>(
   { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
+const GeoSettingsSchema = new Schema<IGeoSettings>(
+  {
+    streetAddress: { type: String, default: null },
+    locality: { type: String, default: null },
+    region: { type: String, default: null },
+    postalCode: { type: String, default: null },
+    // Uppercased on write so `in`, `IN` and ` in ` are one country. The meta tag
+    // and the structured data both want the canonical form.
+    country: { type: String, default: null, uppercase: true, trim: true },
+    latitude: { type: Number, default: null, min: -90, max: 90 },
+    longitude: { type: Number, default: null, min: -180, max: 180 },
+    telephone: { type: String, default: null },
+    serviceAreas: { type: [String], default: [] },
+  },
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+);
+
+const FaqEntrySchema = new Schema<IFaqEntry>(
+  {
+    question: { type: String, required: true },
+    answer: { type: String, required: true },
+  },
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+);
+
+const AeoSettingsSchema = new Schema<IAeoSettings>(
+  {
+    organizationType: { type: String, default: null },
+    legalName: { type: String, default: null },
+    foundingYear: { type: Number, default: null },
+    sameAs: { type: [String], default: [] },
+    faqs: { type: [FaqEntrySchema], default: [] },
+  },
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
+);
+
 const SiteSettingsSchema = new Schema<ISiteSettings>(
   {
     seo: {
       indexingEnabled: { type: Boolean, default: true },
       title: { type: String, default: null },
       description: { type: String, default: null },
+      ogImageUrl: { type: String, default: null },
     },
+    geo: { type: GeoSettingsSchema, default: null },
+    aeo: { type: AeoSettingsSchema, default: null },
     maintenance: {
       enabled: { type: Boolean, default: false },
       message: { type: String, default: null },

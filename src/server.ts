@@ -2558,7 +2558,23 @@ app.get(
         return;
       }
 
-      const defConfig = await getDefaultWebsiteConfig().catch(() => ({ pages: [] }));
+      /**
+       * The platform default, sanitised exactly as a tenant's own config is.
+       *
+       * This branch answers for a subdomain with no college row — which on a
+       * fresh deployment is every visitor — and it was the one path out of this
+       * endpoint that returned section markup straight from the database. The
+       * markup is admin-authored rather than tenant-authored, so this is not
+       * the same severity as the branch above; it is still the difference
+       * between one rule for section HTML leaving this service and two.
+       *
+       * It is also what strips document-level tags such as `<title>` out of a
+       * section, which otherwise arrive in the renderer and compete with the
+       * page's own.
+       */
+      const defConfig = await restoreTemplateScripts(
+        sanitizeWebsiteConfig(await getDefaultWebsiteConfig().catch(() => ({ pages: [] }))),
+      );
       const homePage = defConfig.pages?.find((p: any) => p.slug === "/home" || p.slug === "/") || defConfig.pages?.[0];
       const pageSections = Array.isArray(homePage?.sections) ? homePage.sections : [];
 

@@ -194,3 +194,157 @@ describe("validation", () => {
     assert.equal(clampCode("   ", "Header code"), null);
   });
 });
+
+/**
+ * Location and answer-engine settings.
+ *
+ * Both end up in a `<meta>` tag or a JSON-LD node on a published site, so the
+ * question every case below asks is the same one: can a value get out of here
+ * that a consumer would have to discard, or that would mean something other
+ * than what the tenant typed?
+ */
+describe("normalizeGeo — a place, or nothing", () => {
+  const { normalizeGeo } = __testing;
+
+  it("is null for nothing at all", () => {
+    assert.equal(normalizeGeo(null), null);
+    assert.equal(normalizeGeo(undefined), null);
+  });
+
+  it("is null for a form the tenant emptied", () => {
+    // An object of blanks would make "this site has a location" true for a site
+    // that has none, and the renderer keys the whole geo block on that.
+    assert.equal(normalizeGeo({ streetAddress: "", locality: "  ", serviceAreas: [] }), null);
+  });
+
+  it("keeps the parts of an address separately", () => {
+    const geo = normalizeGeo({
+      streetAddress: " 12 Anna Salai ",
+      locality: "Chennai",
+      region: "IN-TN",
+      postalCode: "600002",
+      country: "in",
+    });
+    assert.equal(geo?.streetAddress, "12 Anna Salai");
+    assert.equal(geo?.locality, "Chennai");
+    assert.equal(geo?.country, "IN");
+  });
+
+  it("refuses a country that is not a country code", () => {
+    assert.throws(() => normalizeGeo({ country: "India" }), /two-letter country code/);
+  });
+
+  it("refuses a coordinate outside the world", () => {
+    assert.throws(() => normalizeGeo({ latitude: 100, longitude: 0 }), /between -90 and 90/);
+    assert.throws(() => normalizeGeo({ latitude: 0, longitude: 200 }), /between -180 and 180/);
+  });
+
+  it("refuses half a coordinate", () => {
+    // One of the pair locates nothing, and emitted alone it produces an ICBM tag
+    // and a GeoCoordinates node a consumer has to throw away.
+    assert.throws(() => normalizeGeo({ latitude: 13.08 }), /both a latitude and a longitude/);
+    assert.throws(() => normalizeGeo({ longitude: 80.27 }), /both a latitude and a longitude/);
+  });
+
+  it("takes a coordinate typed as text", () => {
+    const geo = normalizeGeo({ latitude: "13.0827", longitude: "80.2707" });
+    assert.equal(geo?.latitude, 13.0827);
+    assert.equal(geo?.longitude, 80.2707);
+  });
+
+  it("refuses a coordinate that is not a number", () => {
+    assert.throws(() => normalizeGeo({ latitude: "north", longitude: "east" }), /must be a number/);
+  });
+
+  it("caps how many service areas one site may claim", () => {
+    assert.throws(
+      () => normalizeGeo({ serviceAreas: Array.from({ length: 50 }, (_, i) => `Area ${i}`) }),
+      /at most 20 entries/i,
+    );
+  });
+});
+
+describe("normalizeAeo — facts a machine can quote", () => {
+  const { normalizeAeo } = __testing;
+
+  it("is null for nothing at all", () => {
+    assert.equal(normalizeAeo(null), null);
+    assert.equal(normalizeAeo({ sameAs: [], faqs: [] }), null);
+  });
+
+  it("refuses an organisation type that is not a schema.org type", () => {
+    // An arbitrary `@type` produces structured data that validates as nothing,
+    // and a consumer discards the whole block rather than the one bad field.
+    assert.throws(() => normalizeAeo({ organizationType: "Bakery" }), /must be one of/);
+  });
+
+  it("accepts the types this platform's tenants actually are", () => {
+    assert.equal(normalizeAeo({ organizationType: "School" })?.organizationType, "School");
+  });
+
+  it("refuses a founding year that has not happened", () => {
+    const nextYear = new Date().getFullYear() + 1;
+    assert.throws(() => normalizeAeo({ foundingYear: nextYear }), /whole year between/);
+    assert.throws(() => normalizeAeo({ foundingYear: 1.5 }), /whole year between/);
+  });
+
+  it("refuses a profile link that is not a web address", () => {
+    // `sameAs` is followed. A `javascript:` URL there is script execution.
+    assert.throws(
+      () => normalizeAeo({ sameAs: ["javascript:alert(1)"] }),
+      /http or https|full web address/,
+    );
+    assert.throws(() => normalizeAeo({ sameAs: ["/relative"] }), /full web address/);
+  });
+
+  it("keeps a real profile link", () => {
+    assert.deepEqual(normalizeAeo({ sameAs: ["https://example.edu/"] })?.sameAs, [
+      "https://example.edu/",
+    ]);
+  });
+
+  it("drops a question with no answer rather than emitting an invalid FAQ", () => {
+    const aeo = normalizeAeo({
+      faqs: [
+        { question: "What are the fees?", answer: "80,000 a year." },
+        { question: "Is there a hostel?", answer: "" },
+        { question: "", answer: "Yes." },
+      ],
+    });
+    assert.equal(aeo?.faqs?.length, 1);
+    assert.equal(aeo?.faqs?.[0]?.question, "What are the fees?");
+  });
+
+  it("caps how many questions one site may publish", () => {
+    assert.throws(
+      () =>
+        normalizeAeo({
+          faqs: Array.from({ length: 50 }, (_, i) => ({ question: `Q${i}`, answer: `A${i}` })),
+        }),
+      /At most 30 questions/,
+    );
+  });
+});
+
+describe("clampUrl — anything that reaches a meta tag or a link", () => {
+  const { clampUrl } = __testing;
+
+  it("passes an ordinary https address through", () => {
+    assert.equal(clampUrl("https://cdn.example.com/og.png", "Image"), "https://cdn.example.com/og.png");
+  });
+
+  it("refuses a scheme that executes", () => {
+    for (const bad of ["javascript:alert(1)", "data:text/html,<script>", "vbscript:x"]) {
+      assert.throws(() => clampUrl(bad, "Image"), /http or https|full web address/, `for ${bad}`);
+    }
+  });
+
+  it("refuses a relative path, which would resolve on whichever host renders", () => {
+    assert.throws(() => clampUrl("/images/og.png", "Image"), /full web address/);
+  });
+
+  it("is null for nothing", () => {
+    assert.equal(clampUrl("", "Image"), null);
+    assert.equal(clampUrl(null, "Image"), null);
+  });
+});
