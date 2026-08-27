@@ -94,6 +94,7 @@ import { startDomainMonitor } from "@/domain-monitor";
 import { domainRouter } from "@/domain-router";
 import { College, Template } from "@/models";
 import {
+  fillPagesWithEverySection,
   getDefaultWebsiteConfig,
   updateDefaultWebsiteConfig,
 } from "@/default-website-service";
@@ -1576,6 +1577,34 @@ adminRouter.put("/default-website", async (req, res) => {
     }
 
     res.json(await updateDefaultWebsiteConfig(body));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Fill the Default Website's pages with every section category.
+ *
+ * A separate route rather than a flag on the PUT above, because the two mean
+ * different things to the caller: PUT replaces the config with the body it was
+ * sent, and this one *derives* the new config on the server from the template
+ * library. Sending twenty sections up from the browser would mean the Admin
+ * had to hold the starter markup as well, which is a second copy of it and a
+ * second thing to keep in step.
+ *
+ * Body: `{ slugs?: string[] }` — omit to fill every page. Idempotent; see
+ * `fillPagesWithEverySection`.
+ */
+adminRouter.post("/default-website/fill", async (req, res) => {
+  try {
+    await requireAdmin(req);
+
+    const raw = (req.body ?? {}).slugs;
+    const slugs = Array.isArray(raw)
+      ? raw.filter((slug: unknown): slug is string => typeof slug === "string" && slug.trim() !== "")
+      : undefined;
+
+    res.json(await fillPagesWithEverySection(slugs));
   } catch (error) {
     fail(res, error);
   }

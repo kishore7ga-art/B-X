@@ -1,5 +1,12 @@
 import { SystemSecret, AuditLog } from "@/models";
 import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
+import {
+  SECTION_CATEGORY_IDS,
+  resolveCategory,
+  type SectionCategoryId,
+} from "@/lib/sections/categories";
+import { SECTION_STARTERS } from "@/lib/sections/section-starters";
+import { getSectionLibrary } from "@/section-library-service";
 
 export type DefaultWebsiteSection = {
   id: string;
@@ -19,53 +26,58 @@ export type DefaultWebsiteConfig = {
   pages: DefaultWebsitePage[];
 };
 
-// Initial default website structure containing strictly Header and Footer
-export const HEADER_SECTION_CODE = `<header style="background: #0d1527; color: #ffffff; padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box; border-bottom: 1px solid rgba(255,255,255,0.1); position: relative;">
-  <div style="display: flex; align-items: center; gap: 12px;">
-    <div style="width: 40px; height: 40px; border-radius: 10px; background: #2563eb; color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px;">🎓</div>
-    <span style="font-size: 20px; font-weight: 900; color: #ffffff; white-space: nowrap;">GREENFIELD UNIVERSITY</span>
-  </div>
-  <nav style="display: flex; gap: 24px; font-size: 14px; font-weight: 700;">
-    <a href="#about" style="color: #cbd5e1; text-decoration: none;">About</a>
-    <a href="#courses" style="color: #cbd5e1; text-decoration: none;">Academics</a>
-    <a href="#admissions" style="color: #cbd5e1; text-decoration: none;">Admissions</a>
-    <a href="#contact" style="color: #cbd5e1; text-decoration: none;">Contact</a>
-  </nav>
-  <a href="#apply" style="background: #2563eb; color: #ffffff; padding: 10px 24px; border-radius: 10px; font-size: 13px; font-weight: 800; text-decoration: none;">Apply Now</a>
-</header>`;
+/** The five pages the platform ships with, and their titles. */
+const DEFAULT_PAGES: ReadonlyArray<{ slug: string; title: string }> = [
+  { slug: "/home", title: "Home" },
+  { slug: "/about", title: "About Us" },
+  { slug: "/academics", title: "Academics" },
+  { slug: "/placements", title: "Placements" },
+  { slug: "/contact", title: "Contact Us" },
+];
 
-export const FOOTER_SECTION_CODE = `<footer style="background: #090d16; color: #94a3b8; padding: 40px 40px; font-family: system-ui, sans-serif; width: 100%; box-sizing: border-box; border-top: 1px solid #1e293b; text-align: center;">
-  <p style="font-size: 13px; font-weight: 700; color: #cbd5e1; margin: 0;">© 2026 Greenfield University. All Rights Reserved.</p>
-  <p style="font-size: 12px; color: #64748b; margin-top: 8px;">Approved by AICTE, UGC & Accredited by NAAC A++ Grade.</p>
-</footer>`;
+/** `/home` -> `home`, for building a section id that is stable and readable. */
+function slugKey(slug: string): string {
+  return (slug || "").replace(/^\/+/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "page";
+}
 
+/** One starter section, as a page entry. */
+function starterSection(
+  slug: string,
+  category: SectionCategoryId,
+  sortOrder: number,
+): DefaultWebsiteSection {
+  const starter = SECTION_STARTERS[category];
+  return {
+    id: `def-${slugKey(slug)}-${category}`,
+    title: starter.title,
+    sectionType: category,
+    sortOrder,
+    code: starter.code,
+  };
+}
+
+/**
+ * Every page, with all twenty sections.
+ *
+ * This used to be a header and a footer on `/home` and four empty pages — so a
+ * new deployment served a two-section site, and a tenant pressing Add Section
+ * on About got the picker rather than a page. The editor seeds a page from the
+ * Admin's page at the same slug, which means whatever is here is what every
+ * college starts from; four empty pages made that seeding look broken when it
+ * was working exactly as written.
+ *
+ * Only a database with no `DEFAULT_WEBSITE_CONFIG` record reaches this. An
+ * existing deployment has a stored config and keeps it — see
+ * `fillPagesWithEverySection`, which is how that one is brought up to twenty.
+ */
 const INITIAL_DEFAULT_WEBSITE: DefaultWebsiteConfig = {
-  pages: [
-    {
-      slug: "/home",
-      title: "Home",
-      sections: [
-        {
-          id: "def-home-navbar",
-          title: "Navbar / Header",
-          sectionType: "navbar",
-          sortOrder: 0,
-          code: HEADER_SECTION_CODE,
-        },
-        {
-          id: "def-home-footer",
-          title: "Footer",
-          sectionType: "footer",
-          sortOrder: 1,
-          code: FOOTER_SECTION_CODE,
-        },
-      ],
-    },
-    { slug: "/about", title: "About Us", sections: [] },
-    { slug: "/academics", title: "Academics", sections: [] },
-    { slug: "/placements", title: "Placements", sections: [] },
-    { slug: "/contact", title: "Contact Us", sections: [] },
-  ],
+  pages: DEFAULT_PAGES.map(({ slug, title }) => ({
+    slug,
+    title,
+    sections: SECTION_CATEGORY_IDS.map((category, index) =>
+      starterSection(slug, category, index),
+    ),
+  })),
 };
 
 let inMemoryDefaultWebsite: DefaultWebsiteConfig | null = null;
@@ -193,6 +205,128 @@ export async function updateDefaultWebsiteConfig(
   }
 
   return config;
+}
+
+/**
+ * Bring pages up to all twenty sections, in canonical order.
+ *
+ * ── What it is for ────────────────────────────────────────────────────────
+ *
+ * `INITIAL_DEFAULT_WEBSITE` only reaches a database that has never stored a
+ * config. Every deployment that has been up for five minutes has one, so this
+ * is how an existing Default Website is filled in — the Admin's "Add every
+ * section" button posts to it.
+ *
+ * ── The three rules ───────────────────────────────────────────────────────
+ *
+ * **Nothing an admin arranged is discarded.** A page that already has a
+ * section of a category keeps that exact section — its id, its title and its
+ * markup — and it simply moves into that category's slot. Anything left over
+ * (a second Hero, or a `custom` section that matches no category) is appended
+ * after the twenty in the order it was already in, rather than deleted. That
+ * is what makes this safe to press on `/home`, which is the page most likely
+ * to have real work in it.
+ *
+ * **The library wins over the starter.** For a category the page does not
+ * have, the first published template in Admin › Templates for that category is
+ * used, and only a category with no template at all falls back to
+ * `SECTION_STARTERS`. So the button gets better as the library fills up, and a
+ * college never receives a placeholder for a category where the admin has
+ * published a real design.
+ *
+ * **It is idempotent.** Pressing it twice produces the same config as pressing
+ * it once: the second pass finds every category already present and keeps it.
+ * A button whose second press quietly doubles a page is a button nobody dares
+ * use.
+ *
+ * @param slugs  Which pages to fill, or omitted for every page.
+ */
+export async function fillPagesWithEverySection(
+  slugs?: string[],
+): Promise<DefaultWebsiteConfig> {
+  const config = await getDefaultWebsiteConfig();
+
+  // An empty library is a legitimate state — a fresh deployment has none — so
+  // a failure here falls back to the starters rather than to an error. The
+  // caller asked for twenty sections; twenty is what it gets.
+  let byCategory: Record<string, Array<{ id: string; name: string; code: string }>> = {};
+  try {
+    byCategory = (await getSectionLibrary()).byCategory;
+  } catch {
+    byCategory = {};
+  }
+
+  const wanted = slugs && slugs.length > 0 ? new Set(slugs.map(slugKey)) : null;
+
+  const pages = config.pages.map((page) =>
+    wanted && !wanted.has(slugKey(page.slug)) ? page : fillPageSections(page, byCategory),
+  );
+
+  return updateDefaultWebsiteConfig({ pages });
+}
+
+/** A library template, reduced to what a section needs from it. */
+export type LibraryChoice = { name: string; code: string };
+
+/**
+ * One page, brought up to all twenty sections. The rule, with no I/O in it.
+ *
+ * Exported so it can be tested for the three properties that make the button
+ * safe to press — nothing discarded, library over starter, idempotent — none of
+ * which a test could assert through a Mongo round trip.
+ */
+export function fillPageSections(
+  page: DefaultWebsitePage,
+  byCategory: Record<string, LibraryChoice[]>,
+): DefaultWebsitePage {
+  const existing = Array.isArray(page.sections) ? [...page.sections] : [];
+  const claimed = new Set<number>();
+
+  /** The page's own section for a category, if it has one. First wins. */
+  const takeExisting = (category: SectionCategoryId): DefaultWebsiteSection | null => {
+    const index = existing.findIndex(
+      (section, i) =>
+        !claimed.has(i) &&
+        resolveCategory({
+          sectionType: section?.sectionType,
+          title: section?.title,
+          code: section?.code,
+        }) === category,
+    );
+    if (index < 0) return null;
+    claimed.add(index);
+    return existing[index];
+  };
+
+  const sections: DefaultWebsiteSection[] = SECTION_CATEGORY_IDS.map((category, order) => {
+    const kept = takeExisting(category);
+    if (kept) return { ...kept, sectionType: category, sortOrder: order };
+
+    const fromLibrary = (byCategory[category] || [])[0];
+    if (fromLibrary && fromLibrary.code?.trim()) {
+      return {
+        // Prefixed rather than the raw template id: this is a section on a
+        // page, not a reference to the template, and a later edit in Admin ›
+        // Templates must not appear to reach into a tenant's copy of it.
+        id: `def-${slugKey(page.slug)}-${category}`,
+        title: fromLibrary.name || SECTION_STARTERS[category].title,
+        sectionType: category,
+        sortOrder: order,
+        code: fromLibrary.code,
+      };
+    }
+
+    return starterSection(page.slug, category, order);
+  });
+
+  // Whatever the twenty slots did not claim — a duplicate, or a `custom`
+  // section — kept, after them, in the order it was already in.
+  existing.forEach((section, index) => {
+    if (claimed.has(index)) return;
+    sections.push({ ...section, sortOrder: sections.length });
+  });
+
+  return { ...page, sections };
 }
 
 /** Immediately apply newly created or updated Admin Header / Footer section as the live default across all websites */

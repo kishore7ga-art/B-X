@@ -890,6 +890,42 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/admin/default-website/fill": {
+      post: {
+        tags: ["Admin"],
+        summary: "Fill default pages with every section category",
+        description:
+          "Brings the named pages — or every page, if `slugs` is omitted — up to " +
+          "all twenty canonical sections, in canonical order.\n\n" +
+          "A page that already has a section of a category keeps that exact " +
+          "section; a category it lacks is filled from the first published " +
+          "template in the library, or from the built-in starter if that " +
+          "category has no template. Sections matching no category are kept " +
+          "after the twenty. Idempotent.",
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  slugs: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Page slugs to fill. Omit for every page.",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "The updated default website configuration." },
+          401: { description: "Admin authentication required." },
+        },
+      },
+    },
+
     "/api/v1/auth/login": {
       post: {
         tags: ["Auth"],
