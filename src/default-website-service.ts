@@ -179,6 +179,36 @@ async function loadDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
   return orderPageSections(INITIAL_DEFAULT_WEBSITE);
 }
 
+/**
+ * Writes the config, and only reports success if it is actually stored.
+ *
+ * ── The bug this is the fix for ────────────────────────────────────────────
+ *
+ * The Mongo write was wrapped in a `try` whose `catch` logged a warning and
+ * fell through to `return config` — so a failed write produced a 200 with the
+ * new config in the body. The Admin drew twenty sections, said it had saved,
+ * and the next reload served whatever was still in the database. "It saved and
+ * then it was gone" is not two symptoms; it is this one line.
+ *
+ * Worse, `inMemoryDefaultWebsite` was assigned **before** the write. On a
+ * failure the process then held a config the database did not have, so which
+ * version a request got depended on which branch of the loader it took and
+ * which container answered it.
+ *
+ * Two changes. The error propagates, so the caller can tell the operator the
+ * truth. And the memory copy is only updated once the write is known to have
+ * landed, so the process never disagrees with the database about what is
+ * stored.
+ *
+ * ── And the read-back ─────────────────────────────────────────────────────
+ *
+ * `findOneAndUpdate` resolving is not proof the document is what we asked for:
+ * a `Mixed` field is stored without validation, and a write concern that has
+ * not reached a majority can still be rolled back. The section count is read
+ * back and compared, because the failure being guarded against here is
+ * silent — nothing else in the chain notices, and the operator finds out a day
+ * later when a page is empty.
+ */
 export async function updateDefaultWebsiteConfig(
   rawConfig: DefaultWebsiteConfig
 ): Promise<DefaultWebsiteConfig> {
@@ -186,25 +216,57 @@ export async function updateDefaultWebsiteConfig(
   // has not customised their site, so it is the single highest-leverage place
   // in the platform to put section markup.
   const config = sanitizeWebsiteConfig(rawConfig);
-  inMemoryDefaultWebsite = config;
+  const expected = sectionTally(config);
 
+  let stored: unknown;
   try {
-    await SystemSecret.findOneAndUpdate(
+    const saved = await SystemSecret.findOneAndUpdate(
       { name: "DEFAULT_WEBSITE_CONFIG" },
       { name: "DEFAULT_WEBSITE_CONFIG", value: config },
       { upsert: true, new: true }
     );
-
-    await AuditLog.create({
-      action: "EDITOR_CONFIG_UPDATED",
-      tenantId: "system",
-      details: { pagesCount: config.pages?.length || 0 },
-    }).catch(() => null);
+    stored = saved?.value;
   } catch (err) {
-    console.warn("Could not persist default website config to MongoDB, saved to memory fallback:", err);
+    console.error("[default-website] write failed:", err);
+    throw new Error(
+      `The default website could not be saved: ${err instanceof Error ? err.message : "the database rejected the write"}. Nothing was changed.`,
+    );
   }
 
+  const parsed = typeof stored === "string" ? safeParse(stored) : stored;
+  const actual = sectionTally(parsed as DefaultWebsiteConfig | null);
+  if (actual !== expected) {
+    throw new Error(
+      `The default website was written but came back with ${actual} section boxes instead of ${expected}. Nothing was changed.`,
+    );
+  }
+
+  inMemoryDefaultWebsite = config;
+
+  await AuditLog.create({
+    action: "EDITOR_CONFIG_UPDATED",
+    tenantId: "system",
+    details: { pagesCount: config.pages?.length || 0, sectionsCount: expected },
+  }).catch(() => null);
+
   return config;
+}
+
+/** Total sections across every page — the one number a read-back can compare. */
+function sectionTally(config: DefaultWebsiteConfig | null | undefined): number {
+  if (!config || !Array.isArray(config.pages)) return -1;
+  return config.pages.reduce(
+    (total, page) => total + (Array.isArray(page?.sections) ? page.sections.length : 0),
+    0,
+  );
+}
+
+function safeParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 /**
