@@ -88,7 +88,7 @@ import {
 import { mailerConfigured, sendActivationEmail } from "@/mailer";
 import { SESSION_RENEW_AFTER_SECONDS } from "@/lib/api-contract";
 import { assertFullyDocumented, openApiDocument } from "@/openapi";
-import { BadRequest, NotFound } from "@/errors";
+import { BadRequest, Conflict, NotFound } from "@/errors";
 import { connectDB, dbReady, dbServable, mongoUri, mongoose } from "@/db";
 import { startDomainMonitor } from "@/domain-monitor";
 import { domainRouter } from "@/domain-router";
@@ -715,6 +715,14 @@ function fail(res: express.Response, error: unknown) {
 
   if (error instanceof BadRequest) {
     res.status(400).json({ error: error.message });
+    return;
+  }
+
+  // The current state travels with the refusal: the only useful thing a client
+  // can do with a conflict is show what it is now, and a second round trip to
+  // find out leaves a window for a third writer.
+  if (error instanceof Conflict) {
+    res.status(409).json({ error: error.message, current: error.current ?? null });
     return;
   }
 
@@ -1576,7 +1584,21 @@ adminRouter.put("/default-website", async (req, res) => {
       return;
     }
 
-    res.json(await updateDefaultWebsiteConfig(body));
+    /**
+     * The version the caller read before editing.
+     *
+     * Optional, and that is a compatibility decision rather than an oversight:
+     * a client that has not been updated sends none and keeps its old
+     * last-write-wins behaviour, rather than every save in an already-open tab
+     * starting to fail the moment this deploys. The Admin sends it, so the tab
+     * that actually causes lost updates is the one now protected.
+     */
+    const version = Number(body.version);
+    res.json(
+      await updateDefaultWebsiteConfig(body, {
+        expectedVersion: Number.isFinite(version) ? version : undefined,
+      }),
+    );
   } catch (error) {
     fail(res, error);
   }
@@ -1938,7 +1960,21 @@ app.put(["/api/v1/default-website", "/api/default-website", "/default-website", 
       return;
     }
 
-    res.json(await updateDefaultWebsiteConfig(body));
+    /**
+     * The version the caller read before editing.
+     *
+     * Optional, and that is a compatibility decision rather than an oversight:
+     * a client that has not been updated sends none and keeps its old
+     * last-write-wins behaviour, rather than every save in an already-open tab
+     * starting to fail the moment this deploys. The Admin sends it, so the tab
+     * that actually causes lost updates is the one now protected.
+     */
+    const version = Number(body.version);
+    res.json(
+      await updateDefaultWebsiteConfig(body, {
+        expectedVersion: Number.isFinite(version) ? version : undefined,
+      }),
+    );
   } catch (error) {
     fail(res, error);
   }

@@ -1,5 +1,6 @@
 import { SystemSecret, AuditLog } from "@/models";
 import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
+import { Conflict } from "@/errors";
 import {
   SECTION_CATEGORY_IDS,
   resolveCategory,
@@ -24,6 +25,28 @@ export type DefaultWebsitePage = {
 
 export type DefaultWebsiteConfig = {
   pages: DefaultWebsitePage[];
+  /**
+   * How many times this config has been written. Absent on a config that
+   * predates versioning, and on one being sent *in* by a client that has not
+   * read one yet.
+   *
+   * ── Why this exists ───────────────────────────────────────────────────────
+   *
+   * `PUT /admin/default-website` replaces the whole config with the body it is
+   * sent, and the Admin holds that whole config in React state from the moment
+   * the screen loads. So a tab left open is a copy of the config as it was
+   * then, and *any* action in it — adding a section, renaming one, a reorder —
+   * writes that whole copy back.
+   *
+   * That is a lost update, and it is not theoretical: pressing "Add all 20" on
+   * one screen filled `/home` to twenty sections, and a click in a tab that had
+   * been open since before it put the six-section version back over the top.
+   * Nothing reported anything, on either side, because from the API's view the
+   * second request was a perfectly ordinary save.
+   *
+   * A version turns that into a refusal the operator can see and act on.
+   */
+  version?: number;
 };
 
 /** The five pages the platform ships with, and their titles. */
@@ -161,7 +184,8 @@ async function loadDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
             mergedPages.push(initPage);
           }
         });
-        const ordered = orderPageSections({ pages: mergedPages });
+        // `version` carried through: it is what a stale save is refused against.
+        const ordered = orderPageSections({ pages: mergedPages, version: parsed.version });
         inMemoryDefaultWebsite = ordered;
         return ordered;
       }
@@ -210,12 +234,42 @@ async function loadDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
  * later when a page is empty.
  */
 export async function updateDefaultWebsiteConfig(
-  rawConfig: DefaultWebsiteConfig
+  rawConfig: DefaultWebsiteConfig,
+  options: {
+    /**
+     * The version the caller read before editing. A write is refused if the
+     * stored config has moved on since — see `DefaultWebsiteConfig.version`.
+     *
+     * Omitted by every server-side caller, which read and wrote in the same
+     * tick and therefore cannot be stale.
+     */
+    expectedVersion?: number;
+  } = {},
 ): Promise<DefaultWebsiteConfig> {
+  /**
+   * The stored version, read straight from the collection.
+   *
+   * Deliberately not through `loadDefaultWebsiteConfig`: that one *seeds* an
+   * empty database by calling this function, so going through it here would be
+   * unbounded recursion the first time a deployment starts with no record.
+   */
+  const current = await storedConfig();
+  const currentVersion = Number.isFinite(current?.version) ? (current!.version as number) : 0;
+
+  if (options.expectedVersion !== undefined && options.expectedVersion !== currentVersion) {
+    throw new Conflict(
+      `The default website has been changed since this page was loaded — it is now at version ${currentVersion}, this save is based on version ${options.expectedVersion}. Reload to see the current version; saving would have replaced it.`,
+      current ? orderPageSections(current) : null,
+    );
+  }
+
   // Sanitised on write as well as on read. This body reaches every tenant that
   // has not customised their site, so it is the single highest-leverage place
   // in the platform to put section markup.
-  const config = sanitizeWebsiteConfig(rawConfig);
+  const config: DefaultWebsiteConfig = {
+    ...sanitizeWebsiteConfig(rawConfig),
+    version: currentVersion + 1,
+  };
   const expected = sectionTally(config);
 
   let stored: unknown;
@@ -250,6 +304,19 @@ export async function updateDefaultWebsiteConfig(
   }).catch(() => null);
 
   return config;
+}
+
+/** The config as the collection holds it, or null. No seeding, no merging. */
+async function storedConfig(): Promise<DefaultWebsiteConfig | null> {
+  try {
+    const secret = await SystemSecret.findOne({ name: "DEFAULT_WEBSITE_CONFIG" });
+    if (!secret || !secret.value) return null;
+    const parsed = typeof secret.value === "string" ? safeParse(secret.value) : secret.value;
+    if (!parsed || !Array.isArray((parsed as DefaultWebsiteConfig).pages)) return null;
+    return parsed as DefaultWebsiteConfig;
+  } catch {
+    return null;
+  }
 }
 
 /** Total sections across every page — the one number a read-back can compare. */
