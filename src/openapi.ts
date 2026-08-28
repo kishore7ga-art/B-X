@@ -6,6 +6,7 @@ import {
   activatePasswordSchema,
 } from "@/access-service";
 import { credentialsSchema } from "@/auth-service";
+import { onboardingSchema } from "@/onboarding-service";
 import { adminLoginSchema, updateUserStatusSchema } from "@/admin-service";
 import {
   createTemplateSchema,
@@ -291,6 +292,8 @@ export const openApiDocument = {
                         status: { type: "string" },
                         collegeType: { type: "string", nullable: true },
                         isDemo: { type: "boolean" },
+                        ownerRole: { type: "string", nullable: true },
+                        onboardingCompleted: { type: "boolean" },
                         createdAt: { type: "string", format: "date-time" },
                       },
                     },
@@ -299,6 +302,73 @@ export const openApiDocument = {
               },
             },
           },
+          401: { description: "Not signed in." },
+        },
+      },
+    },
+
+    "/api/v1/onboarding": {
+      get: {
+        tags: ["Auth"],
+        summary: "Onboarding state for the current college",
+        description:
+          "Whether the role/theme/font wizard has been completed, and the " +
+          "answers if it has. Scoped to the session's college — this route " +
+          "takes no identifier, so there is nothing on it to tamper with.\n\n" +
+          "401 when no valid session cookie is present.",
+        responses: {
+          200: {
+            description: "The college's onboarding state.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["completed", "role", "themePaletteId", "themeFontId", "completedAt"],
+                  properties: {
+                    completed: { type: "boolean" },
+                    role: { type: "string", nullable: true },
+                    themePaletteId: { type: "string", nullable: true },
+                    themeFontId: { type: "string", nullable: true },
+                    completedAt: { type: "string", format: "date-time", nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: "Not signed in." },
+        },
+      },
+      put: {
+        tags: ["Auth"],
+        summary: "Complete onboarding",
+        description:
+          "Records the role, theme and font together, and stamps the college " +
+          "as onboarded. All three are validated against the lists the " +
+          "renderer actually ships — a theme id with no renderer would be a " +
+          "site that loads unstyled — and the write is all-or-nothing.\n\n" +
+          "Idempotent: re-running the wizard overwrites the answers but does " +
+          "not restart `completedAt`.",
+        requestBody: body(onboardingSchema),
+        responses: {
+          200: {
+            description: "The stored onboarding state.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["completed", "role", "themePaletteId", "themeFontId", "completedAt"],
+                  properties: {
+                    completed: { type: "boolean" },
+                    role: { type: "string", nullable: true },
+                    themePaletteId: { type: "string", nullable: true },
+                    themeFontId: { type: "string", nullable: true },
+                    completedAt: { type: "string", format: "date-time", nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          400: json(ERROR, "An answer was missing or not one of the accepted values."),
           401: { description: "Not signed in." },
         },
       },

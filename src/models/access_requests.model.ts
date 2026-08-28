@@ -5,6 +5,17 @@ export interface IAccessRequest extends Document {
   collegeName: string;
   applicantEmail: string;
   applicantName?: string | null;
+  /**
+   * The applicant's phone number, as they typed it.
+   *
+   * Stored as given rather than normalised to E.164. This is a number a human
+   * rings to check an application is genuine, the extensions and spacing people
+   * write are meaningful to them, and a normaliser that guesses a country code
+   * wrong turns a reachable number into an unreachable one.
+   */
+  applicantPhone?: string | null;
+  /** The institution's existing website, as typed. May have no scheme. */
+  applicantWebsite?: string | null;
   subdomain: string;
   collegeType?: string | null;
   passwordHash?: string | null;
@@ -24,6 +35,8 @@ const AccessRequestSchema = new Schema<IAccessRequest>(
     collegeName: { type: String, required: true, trim: true },
     applicantEmail: { type: String, required: true, lowercase: true, trim: true },
     applicantName: { type: String, default: null },
+    applicantPhone: { type: String, default: null },
+    applicantWebsite: { type: String, default: null },
     subdomain: { type: String, required: true, lowercase: true, trim: true },
     collegeType: { type: String, default: null },
     passwordHash: { type: String, default: null },

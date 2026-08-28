@@ -179,3 +179,79 @@ describe("the pre-approval hijack stays closed", () => {
     );
   });
 });
+
+/**
+ * Phone and website, which the form collected and the platform threw away.
+ *
+ * Both were concatenated into `message` as `"Website: … | Mobile: …"`, and
+ * `listAccessRequests` returns `message: null` unconditionally — so an
+ * applicant typed a number that no administrator ever saw, on the one screen
+ * where the decision to approve them is made.
+ */
+describe("accessRequestSchema — phone and website are fields", () => {
+  const valid = { name: "Ada", email: "ada@college.edu" };
+
+  it("accepts a request without either — both stay optional", () => {
+    // Every row written before these existed has neither, and re-submitting
+    // must not become impossible for anyone whose form is a version behind.
+    assert.equal(accessRequestSchema.safeParse(valid).success, true);
+  });
+
+  it("accepts the shapes people actually write numbers in", () => {
+    for (const phone of [
+      "+91 98765 43210",
+      "9876543210",
+      "+1 (555) 010-9999",
+      "044-2345-6789",
+      "+44 20 7946 0958",
+    ]) {
+      const parsed = accessRequestSchema.safeParse({ ...valid, phone });
+      assert.equal(parsed.success, true, `rejected a real number: ${phone}`);
+    }
+  });
+
+  it("rejects something that is plainly not a phone number", () => {
+    for (const phone of ["ada@college.edu", "call me", "++1234567", "12"]) {
+      const parsed = accessRequestSchema.safeParse({ ...valid, phone });
+      assert.equal(parsed.success, false, `accepted a non-number: ${phone}`);
+    }
+  });
+
+  it("says the field is wrong, not that the form is", () => {
+    const parsed = accessRequestSchema.safeParse({ ...valid, phone: "call me" });
+    assert.equal(parsed.success, false);
+    if (!parsed.success) assert.match(parsed.error.issues[0].message, /phone/i);
+  });
+
+  it("treats an empty phone as absent rather than as an invalid one", () => {
+    // The form sends "" for a field left blank. Reading that as a failed
+    // pattern match would block a submission over a box nobody filled in.
+    const parsed = accessRequestSchema.safeParse({ ...valid, phone: "" });
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.success && parsed.data.phone, undefined);
+  });
+
+  it("keeps a website with no scheme, because that is how people type one", () => {
+    const parsed = accessRequestSchema.safeParse({
+      ...valid,
+      website: "www.madrascollege.ac.in",
+    });
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.success && parsed.data.website, "www.madrascollege.ac.in");
+  });
+
+  it("carries both through parsing rather than folding them into a message", () => {
+    const parsed = accessRequestSchema.safeParse({
+      ...valid,
+      phone: "+91 98765 43210",
+      website: "example.ac.in",
+    });
+    assert.equal(parsed.success, true);
+    if (parsed.success) {
+      assert.equal(parsed.data.phone, "+91 98765 43210");
+      assert.equal(parsed.data.website, "example.ac.in");
+      // The thing this replaces. Nothing should be reconstructing that string.
+      assert.equal(parsed.data.message, undefined);
+    }
+  });
+});

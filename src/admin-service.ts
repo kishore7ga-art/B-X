@@ -5,9 +5,10 @@ import * as OTPAuth from "otpauth";
 import { z } from "zod";
 
 import { bootstrapState } from "@/admin-bootstrap";
-import { AdminUser, SystemSecret, College, Template } from "@/models";
+import { AccessRequest, AdminUser, AuditLog, SystemSecret, College, Template } from "@/models";
 import type { IAdminUser } from "@/models/admin_users.model";
 import { AuthError } from "@/auth-service";
+import { presenceCounts } from "@/presence-service";
 
 export const ADMIN_COOKIE_NAME = "xite_admin_session";
 const ADMIN_MAX_AGE_SECONDS = 60 * 60 * 8;
@@ -325,38 +326,142 @@ export function recordAudit(entry: {
   });
 }
 
+/**
+ * Everything the Super Admin dashboard shows, counted rather than asserted.
+ *
+ * ── What this replaces ─────────────────────────────────────────────────────
+ *
+ * Three things, all of which reported something other than what they claimed:
+ *
+ *  1. `users` was the total number of embedded user documents, computed by
+ *     loading every non-demo college — each of which carries two complete
+ *     website configs made of raw section HTML — and adding up array lengths.
+ *     The most expensive query in the panel, for a number the panel never
+ *     distinguished from "how many people are using this".
+ *  2. `templates[].colleges` was the literal `0`, for every template, always.
+ *     A section used by forty tenants and one used by none rendered identically.
+ *  3. `recentActions` was `[]`, despite an `AuditLog` collection that has been
+ *     recording every approval, rejection and publish the whole time.
+ *
+ * And three figures the dashboard needs were simply absent: how many access
+ * requests are waiting on a human, how many were approved, how many rejected.
+ * Those are the queue this panel exists to work through.
+ *
+ * ── Why `onboardingIncomplete` changed meaning ─────────────────────────────
+ *
+ * It counted colleges with a null `templateId`, which is not what onboarding
+ * is. Onboarding is the role/theme/font wizard, and a college that has not
+ * finished it has a null `onboardingCompletedAt` — which is now what this
+ * counts. The template figure is still reported, under its own name, because
+ * "has no template" is a real thing an operator wants to know; it was only ever
+ * the label that was wrong.
+ */
 export async function adminOverview() {
   const [
     collegesTotal,
+    active,
     published,
     withoutTemplate,
+    notOnboarded,
     templates,
-    collegesWithUsers,
+    presence,
+    requestsPending,
+    requestsApproved,
+    requestsRejected,
+    sectionsTotal,
+    recent,
   ] = await Promise.all([
     College.countDocuments({ isDemo: false }),
     College.countDocuments({ isDemo: false, status: "ACTIVE" }),
+    /**
+     * Published means published, not "active".
+     *
+     * `publishedVersion` increments on every successful publish and starts at
+     * zero, so this is the count of tenants whose site a visitor can actually
+     * see. `status: "ACTIVE"` — which is what this used to count and now
+     * reports separately as `active` — means the account is enabled, which is
+     * a different question and was being answered under the wrong heading.
+     */
+    College.countDocuments({ isDemo: false, publishedVersion: { $gt: 0 } }),
     College.countDocuments({ isDemo: false, templateId: null }),
+    College.countDocuments({ isDemo: false, onboardingCompletedAt: null }),
     Template.find().sort({ name: 1 }),
-    College.find({ isDemo: false }).select("users"),
+    presenceCounts(),
+    AccessRequest.countDocuments({ status: "PENDING" }),
+    AccessRequest.countDocuments({ status: "APPROVED" }),
+    AccessRequest.countDocuments({ status: "REJECTED" }),
+    /**
+     * Section instances across every tenant's draft.
+     *
+     * Aggregated in the database rather than by loading the configs and
+     * counting in JavaScript, for the reason given above: these documents are
+     * the largest in the collection and the answer is one integer.
+     */
+    College.aggregate<{ total: number }>([
+      { $match: { isDemo: false } },
+      { $project: { pages: { $ifNull: ["$websiteConfig.pages", []] } } },
+      { $unwind: { path: "$pages", preserveNullAndEmptyArrays: false } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $size: { $ifNull: ["$pages.sections", []] } } },
+        },
+      },
+    ]).then((rows) => rows[0]?.total ?? 0),
+    AuditLog.find().sort({ createdAt: -1 }).limit(12).lean(),
   ]);
 
-  let userCount = 0;
-  collegesWithUsers.forEach((c) => { userCount += c.users?.length || 0; });
+  /**
+   * How many tenants each template is actually on.
+   *
+   * One grouped query over the section instances rather than one query per
+   * template. `templateId` is the field the swap cycle keys on, so this is the
+   * same identity the editor uses — a template reporting zero here genuinely
+   * appears on nobody's site.
+   */
+  const usageRows = await College.aggregate<{ _id: string; colleges: number }>([
+    { $match: { isDemo: false } },
+    { $project: { pages: { $ifNull: ["$websiteConfig.pages", []] } } },
+    { $unwind: "$pages" },
+    { $unwind: { path: "$pages.sections", preserveNullAndEmptyArrays: false } },
+    { $match: { "pages.sections.templateId": { $ne: null } } },
+    // Distinct colleges, not distinct sections: a tenant using one template on
+    // four pages is one tenant, and counting it as four is the kind of number
+    // that makes a library look busier than it is.
+    { $group: { _id: { template: "$pages.sections.templateId", college: "$_id" } } },
+    { $group: { _id: "$_id.template", colleges: { $sum: 1 } } },
+  ]);
+
+  const usage = new Map(usageRows.map((row) => [String(row._id), row.colleges]));
 
   return {
     colleges: {
       total: collegesTotal,
+      active,
       published,
-      onboardingIncomplete: withoutTemplate,
+      onboardingIncomplete: notOnboarded,
+      withoutTemplate,
     },
-    users: userCount,
+    requests: {
+      pending: requestsPending,
+      approved: requestsApproved,
+      rejected: requestsRejected,
+    },
+    users: presence.total,
+    presence,
+    sections: sectionsTotal,
     templates: templates.map((t) => ({
       id: t.id,
       name: t.name,
-      colleges: 0,
+      colleges: usage.get(String(t.id)) ?? 0,
       archived: Boolean(t.archivedAt),
     })),
-    recentActions: [],
+    recentActions: recent.map((entry: Record<string, any>) => ({
+      action: String(entry.action ?? ""),
+      tenantId: String(entry.tenantId ?? ""),
+      actorId: entry.actorId ? String(entry.actorId) : null,
+      createdAt: entry.createdAt ? new Date(entry.createdAt).toISOString() : null,
+    })),
   };
 }
 

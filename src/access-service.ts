@@ -54,6 +54,39 @@ export const accessRequestSchema = z.object({
     .optional()
     .or(z.literal("").transform(() => undefined)),
   organization: z.string().trim().max(160, "Organization name is too long").optional(),
+  /**
+   * A real field, because it was already being collected.
+   *
+   * The sign-up form asked for a mobile number and a website, then concatenated
+   * them into `message` as `"Website: … | Mobile: …"`. `listAccessRequests`
+   * returns `message: null` unconditionally, so the number reached the database
+   * inside a prose string and was then never shown to the person whose job is
+   * to ring it. Collected, stored, and invisible.
+   *
+   * The pattern is deliberately loose: digits, spaces, brackets, dashes and a
+   * leading plus, seven to twenty characters. Tight enough to reject an email
+   * address pasted into the wrong box, loose enough not to reject the way a
+   * real number is written in a country whose format nobody here anticipated.
+   */
+  phone: z
+    .string()
+    .trim()
+    .min(7, "Enter a valid phone number")
+    .max(20, "Enter a valid phone number")
+    .regex(/^\+?[0-9][0-9\s()\-.]*$/, "Enter a valid phone number")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  /**
+   * The institution's existing website, if it has one.
+   *
+   * The other half of what was being folded into `message`, and kept for the
+   * same reason: it is the fastest way for an administrator to check that an
+   * application naming a college actually comes from that college. Stored as
+   * typed — people write `www.example.ac.in` without a scheme, and rejecting
+   * that would fail the common case to satisfy a URL parser.
+   */
+  website: z.string().trim().max(300, "Website address is too long").optional()
+    .or(z.literal("").transform(() => undefined)),
   message: z.string().trim().max(2000, "Message is too long").optional(),
 });
 
@@ -66,7 +99,7 @@ export async function submitAccessRequest(input: unknown) {
     throw new AuthError(firstMsg, 400);
   }
 
-  const { name, email, password, organization, message } = parsed.data;
+  const { name, email, password, organization, phone, website, message } = parsed.data;
   const cleanEmail = email.trim().toLowerCase();
 
   try {
@@ -120,6 +153,8 @@ export async function submitAccessRequest(input: unknown) {
         collegeName: orgName,
         applicantEmail: cleanEmail,
         applicantName: name,
+        applicantPhone: phone ?? null,
+        applicantWebsite: website ?? null,
         subdomain: reqSubdomain,
         passwordHash,
         status: "PENDING",
@@ -172,6 +207,8 @@ export type AccessRequestRow = {
   email: string;
   hasPassword?: boolean;
   organization: string | null;
+  phone: string | null;
+  website: string | null;
   message: string | null;
   status: "PENDING" | "APPROVED" | "REJECTED";
   createdAt: string;
@@ -207,6 +244,12 @@ export async function listAccessRequests(query: unknown): Promise<AccessRequestR
     email: row.applicantEmail,
     hasPassword: Boolean(row.passwordHash),
     organization: row.collegeName,
+    phone: row.applicantPhone ?? null,
+    website: row.applicantWebsite ?? null,
+    // Deliberately still null. There is no free-text message field on the form
+    // any more — what used to be crammed in here is `phone` above — and a key
+    // that always answers null is clearer than one quietly removed from a shape
+    // the admin panel already destructures.
     message: null,
     status: row.status,
     createdAt: row.createdAt.toISOString(),

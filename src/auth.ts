@@ -14,13 +14,23 @@ function secretKey() {
   return new TextEncoder().encode(secret);
 }
 
-/**
- * Open-access mode, mirroring the frontend exactly.
+/*
+ * There was a module-level `AUTH_DISABLED` here, and it was both dead and
+ * dangerous:
  *
- * The two services must agree on who the caller is, or the editor would save
- * happily through one and get 401s from the other.
+ *     const AUTH_DISABLED = process.env.AUTH_DISABLED !== "false";
+ *
+ * Nothing read it — `getSession` below tests the environment variable directly,
+ * and correctly, with `=== "true"`. But the two spellings are opposites at the
+ * default: with the variable unset, this constant was `true` and the check
+ * below is `false`. Anything that had started using it would have switched
+ * open-access on for every deployment that had simply not set the variable,
+ * which is most of them.
+ *
+ * Removed rather than corrected. The frontend mirrors this decision in
+ * `lib/auth/open-access.ts` and the two services must agree on who the caller
+ * is — a second copy of the rule in this file is how they stop agreeing.
  */
-const AUTH_DISABLED = process.env.AUTH_DISABLED !== "false";
 
 async function openAccessCollege() {
   const existing = await College.findOne({ isDemo: false }).sort({ createdAt: 1 });

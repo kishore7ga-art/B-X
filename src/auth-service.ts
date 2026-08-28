@@ -172,10 +172,26 @@ export async function provisionCollegeAndUser(
   };
 }
 
+/**
+ * Where a sign-in lands.
+ *
+ * Everybody used to go to the editor, including the person seeing this product
+ * for the first time — which is why the wizard that was supposed to ask them
+ * for a role, a theme and a font could be built, wired and still never run.
+ * This is the one place that decision is made, so the frontend cannot reach a
+ * different conclusion from the API about where somebody belongs.
+ *
+ * A college with no `onboardingCompletedAt` goes to the wizard. That includes
+ * every tenant provisioned before it existed, and that is correct rather than
+ * merely unavoidable: their theme and font are genuinely unset, and the editor
+ * renders unset as "no theme stamped at all".
+ */
 export function destinationFor(college: {
   subdomain: string;
   templateId?: string | null;
+  onboardingCompletedAt?: Date | null;
 }) {
+  if (!college.onboardingCompletedAt) return "/onboarding";
   return `/editor/${college.subdomain}`;
 }
 

@@ -109,6 +109,12 @@ import {
   savePage,
 } from "@/website-config-service";
 import { getSectionLibrary } from "@/section-library-service";
+import { presenceCounts, touchPresence } from "@/presence-service";
+import {
+  completeOnboarding,
+  getOnboarding,
+  onboardingPayloadFor,
+} from "@/onboarding-service";
 import { EDITOR_THEME_IDS, EDITOR_FONT_IDS } from "@/lib/editor-themes";
 
 /**
@@ -641,6 +647,16 @@ app.use(async (req, res, next) => {
         cookieOptions(requestHost(req)),
       );
     }
+    /**
+     * Record that this session is in use, for the dashboard's live count.
+     *
+     * Deliberately not awaited. Presence is a reporting detail and this
+     * middleware sits in front of every route — making a request wait on a
+     * database write it does not need is how a dashboard number becomes a
+     * latency regression on the whole product. The write throttles itself to
+     * once a minute per user and swallows its own failures.
+     */
+    if (current) void touchPresence(current.session);
   } catch (error) {
     // Renewal is a convenience; failing it must never fail the request.
     console.error("[auth] session renewal skipped:", (error as Error).message);
@@ -874,16 +890,32 @@ app.get(["/health", "/api/health"], async (_req, res) => {
 /**
  * Single operational heartbeat for CUJ-001 (XITE Critical User Journey 6-step flow).
  */
+/**
+ * Which flows can work right now, which is one question about the database.
+ *
+ * Each key is a flow whose every write goes through Mongo, so "is the
+ * connection up" is genuinely the whole answer for all of them. They are listed
+ * separately rather than collapsed into one field because an operator reading
+ * this wants to know what is affected, not merely that something is.
+ *
+ * `e2eSuite: "93/93"` used to be reported alongside them. It was a string
+ * literal — no suite ran, nothing counted, and the number did not change when
+ * tests were added, removed or broken. A health endpoint asserting a passing
+ * test run it has never observed is worse than one that says nothing: it is
+ * exactly the field somebody checks when they suspect something is wrong.
+ * Test results belong to CI, which actually runs them.
+ */
 app.get("/api/v1/system/flow-health", async (_req, res) => {
   const isDbConnected = mongoose.connection.readyState === 1;
+  const state = isDbConnected ? "ok" : "degraded";
   res.json({
-    accessRequest: isDbConnected ? "ok" : "degraded",
-    approval: isDbConnected ? "ok" : "degraded",
-    activation: isDbConnected ? "ok" : "degraded",
-    authentication: isDbConnected ? "ok" : "degraded",
-    editorPersistence: isDbConnected ? "ok" : "degraded",
-    livePublishing: isDbConnected ? "ok" : "degraded",
-    e2eSuite: "93/93",
+    accessRequest: state,
+    approval: state,
+    activation: state,
+    authentication: state,
+    editorPersistence: state,
+    livePublishing: state,
+    database: isDbConnected ? "connected" : "unreachable",
     timestamp: new Date().toISOString(),
   });
 });
@@ -1136,7 +1168,7 @@ app.get("/api/v1/me", async (req, res) => {
     }
 
     const college = await College.findById(session.collegeId).select(
-      "id name subdomain customDomain templateId themePaletteId themeFontId status collegeType isDemo createdAt"
+      "id name subdomain customDomain templateId themePaletteId themeFontId status collegeType isDemo createdAt ownerRole onboardingCompletedAt"
     );
 
     if (!college) {
@@ -1145,12 +1177,70 @@ app.get("/api/v1/me", async (req, res) => {
     }
 
     const collegeObj = college.toObject();
+    /**
+     * The onboarding state travels with the session, not on a second request.
+     *
+     * Every guarded page in the frontend already calls this to prove the cookie
+     * is live, and every one of them then has to decide whether to render or
+     * send the person to the wizard. Answering that here makes it one round
+     * trip; answering it from a separate endpoint makes it two, on every page,
+     * with a window in between where the app knows who somebody is but not
+     * where they should be.
+     */
+    const onboarding = onboardingPayloadFor(college);
+    // The raw timestamp is selected so the payload can be derived from it, and
+    // deliberately not sent. Two representations of one fact is how the wizard
+    // and the editor end up disagreeing about whether somebody has finished it.
+    delete (collegeObj as Record<string, unknown>).onboardingCompletedAt;
     res.json({
       college: {
         ...collegeObj,
+        ownerRole: onboarding.role,
+        onboardingCompleted: onboarding.completed,
         createdAt: college.createdAt ? college.createdAt.toISOString() : new Date().toISOString(),
       },
     });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+// --- Onboarding ---------------------------------------------------------------
+
+/**
+ * The role/theme/font wizard, read and written.
+ *
+ * Both are scoped to `session.collegeId` and take no id from the caller. That
+ * is not a formality: onboarding writes the project's theme and font, so a
+ * route that accepted a college id from the body would let any signed-in tenant
+ * restyle any other tenant's site. There is no id to tamper with here.
+ */
+app.get(["/api/v1/onboarding", "/api/onboarding"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie);
+    if (!session) {
+      res.status(401).json({ error: "Not signed in" });
+      return;
+    }
+    res.json(await getOnboarding(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+app.put(["/api/v1/onboarding", "/api/onboarding"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie);
+    if (!session) {
+      res.status(401).json({ error: "Not signed in" });
+      return;
+    }
+    const payload = await completeOnboarding(session.collegeId, req.body ?? {});
+    console.log(
+      `[onboarding] college=${session.collegeId} role=${payload.role} ` +
+        `theme=${payload.themePaletteId} font=${payload.themeFontId}`,
+    );
+    res.json(payload);
   } catch (error) {
     fail(res, error);
   }

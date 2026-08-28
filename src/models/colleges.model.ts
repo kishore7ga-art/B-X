@@ -6,6 +6,17 @@ export interface ICollegeUser {
   passwordHash: string;
   status: "ACTIVE" | "DISABLED";
   createdAt: Date;
+  /**
+   * When this user's session last made an authenticated request.
+   *
+   * The basis of the "live users" figure, and the only honest one available:
+   * a session token is valid for a week, so its existence says nothing about
+   * whether anybody is here now. Null for every account that has not made a
+   * request since this field existed, which reads correctly as "not live".
+   *
+   * Written at most once a minute per user — see `presence-service.ts`.
+   */
+  lastSeenAt?: Date | null;
 }
 
 export interface ISectionItem {
@@ -206,6 +217,28 @@ export interface ICollege extends Document {
   templateId?: string | null;
   themePaletteId?: string | null;
   themeFontId?: string | null;
+  /**
+   * What the owner said they are, from `ONBOARDING_ROLES`.
+   *
+   * Null on every college that existed before the wizard did. That is the
+   * intended reading — "never asked" — and it is why this is not defaulted to
+   * a role nobody chose.
+   */
+  ownerRole?: string | null;
+  /**
+   * When the role/theme/font wizard was finished, or null if it has not been.
+   *
+   * A timestamp rather than a boolean because the boolean is derivable from it
+   * and the reverse is not: this answers "has it been done" *and* "when", and
+   * the second question is the one that gets asked the first time a tenant
+   * says their site looked different last week.
+   *
+   * A tenant provisioned before this field existed reads as not onboarded,
+   * which sends them through a three-question wizard once. That is deliberate:
+   * their theme and font are genuinely unset, and the alternative is
+   * backfilling a choice they never made.
+   */
+  onboardingCompletedAt?: Date | null;
   status: "DRAFT" | "PENDING" | "ACTIVE" | "DISABLED";
   adoptable: boolean;
   collegeType?: string | null;
@@ -249,6 +282,7 @@ const CollegeUserSchema = new Schema<ICollegeUser>(
     passwordHash: { type: String, required: true },
     status: { type: String, enum: ["ACTIVE", "DISABLED"], default: "ACTIVE" },
     createdAt: { type: Date, default: Date.now },
+    lastSeenAt: { type: Date, default: null },
   },
   { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
@@ -400,6 +434,12 @@ const CollegeSchema = new Schema<ICollege>(
     templateId: { type: String, default: null },
     themePaletteId: { type: String, default: null },
     themeFontId: { type: String, default: null },
+    // Not an enum at the schema level. The list lives in the shared api-contract
+    // and is enforced by zod on the way in, so putting a second copy here would
+    // be a third source of truth that fails a write at the driver with an error
+    // no route is shaped to explain.
+    ownerRole: { type: String, default: null },
+    onboardingCompletedAt: { type: Date, default: null },
     status: { type: String, enum: ["DRAFT", "PENDING", "ACTIVE", "DISABLED"], default: "DRAFT" },
     adoptable: { type: Boolean, default: true },
     collegeType: { type: String, default: null },
@@ -480,5 +520,15 @@ CollegeSchema.index({ "users.id": 1 });
 
 /** `adminSites()` and `adminOverview()` filter on this on every panel load. */
 CollegeSchema.index({ isDemo: 1, createdAt: -1 });
+
+/**
+ * The presence aggregation's match stage, and the presence write's filter.
+ *
+ * `touchPresence` updates by `{ _id, "users.id" }` — the id half is already
+ * covered by the `users.id` index above — and `presenceCounts` unwinds every
+ * non-demo college's users on every dashboard load. Indexing the timestamp
+ * keeps the second one from being the reason an admin dashboard is slow.
+ */
+CollegeSchema.index({ "users.lastSeenAt": -1 });
 
 export const College = mongoose.models.College || mongoose.model<ICollege>("College", CollegeSchema);

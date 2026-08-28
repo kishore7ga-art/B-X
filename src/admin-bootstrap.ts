@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import bcrypt from "bcryptjs";
-import { AdminUser, SystemSecret, ThemePalette, ThemeFont, Template } from "@/models";
+import { AdminUser, SystemSecret, Template } from "@/models";
 
 export type BootstrapOutcome =
   | "idle"
@@ -225,29 +225,28 @@ export async function bootstrapTemplates() {
 
     console.log("[bootstrap] First-time setup: 0 templates found in MongoDB Atlas. Seeding initial reference templates...");
 
-    const PALETTES = [
-      { name: "Academic Blue", paletteColors: { primary: "#1E3A8A", secondary: "#3B82F6", accent: "#F59E0B", dark: "#0F172A", light: "#F8FAFC" } },
-      { name: "Heritage Maroon", paletteColors: { primary: "#7F1D1D", secondary: "#B91C1C", accent: "#D4A017", dark: "#1C1917", light: "#FEF7ED" } },
-      { name: "Campus Green", paletteColors: { primary: "#14532D", secondary: "#16A34A", accent: "#FACC15", dark: "#0B1F16", light: "#F0FDF4" } },
-      { name: "Midnight Indigo", paletteColors: { primary: "#312E81", secondary: "#6366F1", accent: "#10B981", dark: "#09090B", light: "#EEF2FF" } },
-      { name: "Sunset Sapphire", paletteColors: { primary: "#0369A1", secondary: "#0284C7", accent: "#F97316", dark: "#0F172A", light: "#F0F9FF" } },
-      { name: "Editorial Plum", paletteColors: { primary: "#581C87", secondary: "#9333EA", accent: "#EAB308", dark: "#18181B", light: "#FAF5FF" } },
-    ];
-
-    const FONT_PACKS = [
-      { name: "Classic Serif", headingFont: "Playfair Display", bodyFont: "Source Sans 3" },
-      { name: "Modern Sans", headingFont: "Poppins", bodyFont: "Inter" },
-      { name: "Editorial Elegance", headingFont: "Cormorant Garamond", bodyFont: "Plus Jakarta Sans" },
-      { name: "Tech Precision", headingFont: "Outfit", bodyFont: "Roboto" },
-      { name: "Academic Prestige", headingFont: "Merriweather", bodyFont: "Open Sans" },
-    ];
-
-    for (const p of PALETTES) {
-      await ThemePalette.findOneAndUpdate({ name: p.name }, p, { upsert: true });
-    }
-    for (const f of FONT_PACKS) {
-      await ThemeFont.findOneAndUpdate({ name: f.name }, f, { upsert: true });
-    }
+    /*
+     * Six theme palettes and five font packs used to be seeded here, into the
+     * `ThemePalette` and `ThemeFont` collections.
+     *
+     * Nothing has ever read either collection. The platform's themes are the
+     * four in `lib/editor-themes.ts` — the only ones the renderer ships
+     * components for, and the list both services validate against — and its
+     * fonts are the three beside them. So this wrote a second, contradictory
+     * catalogue of themes on every fresh deployment: "Heritage Maroon" and
+     * "Campus Green" were rows in the database that no tenant could select and
+     * no page could render.
+     *
+     * That is not merely dead weight. A plausible-looking theme table is how a
+     * theme id nobody ships gets written onto a college — the frontend's
+     * open-access fallback invented `themePaletteId: "classic-navy"` for
+     * exactly this reason, and a site carrying an unrenderable id loads with no
+     * styling at all.
+     *
+     * The collections and their models are left in place: rows already written
+     * on existing deployments are harmless, and dropping a collection is a
+     * migration, not a cleanup. What stops here is creating more of them.
+     */
 
     const INITIAL_SECTION_TEMPLATES = [
       {

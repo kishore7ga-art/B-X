@@ -37,6 +37,10 @@ const REQUIRED = [
   ["delete", "/api/v1/my-website/pages/{slug}"],
   ["patch", "/api/v1/my-website/pages/{slug}/order"],
   ["get", "/api/v1/section-library"],
+  // The role/theme/font wizard. Without these two a sign-in for a new tenant
+  // has nowhere to go but the editor, which is the bug they exist to fix.
+  ["get", "/api/v1/onboarding"],
+  ["put", "/api/v1/onboarding"],
   ["get", "/api/v1/my-theme"],
   ["put", "/api/v1/my-theme"],
   // Domain control plane: the Super Admin had no view of domains at all.

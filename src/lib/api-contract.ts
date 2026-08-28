@@ -37,6 +37,23 @@ export type CollegePayload = {
   status: string;
   collegeType: string | null;
   isDemo: boolean;
+  /**
+   * Who the person signing in says they are, from `ONBOARDING_ROLES`.
+   *
+   * Null for every account created before onboarding existed, and for one that
+   * has not finished it. Nullable rather than defaulted because "we never asked"
+   * and "they chose College Owner" are different facts, and only the first of
+   * them should send somebody back through the wizard.
+   */
+  ownerRole: string | null;
+  /**
+   * Whether the role/theme/font wizard has been completed.
+   *
+   * Derived on the backend from `onboardingCompletedAt` rather than sent as a
+   * timestamp, because every caller asks the same yes/no question and a
+   * timestamp invites each of them to re-derive the answer differently.
+   */
+  onboardingCompleted: boolean;
   /** ISO 8601 — it crossed JSON to get here. */
   createdAt: string;
 };
@@ -161,3 +178,46 @@ export type SaveTrigger = (typeof SAVE_TRIGGERS)[number];
 
 /** `PATCH` and `POST /api/v1/sections/:id`. */
 export type SavedAtPayload = { savedAt: string };
+
+// --- Onboarding ---------------------------------------------------------------
+
+/**
+ * The roles a new account may claim, and the only ones either service accepts.
+ *
+ * A runtime value rather than a type, for the same reason `SAVE_TRIGGERS` is:
+ * the backend builds a zod enum from it to reject anything else, and the
+ * frontend renders the wizard's choices from it. Two hand-kept lists would let
+ * the form offer an option the API refuses — which surfaces to the person
+ * filling it in as a final step that simply fails, with nothing on screen
+ * explaining which of their three answers was the unacceptable one.
+ *
+ * `other` is deliberately last and deliberately present. Without it the honest
+ * answer for anyone outside these four is to pick a role that is not theirs,
+ * and a field that pushes people into misreporting is worse than no field.
+ */
+export const ONBOARDING_ROLES = [
+  { id: "college-owner", label: "College Owner" },
+  { id: "principal", label: "Principal" },
+  { id: "management", label: "College Management" },
+  { id: "visitor", label: "Visitor" },
+  { id: "other", label: "Other" },
+] as const;
+
+export type OnboardingRoleId = (typeof ONBOARDING_ROLES)[number]["id"];
+
+/**
+ * `GET /api/v1/onboarding` -> this. `PUT` takes the three ids and returns it.
+ *
+ * The theme and font ids are the project-level defaults every section, the
+ * preview and the published site derive from — the same two fields the editor's
+ * drawer writes through `PUT /api/v1/my-theme`. Onboarding is the first write
+ * to them, not a second place they are stored.
+ */
+export type OnboardingPayload = {
+  completed: boolean;
+  role: string | null;
+  themePaletteId: string | null;
+  themeFontId: string | null;
+  /** ISO 8601, or null if the wizard has not been finished. */
+  completedAt: string | null;
+};
