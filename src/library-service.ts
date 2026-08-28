@@ -5,8 +5,9 @@ import { SVG_ATTRIBUTES, SVG_TAGS } from "@/lib/sections/svg-allowlist";
 import { SectionType } from "@/lib/sections/types";
 
 import { type AdminSession, recordAudit } from "@/admin-service";
+import { TEMPLATES_INITIALIZED_MARKER } from "@/admin-bootstrap";
 import { AuthError } from "@/auth-service";
-import { Template, College } from "@/models";
+import { Template, College, SystemSecret } from "@/models";
 import { BadRequest, NotFound } from "@/errors";
 // applyTemplateToDefaultWebsite import removed — Default Website and Normal Templates
 // are now fully independent. No automatic cross-writes between the two systems.
@@ -521,18 +522,135 @@ export async function retireTemplate(
   return { archived: false as const, deleted: true as const };
 }
 
+const SCRIPT_BLOCK = /<script\b[^>]*>[\s\S]*?<\/script\s*>/i;
+
+/**
+ * Empties the section library.
+ *
+ * ── Three things this has to do beyond deleting the rows ───────────────────
+ *
+ * **1. Stop the library refilling itself.** `bootstrapTemplates()` runs on
+ * every boot and re-seeds its reference templates when it finds zero templates
+ * *and* no marker. Deleting the rows without the marker means an empty library
+ * until the next container restart puts the old set straight back — which is
+ * indistinguishable, to whoever pressed the button, from the delete having
+ * silently failed. In practice the marker is already set on any deployment that
+ * has ever booted with templates present; it is upserted here so the outcome
+ * does not depend on that history.
+ *
+ * **2. Clear the dangling pointers.** A college's `templateId` pointing at a
+ * row that no longer exists is a broken reference, and `adminOverview` counts
+ * such a college as "has a template" — so the dashboard would report a library
+ * of zero templates being used by colleges.
+ *
+ * **3. Say what it cost.** Tenant section markup has `<script>` stripped by the
+ * sanitiser on write, and `restoreTemplateScripts` re-injects it on read from
+ * the template the section came from. So deleting a template whose script
+ * *assembles its content* leaves those sections rendering as an empty
+ * rectangle — on published sites, not just drafts. The markup is untouched and
+ * nothing is recoverable by re-uploading, because the instance still points at
+ * the old id. That is measured before the delete and returned, so the panel can
+ * report it and the audit entry records it.
+ *
+ * Section-level `templateId` is deliberately left in place: it is the section's
+ * provenance and the key the variant cycle uses, the stored markup does not
+ * depend on it, and rewriting every tenant's config is a far larger write than
+ * emptying a library should be.
+ */
 export async function deleteAllTemplates(actor: AdminSession) {
-  const count = await Template.countDocuments();
+  const templates = await Template.find().select("_id name code");
+  const count = templates.length;
+
+  // Which of them carry a script that a live section is relying on.
+  const scriptedIds = new Set(
+    templates
+      .filter((t: any) => typeof t.code === "string" && SCRIPT_BLOCK.test(t.code))
+      .map((t: any) => String(t._id)),
+  );
+
+  /**
+   * Counted as a person would count them: one section placed on one page is
+   * one section, even though it is stored twice — once in the draft and again
+   * in the published copy. Summing both reported double, which reads as the
+   * damage being twice what it is.
+   *
+   * Both configs are still walked, because a section can exist in only one of
+   * them: deleted from the draft but still live, or added and not yet
+   * published. Either is a real affected section.
+   */
+  const affectedSectionKeys = new Set<string>();
+  let publishedSitesAffected = 0;
+  const collegesAffected = new Set<string>();
+
+  if (scriptedIds.size > 0) {
+    const rows = await College.find({ isDemo: false }).select(
+      "subdomain websiteConfig.pages publishedConfig.pages",
+    );
+
+    for (const college of rows as any[]) {
+      let touchedHere = false;
+      let touchedPublished = false;
+
+      for (const [config, isPublished] of [
+        [college.websiteConfig, false],
+        [college.publishedConfig, true],
+      ] as const) {
+        for (const page of config?.pages ?? []) {
+          for (const section of page?.sections ?? []) {
+            const id = section?.templateId;
+            if (typeof id !== "string" || !scriptedIds.has(id)) continue;
+            affectedSectionKeys.add(
+              `${college.subdomain}:${page?.slug ?? ""}:${section?.id ?? ""}`,
+            );
+            touchedHere = true;
+            if (isPublished) touchedPublished = true;
+          }
+        }
+      }
+
+      if (touchedHere) collegesAffected.add(college.subdomain);
+      if (touchedPublished) publishedSitesAffected += 1;
+    }
+  }
+
+  const sectionsAffected = affectedSectionKeys.size;
+
   await Template.deleteMany({});
+
+  const unlinked = await College.updateMany(
+    { templateId: { $ne: null } },
+    { $set: { templateId: null } },
+  );
+
+  await SystemSecret.findOneAndUpdate(
+    { name: TEMPLATES_INITIALIZED_MARKER },
+    { name: TEMPLATES_INITIALIZED_MARKER, value: new Date().toISOString() },
+    { upsert: true },
+  ).catch(() => null);
+
+  const impact = {
+    /** Sections whose content was built by a template script that is now gone. */
+    sectionsAffected,
+    collegesAffected: collegesAffected.size,
+    publishedSitesAffected,
+  };
 
   recordAudit({
     actor,
     action: "template.delete_all",
     targetType: "template",
     targetId: "all",
-    summary: `Permanently deleted all ${count} template(s) from database`,
-    metadata: { count },
+    summary:
+      `Permanently deleted all ${count} template(s) from database` +
+      (sectionsAffected > 0
+        ? ` — ${sectionsAffected} section(s) across ${impact.collegesAffected} college(s) lost their script`
+        : ""),
+    metadata: { count, ...impact },
   });
 
-  return { deletedCount: count };
+  return {
+    deletedCount: count,
+    collegesUnlinked: unlinked.modifiedCount ?? 0,
+    ...impact,
+  };
 }

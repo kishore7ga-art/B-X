@@ -206,7 +206,15 @@ export async function bootstrapAdmin() {
   }
 }
 
-const TEMPLATES_INITIALIZED_MARKER = "templates_initial_seed_done";
+/**
+ * The marker that says the reference-template seed has already run.
+ *
+ * Exported because `deleteAllTemplates()` has to set it: emptying the library
+ * without it leaves a deployment that refills itself on the next restart, and
+ * a second copy of this string in that file would be a typo away from doing
+ * nothing at all — silently, and only visible one container restart later.
+ */
+export const TEMPLATES_INITIALIZED_MARKER = "templates_initial_seed_done";
 
 export async function bootstrapTemplates() {
   try {
