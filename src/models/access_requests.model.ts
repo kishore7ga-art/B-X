@@ -41,7 +41,7 @@ const AccessRequestSchema = new Schema<IAccessRequest>(
     collegeType: { type: String, default: null },
     passwordHash: { type: String, default: null },
     status: { type: String, enum: ["PENDING", "APPROVED", "REJECTED"], default: "PENDING" },
-    activationToken: { type: String, default: null, sparse: true },
+    activationToken: { type: String, default: null },
     activationTokenExpiresAt: { type: Date, default: null },
     reviewedAt: { type: Date, default: null },
     reviewedByEmail: { type: String, default: null },
