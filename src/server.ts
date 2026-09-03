@@ -2862,6 +2862,9 @@ const ALLOWED: Record<string, string> = {
   "image/webp": ".webp",
   "image/gif": ".gif",
   "image/svg+xml": ".svg",
+  "video/mp4": ".mp4",
+  "video/webm": ".webm",
+  "video/ogg": ".ogv",
 };
 
 /**
@@ -2886,7 +2889,7 @@ const SCRIPTABLE_EXTENSIONS = new Set([".svg"]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 10 },
+  limits: { fileSize: 30 * 1024 * 1024, files: 1, fields: 10 },
 });
 
 app.post("/api/uploads", upload.single("file"), async (req, res) => {
@@ -2901,7 +2904,7 @@ app.post("/api/uploads", upload.single("file"), async (req, res) => {
     if (!extension) {
       res
         .status(415)
-        .json({ error: "Unsupported file type. Use JPG, PNG, WEBP, GIF or SVG." });
+        .json({ error: "Unsupported file type. Use JPG, PNG, WEBP, GIF, SVG, MP4 or WEBM." });
       return;
     }
 
