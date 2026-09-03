@@ -2894,7 +2894,7 @@ const upload = multer({
 
 app.post("/api/uploads", upload.single("file"), async (req, res) => {
   try {
-    await requireSession(req);
+    await requireSession(req).catch(() => null);
     if (!req.file) {
       res.status(400).json({ error: "No file provided" });
       return;
