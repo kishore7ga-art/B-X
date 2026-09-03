@@ -395,6 +395,49 @@ export const SECTION_STARTERS: Record<SectionCategoryId, SectionStarter> = {
 </section>`,
   },
 
+  faq: {
+    title: "Frequently Asked Questions",
+    code: `<section style="background: #0f172a; color: #ffffff; ${SECTION}">
+  <div style="${CONTAINER} max-width: 900px;">
+    <div style="text-align: center; margin-bottom: 48px;">
+      <p style="${EYEBROW}">Got Questions?</p>
+      <h2 style="${H2}">Frequently Asked Questions</h2>
+      <p style="${LEAD}">Find quick answers to common questions about admissions, courses, campus facilities, and student life.</p>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+      <details style="${CARD} cursor: pointer;" open>
+        <summary style="font-size: 18px; font-weight: 800; color: #ffffff; outline: none; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+          <span>What is the application deadline for 2027 admissions?</span>
+          <span style="font-size: 20px; color: #60a5fa; margin-left: 12px;">▾</span>
+        </summary>
+        <p style="${LEAD} margin-top: 14px; font-size: 15px; color: #94a3b8;">Applications for the 2027 academic intake close on 15 January. Late applications may be considered subject to seat availability.</p>
+      </details>
+      <details style="${CARD} cursor: pointer;">
+        <summary style="font-size: 18px; font-weight: 800; color: #ffffff; outline: none; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+          <span>Are scholarships available for undergraduate students?</span>
+          <span style="font-size: 20px; color: #60a5fa; margin-left: 12px;">▾</span>
+        </summary>
+        <p style="${LEAD} margin-top: 14px; font-size: 15px; color: #94a3b8;">Yes, merit-based and need-based scholarships are offered covering up to 100% of tuition fees for qualifying students.</p>
+      </details>
+      <details style="${CARD} cursor: pointer;">
+        <summary style="font-size: 18px; font-weight: 800; color: #ffffff; outline: none; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+          <span>What hostel and accommodation facilities are provided?</span>
+          <span style="font-size: 20px; color: #60a5fa; margin-left: 12px;">▾</span>
+        </summary>
+        <p style="${LEAD} margin-top: 14px; font-size: 15px; color: #94a3b8;">We provide separate modern residential halls for male and female students with 24/7 security, high-speed Wi-Fi, dining, and recreation areas.</p>
+      </details>
+      <details style="${CARD} cursor: pointer;">
+        <summary style="font-size: 18px; font-weight: 800; color: #ffffff; outline: none; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+          <span>How does the campus placement assistance work?</span>
+          <span style="font-size: 20px; color: #60a5fa; margin-left: 12px;">▾</span>
+        </summary>
+        <p style="${LEAD} margin-top: 14px; font-size: 15px; color: #94a3b8;">Our dedicated Career Development Cell organizes pre-placement training, mock interviews, and hosts 200+ top recruiters every year.</p>
+      </details>
+    </div>
+  </div>
+</section>`,
+  },
+
   contact: {
     title: "Contact / Enquiry Form",
     code: `<section style="background: #0d1527; color: #ffffff; ${SECTION}">

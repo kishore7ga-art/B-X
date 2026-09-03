@@ -32,6 +32,7 @@ export const SECTION_CATEGORY_IDS = [
   "gallery",
   "testimonials",
   "achievements",
+  "faq",
   "contact",
   "map",
   "footer",
@@ -39,7 +40,7 @@ export const SECTION_CATEGORY_IDS = [
 
 export type SectionCategoryId = (typeof SECTION_CATEGORY_IDS)[number];
 
-/** Anything that is not one of the 19. Never matched against a variant list. */
+/** Anything that is not one of the canonical categories. Never matched against a variant list. */
 export const UNCATEGORISED = "custom";
 
 const CATEGORY_SET: ReadonlySet<string> = new Set(SECTION_CATEGORY_IDS);
@@ -144,6 +145,13 @@ const ALIASES: ReadonlyArray<readonly [string, SectionCategoryId]> = [
   ["trophy", "achievements"],
   ["ranking", "achievements"],
   ["recognition", "achievements"],
+  // faq
+  ["faq", "faq"],
+  ["frequently asked", "faq"],
+  ["question", "faq"],
+  ["q&a", "faq"],
+  ["q and a", "faq"],
+  ["queries", "faq"],
   // contact
   ["contact", "contact"],
   ["enquir", "contact"],

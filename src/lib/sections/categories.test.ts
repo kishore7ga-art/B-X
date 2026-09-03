@@ -26,6 +26,14 @@ describe("normalizeCategory — the aliases that were getting sections mis-filed
   it("reads the Admin Studio's [bracket] convention", () => {
     assert.equal(normalizeCategory("[navbar] Dark header"), "navbar");
     assert.equal(normalizeCategory("[Placements] Top recruiters"), "placements");
+    assert.equal(normalizeCategory("[FAQ] Frequently Asked Questions"), "faq");
+  });
+
+  it("files FAQ and frequently asked questions under faq", () => {
+    assert.equal(normalizeCategory("FAQ"), "faq");
+    assert.equal(normalizeCategory("Frequently Asked Questions"), "faq");
+    assert.equal(normalizeCategory("Student Q&A"), "faq");
+    assert.equal(normalizeCategory("Common Queries"), "faq");
   });
 
   it("passes every canonical id through unchanged", () => {
