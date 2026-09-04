@@ -39,9 +39,11 @@ import {
   activateWithGoogle,
   activateWithPassword,
   approveAccessRequest,
+  deleteAccessRequest,
   inviteSummary,
   listAccessRequests,
   rejectAccessRequest,
+  removeAllAccessRequests,
   submitAccessRequest,
 } from "@/access-service";
 import { bootstrapAdmin } from "@/admin-bootstrap";
@@ -1943,6 +1945,25 @@ adminRouter.post("/access-requests/:id/reject", async (req, res) => {
   try {
     const session = await requireAdmin(req);
     res.json(await rejectAccessRequest(req.params.id as string, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.delete("/access-requests", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    const status = typeof req.query?.status === "string" ? req.query.status : undefined;
+    res.json(await removeAllAccessRequests({ status }, session));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+adminRouter.delete("/access-requests/:id", async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await deleteAccessRequest(req.params.id as string, session));
   } catch (error) {
     fail(res, error);
   }

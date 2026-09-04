@@ -420,6 +420,45 @@ export async function rejectAccessRequest(id: string, actor: AdminSession) {
   return { rejected: true as const };
 }
 
+export async function deleteAccessRequest(id: string, actor: AdminSession) {
+  if (!mongoose.Types.ObjectId.isValid(id)) throw new AuthError("That request no longer exists", 404);
+  const request = await AccessRequest.findById(id);
+  if (!request) throw new AuthError("That request no longer exists", 404);
+
+  await AccessRequest.findByIdAndDelete(id);
+
+  await recordAudit({
+    actor,
+    action: "access_request.delete",
+    targetType: "access_request",
+    targetId: id,
+    summary: `Deleted access request for ${request.applicantEmail}`,
+    metadata: { email: request.applicantEmail, status: request.status },
+  });
+
+  return { deleted: true as const, id };
+}
+
+export async function removeAllAccessRequests(options: { status?: string } | undefined, actor: AdminSession) {
+  const filter: Record<string, unknown> = {};
+  if (options?.status && ["PENDING", "APPROVED", "REJECTED"].includes(options.status.toUpperCase())) {
+    filter.status = options.status.toUpperCase();
+  }
+
+  const result = await AccessRequest.deleteMany(filter);
+
+  await recordAudit({
+    actor,
+    action: "access_request.delete_all",
+    targetType: "access_request",
+    targetId: "all",
+    summary: `Removed ${result.deletedCount || 0} access request(s)${filter.status ? ` with status ${filter.status}` : ""}`,
+    metadata: { deletedCount: result.deletedCount, filter },
+  });
+
+  return { deletedCount: result.deletedCount, status: filter.status || "ALL" };
+}
+
 const tokenSchema = z
   .string({ error: "That activation link is not valid" })
   .trim()
