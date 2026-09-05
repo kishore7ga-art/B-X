@@ -25,15 +25,6 @@ export const EDITOR_FONT_IDS = [
   "inter",
   "outfit",
   "serif",
-  "plus-jakarta",
-  "montserrat",
-  "lora",
-  "open-sans",
-  "raleway",
-  "space-grotesk",
-  "cinzel",
-  "dm-sans",
-  "fira-code",
 ] as const;
 
 export const DEFAULT_THEME_ID = "academic-blue";
