@@ -16,9 +16,25 @@ export const EDITOR_THEME_IDS = [
   "emerald-gold",
   "crimson-slate",
   "midnight-purple",
+  "black-and-white",
+  "white-and-black",
+  "custom",
 ] as const;
 
-export const EDITOR_FONT_IDS = ["inter", "outfit", "serif"] as const;
+export const EDITOR_FONT_IDS = [
+  "inter",
+  "outfit",
+  "serif",
+  "plus-jakarta",
+  "montserrat",
+  "lora",
+  "open-sans",
+  "raleway",
+  "space-grotesk",
+  "cinzel",
+  "dm-sans",
+  "fira-code",
+] as const;
 
 export const DEFAULT_THEME_ID = "academic-blue";
 export const DEFAULT_FONT_ID = "inter";
