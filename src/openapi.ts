@@ -2220,7 +2220,10 @@ export const openApiDocument = {
         responses: {
           "200": json(
             { type: "object", properties: { url: str } },
-            "Path relative to this service.",
+            "An absolute URL the file is reachable at from a browser — on the origin " +
+              "the request arrived through, or PUBLIC_ASSET_ORIGIN when that is set. " +
+              "Was a path relative to this service, which resolved against whichever " +
+              "origin rendered the section and 404ed on every one that was not this.",
           ),
           ...errors(
             [400, "No file provided."],

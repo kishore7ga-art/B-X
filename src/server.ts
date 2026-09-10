@@ -2949,6 +2949,30 @@ const upload = multer({
   limits: { fileSize: 30 * 1024 * 1024, files: 1, fields: 10 },
 });
 
+/**
+ * The origin an uploaded file is reachable at from a browser.
+ *
+ * The upload route used to answer with `/uploads/<file>` — a path on *this*
+ * service, stored into the section as authored, and then resolved by whichever
+ * origin happened to render the section. The frontend has no such path, so on
+ * a published site every uploaded image was a 404 with a perfectly plausible
+ * URL. Absolute from here on, so what is stored resolves from anywhere.
+ *
+ * `PUBLIC_ASSET_ORIGIN` wins when set (a CDN in front of uploads, say). Without
+ * it, the origin the request arrived on: behind the frontend's same-origin
+ * proxy that is the site's own host, which now forwards `/uploads/*` here;
+ * on the split deployment it is `api.<domain>` directly.
+ */
+function publicAssetOrigin(req: express.Request): string {
+  const configured = (process.env.PUBLIC_ASSET_ORIGIN ?? "").trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  const forwardedProto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]?.trim();
+  const forwardedHost = String(req.headers["x-forwarded-host"] ?? "").split(",")[0]?.trim();
+  const proto = forwardedProto || req.protocol || "https";
+  const host = forwardedHost || req.get("host") || "";
+  return host ? `${proto}://${host}` : "";
+}
+
 app.post("/api/uploads", upload.single("file"), async (req, res) => {
   try {
     await requireSession(req).catch(() => null);
@@ -2970,7 +2994,7 @@ app.post("/api/uploads", upload.single("file"), async (req, res) => {
     await mkdir(UPLOAD_DIR, { recursive: true });
     await writeFile(path.join(UPLOAD_DIR, filename), req.file.buffer);
 
-    res.json({ url: `/uploads/${filename}` });
+    res.json({ url: `${publicAssetOrigin(req)}/uploads/${filename}` });
   } catch (error) {
     fail(res, error);
   }
