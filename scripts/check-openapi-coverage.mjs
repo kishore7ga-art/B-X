@@ -48,6 +48,9 @@ const REQUIRED = [
   ["post", "/api/v1/admin/domains/{collegeId}/{domainId}/verify"],
   ["post", "/api/v1/admin/domains/{collegeId}/{domainId}/disable"],
   ["post", "/api/v1/admin/domains/{collegeId}/{domainId}/reactivate"],
+  // The device preset catalogue the editor cycles through instead of a dropdown.
+  ["get", "/api/v1/device-presets"],
+  ["put", "/api/v1/admin/device-presets"],
 ];
 
 /**

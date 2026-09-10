@@ -529,6 +529,131 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/device-presets": {
+      get: {
+        tags: ["Tenant Data"],
+        summary: "The preview widths the editor cycles through, grouped by device tier",
+        description:
+          "The editor carries no screen widths of its own: it reads this catalogue, " +
+          "groups the presets by tier at runtime and cycles through whatever is here. " +
+          "Public and cacheable — nothing in it belongs to a tenant. The weak ETag is " +
+          "the version, so revalidating on window focus is a 304 when nothing changed. " +
+          "`presets` are served sorted by tier order then width. A tier with no presets " +
+          "is served as such; the editor shows it disabled.",
+        parameters: [
+          {
+            name: "If-None-Match",
+            in: "header",
+            required: false,
+            schema: str,
+            description: "The ETag from a previous response; answered with 304 when it still matches.",
+          },
+        ],
+        responses: {
+          200: json(
+            {
+              type: "object",
+              required: ["version", "updatedAt", "tiers", "presets"],
+              properties: {
+                version: { type: "integer", description: "Monotonic; bumped on every replace." },
+                updatedAt: { type: "string", format: "date-time" },
+                tiers: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["id", "label", "icon", "order"],
+                    properties: {
+                      id: str,
+                      label: str,
+                      icon: { type: "string", enum: ["phone", "tablet", "desktop"] },
+                      order: { type: "integer" },
+                    },
+                  },
+                },
+                presets: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["id", "tierId", "width", "isDefault"],
+                    properties: {
+                      id: str,
+                      tierId: str,
+                      width: { type: "integer", minimum: 200, maximum: 7680 },
+                      note: nullableStr,
+                      isDefault: { type: "boolean" },
+                    },
+                  },
+                },
+              },
+            },
+            "The catalogue.",
+          ),
+          304: { description: "Unchanged since the ETag the caller sent." },
+        },
+      },
+    },
+
+    "/api/v1/admin/device-presets": {
+      put: {
+        tags: ["Admin"],
+        summary: "Replace the device preset catalogue",
+        description:
+          "Whole-document replace, Super Admin only. Validated before anything is " +
+          "written: tier ids unique, every preset's tier exists, no repeated width " +
+          "within a tier, at most one default per tier. A tier with widths but no " +
+          "default is given one (its smallest). Presets without an id are assigned " +
+          "`<tierId>-<width>`. Bumps `version`.",
+        security: SESSION_COOKIE,
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["tiers", "presets"],
+                properties: {
+                  tiers: {
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 12,
+                    items: {
+                      type: "object",
+                      required: ["id", "label", "icon", "order"],
+                      properties: {
+                        id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" },
+                        label: str,
+                        icon: { type: "string", enum: ["phone", "tablet", "desktop"] },
+                        order: { type: "integer" },
+                      },
+                    },
+                  },
+                  presets: {
+                    type: "array",
+                    maxItems: 500,
+                    items: {
+                      type: "object",
+                      required: ["tierId", "width"],
+                      properties: {
+                        id: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$" },
+                        tierId: str,
+                        width: { type: "integer", minimum: 200, maximum: 7680 },
+                        note: nullableStr,
+                        isDefault: { type: "boolean" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: json({ type: "object" }, "The catalogue as now stored, in the GET shape."),
+          ...errors([400, "The catalogue is inconsistent; the message says how."], [401, "Not signed in as an admin."]),
+        },
+      },
+    },
+
     "/api/v1/my-theme": {
       get: {
         tags: ["Tenant Data"],

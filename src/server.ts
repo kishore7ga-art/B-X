@@ -111,6 +111,7 @@ import {
   savePage,
 } from "@/website-config-service";
 import { getSectionLibrary } from "@/section-library-service";
+import { getDeviceCatalogue, replaceDeviceCatalogue } from "@/device-catalogue-service";
 import { presenceCounts, touchPresence } from "@/presence-service";
 import {
   completeOnboarding,
@@ -2307,6 +2308,41 @@ app.get(["/api/v1/section-library", "/api/section-library"], async (req, res) =>
   try {
     await requireSession(req);
     res.json(await getSectionLibrary());
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * The preview widths the editor cycles through, grouped by device tier.
+ *
+ * Public and cacheable: it holds nothing about any tenant, and the editor,
+ * the preview page and the admin panel all read the same thing. The weak
+ * ETag is the catalogue's version, so a client revalidating on focus pays a
+ * 304 rather than a body — the editor does this every time the window comes
+ * back, and it must cost nothing when nothing has changed.
+ */
+app.get(["/api/v1/device-presets", "/api/device-presets"], async (req, res) => {
+  try {
+    const catalogue = await getDeviceCatalogue();
+    const etag = `W/"device-catalogue-v${catalogue.version}"`;
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    if (req.headers["if-none-match"] === etag) {
+      res.status(304).end();
+      return;
+    }
+    res.json(catalogue);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/** Replaces the catalogue whole. Super Admin only. */
+app.put(["/api/v1/admin/device-presets", "/api/admin/device-presets"], async (req, res) => {
+  try {
+    const session = await requireAdmin(req);
+    res.json(await replaceDeviceCatalogue(req.body, session.email));
   } catch (error) {
     fail(res, error);
   }
