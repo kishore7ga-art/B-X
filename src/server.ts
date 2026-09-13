@@ -324,8 +324,14 @@ const PLATFORM_ROOT = "webxite.org";
 const LEGACY_ROOT = "xite.co.in";
 
 const DEFAULT_ORIGINS = [
+  // The apex is the public landing site. It makes no credentialed calls today,
+  // and stays listed so a contact form or pricing fetch added there is not the
+  // next surface to begin life behind an unexplained CORS failure.
   "https://webxite.org",
   "https://www.webxite.org",
+  // The editor. It moved off the apex when the landing site took that address,
+  // and it is the origin that makes the overwhelming majority of these calls.
+  "https://app.webxite.org",
   "https://admin.webxite.org",
   "https://api.webxite.org",
   // The dev servers: xite-F on 3000/3001, admin panel's Vite on 5173/5174.

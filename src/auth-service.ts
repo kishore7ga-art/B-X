@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 
 import { AccessRequest, College } from "@/models";
 import { SESSION_MAX_AGE_SECONDS } from "@/lib/api-contract";
+import { isReservedSubdomain } from "@/lib/reserved-subdomains";
 import {
   hostFromOrigin,
   sessionCookieScope,
@@ -111,6 +112,9 @@ function subdomainSeed(email: string) {
 async function freeSubdomain(seed: string) {
   for (let suffix = 1; suffix < 100; suffix += 1) {
     const candidate = suffix === 1 ? seed : `${seed}-${suffix}`;
+    // A platform name is as unavailable as one another tenant holds: it
+    // resolves, and it does not resolve to them.
+    if (isReservedSubdomain(candidate)) continue;
     const taken = await College.findOne({ subdomain: candidate }).select("_id");
     if (!taken) return candidate;
   }

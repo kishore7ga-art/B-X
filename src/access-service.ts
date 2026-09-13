@@ -11,6 +11,7 @@ import {
 } from "@/auth-service";
 import { AccessRequest, College, AuditLog } from "@/models";
 import { subdomainFromName } from "@/lib/college-types";
+import { isReservedSubdomain } from "@/lib/reserved-subdomains";
 import { verifyGoogleIdToken } from "@/google-identity";
 import { getDefaultWebsiteConfig } from "@/default-website-service";
 
@@ -325,6 +326,9 @@ export async function approveAccessRequest(
 
     for (let suffix = 0; suffix < 50; suffix++) {
       const testSub = suffix === 0 ? candidate : `${candidate}-${suffix + 1}`;
+      // A platform name is as unavailable as one another tenant holds: it
+      // resolves, and it does not resolve to them.
+      if (isReservedSubdomain(testSub)) continue;
       const taken = await College.findOne({ subdomain: testSub });
       if (!taken) {
         candidate = testSub;
@@ -525,6 +529,11 @@ export async function activateWithPassword(input: unknown) {
   if (!college) {
     const orgName = request.collegeName || "College";
     let candidate = request.subdomain || subdomainFromName(orgName);
+    // A platform name resolves, and not to them. These two approval paths have
+    // never checked for collisions at all — that is a separate bug and not
+    // widened here — but a name that is *guaranteed* to point elsewhere is
+    // worth stepping off.
+    if (isReservedSubdomain(candidate)) candidate = `${candidate}-site`;
 
     college = await College.create({
       name: orgName,
@@ -626,6 +635,11 @@ export async function activateWithGoogle(input: unknown) {
   if (!college) {
     const orgName = request.collegeName || "College";
     let candidate = request.subdomain || subdomainFromName(orgName);
+    // A platform name resolves, and not to them. These two approval paths have
+    // never checked for collisions at all — that is a separate bug and not
+    // widened here — but a name that is *guaranteed* to point elsewhere is
+    // worth stepping off.
+    if (isReservedSubdomain(candidate)) candidate = `${candidate}-site`;
 
     college = await College.create({
       name: orgName,
