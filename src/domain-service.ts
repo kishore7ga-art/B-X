@@ -71,9 +71,23 @@ export type DomainView = {
   /** Exactly what the tenant must create in their DNS zone. */
   dnsInstructions: {
     verification: { type: "TXT"; name: string; value: string };
+    /**
+     * Null when no record can honestly be offered.
+     *
+     * That happens for an apex domain on a deployment with no apex address
+     * configured. The previous code fell through to a CNAME in that case, which
+     * is not merely unhelpful — a CNAME at a zone apex is invalid, because it
+     * cannot coexist with the SOA and NS records every zone must have. Every
+     * tenant who tried to connect a bare domain was being told to create a
+     * record their provider would refuse, and the reason was in neither the UI
+     * nor the logs.
+     */
     routing:
       | { type: "CNAME"; name: string; value: string }
-      | { type: "A"; name: string; value: string };
+      | { type: "A"; name: string; value: string }
+      | null;
+    /** Why `routing` is null, for the screen to show instead of a record. */
+    routingUnavailable?: string;
   };
 };
 
@@ -81,15 +95,22 @@ export type DomainView = {
  * The host a tenant's DNS should point at.
  *
  * From the environment, because it is a property of the deployment and not of
- * the code. `A` records are offered only when an apex IP is configured — an
- * apex domain cannot carry a CNAME, and inventing an address to show in the UI
- * would send tenants to somewhere that is not us.
+ * the code. `A` records are offered only when an apex address is configured:
+ * an apex cannot carry a CNAME, and inventing an address to show in the UI
+ * would send tenants somewhere that is not us.
+ *
+ * `WEBXITE_SERVER_IP` is read as a fallback because it is the name the server's
+ * address is known by elsewhere in the deployment, and an operator who sets one
+ * of the two should not have to discover that this file wanted the other.
  */
 function routingTarget(): { cname: string; apexIp: string | null } {
   const root = (process.env.ROOT_DOMAIN || process.env.NEXT_PUBLIC_ROOT_DOMAIN || PLATFORM_ROOT)
     .toLowerCase()
     .trim();
-  const apexIp = process.env.CUSTOM_DOMAIN_APEX_IP?.trim() || null;
+  const apexIp =
+    process.env.CUSTOM_DOMAIN_APEX_IP?.trim() ||
+    process.env.WEBXITE_SERVER_IP?.trim() ||
+    null;
   const cname = process.env.CUSTOM_DOMAIN_CNAME_TARGET?.trim() || `sites.${root}`;
   return { cname, apexIp };
 }
@@ -236,10 +257,19 @@ function toView(domain: ICustomDomain): DomainView {
         name: `${VERIFICATION_RECORD_PREFIX}.${domain.hostname}`,
         value: domain.verificationToken,
       },
-      routing:
-        apex && apexIp
+      routing: apex
+        ? apexIp
           ? { type: "A", name: domain.hostname, value: apexIp }
-          : { type: "CNAME", name: domain.hostname, value: cname },
+          : null
+        : { type: "CNAME", name: domain.hostname, value: cname },
+      ...(apex && !apexIp
+        ? {
+            routingUnavailable:
+              "This deployment cannot serve a bare domain yet. Connect " +
+              `www.${domain.hostname} instead, or ask an administrator to set ` +
+              "the platform's apex address.",
+          }
+        : {}),
     },
   };
 }

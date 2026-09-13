@@ -268,11 +268,21 @@ a fact nobody has checked.
 | Variable | Required | Purpose |
 | :--- | :--- | :--- |
 | `ROOT_DOMAIN` | no | Platform root. Defaults to `webxite.org` |
-| `DOMAIN_CNAME_TARGET` | no | What tenants are told to CNAME to |
-| `DOMAIN_APEX_IP` | no | The `A` record value for apex domains |
+| `CUSTOM_DOMAIN_CNAME_TARGET` | no | What tenants are told to CNAME to. Defaults to `sites.<root>`, **which must resolve** |
+| `CUSTOM_DOMAIN_APEX_IP` | for apex domains | The `A` record value offered for a bare domain |
+| `WEBXITE_SERVER_IP` | no | Read as a fallback for the line above |
 | `DOKPLOY_API_URL` | for routing | The edge's API |
 | `DOKPLOY_API_TOKEN` | for routing | Sent as `x-api-key`. **Never logged** |
 | `DOKPLOY_APPLICATION_ID` | for routing | Which application serves tenant sites |
+
+These two were documented as `DOMAIN_CNAME_TARGET` and `DOMAIN_APEX_IP`, which
+nothing has ever read. An operator following this table set a variable with no
+effect and silently got the defaults — and the default for the apex address is
+"none", which is what made bare domains unconnectable.
+
+Neither has a safe default. `sites.<root>` is only correct if that record has
+actually been created in the platform's own zone; if it has not, every tenant is
+pointed at a name that does not resolve. Check it before trusting it.
 
 All three Dokploy variables are needed together; with any missing, routing is
 "not configured" and says so.

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { __testing } from "@/domain-service";
 
-const { normalizeHostname, assertNotPlatformHost, isApex } = __testing;
+const { normalizeHostname, assertNotPlatformHost, isApex, routingTarget } = __testing;
 
 const rejects = (input: unknown, because: string) => {
   assert.throws(() => normalizeHostname(input), /./, `expected "${String(input)}" to be rejected: ${because}`);
@@ -122,6 +122,70 @@ describe("isApex — which DNS record the tenant is told to create", () => {
   // still use the A record path once CUSTOM_DOMAIN_APEX_IP is configured.
   it("misreads a multi-part public suffix as a subdomain (documented limitation)", () => {
     assert.equal(isApex("college.edu.in"), false);
+  });
+});
+
+describe("routingTarget — the address tenants are pointed at", () => {
+  const KEYS = ["CUSTOM_DOMAIN_APEX_IP", "WEBXITE_SERVER_IP", "CUSTOM_DOMAIN_CNAME_TARGET"];
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  /**
+   * There is no apex address by default, and that is deliberate: a guessed one
+   * sends tenants to a server that is not us. What was wrong was the *caller*,
+   * which fell through to a CNAME — see the suite below.
+   */
+  it("offers no apex address until one is configured", () => {
+    assert.equal(routingTarget().apexIp, null);
+  });
+
+  it("takes CUSTOM_DOMAIN_APEX_IP", () => {
+    process.env.CUSTOM_DOMAIN_APEX_IP = "203.0.113.10";
+    assert.equal(routingTarget().apexIp, "203.0.113.10");
+  });
+
+  /**
+   * The same address is called WEBXITE_SERVER_IP elsewhere in the deployment.
+   * An operator who sets one should not have to discover this file wanted the
+   * other.
+   */
+  it("falls back to WEBXITE_SERVER_IP", () => {
+    process.env.WEBXITE_SERVER_IP = "203.0.113.20";
+    assert.equal(routingTarget().apexIp, "203.0.113.20");
+  });
+
+  it("prefers the more specific name when both are set", () => {
+    process.env.CUSTOM_DOMAIN_APEX_IP = "203.0.113.10";
+    process.env.WEBXITE_SERVER_IP = "203.0.113.20";
+    assert.equal(routingTarget().apexIp, "203.0.113.10");
+  });
+
+  /**
+   * The default CNAME target is only correct if that record exists in the
+   * platform's own zone. It is pinned here so that changing it is a decision
+   * rather than a typo — but a passing test says nothing about whether the
+   * record resolves, which is the part that has to be checked in DNS.
+   */
+  it("defaults the CNAME target to sites.<root>", () => {
+    assert.ok(routingTarget().cname.startsWith("sites."));
+  });
+
+  it("takes a configured CNAME target", () => {
+    process.env.CUSTOM_DOMAIN_CNAME_TARGET = "edge.example.net";
+    assert.equal(routingTarget().cname, "edge.example.net");
   });
 });
 
