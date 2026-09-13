@@ -101,7 +101,17 @@ const unconfiguredRouter: DomainRouter = {
  * domain, and read the `DOMAIN_ROUTING_*` log line before trusting it.
  */
 function dokployRouter(apiUrl: string, token: string, applicationId: string): DomainRouter {
-  const base = apiUrl.replace(/\/+$/, "");
+  /**
+   * The panel's origin, with any `/api` the operator included taken back off.
+   *
+   * Every path below already starts `/api/`, so `DOKPLOY_API_URL=https://host/api`
+   * produced `https://host/api/api/domain.create` and a 404 — and a 404 here
+   * reads as "the edge refused the request", which sends whoever is diagnosing
+   * it to look at permissions rather than at a doubled path segment. Both forms
+   * are accepted because both are the obvious thing to type, and the variable
+   * is named for the API rather than for the host.
+   */
+  const base = apiUrl.replace(/\/+$/, "").replace(/\/api$/i, "");
 
   const call = async (path: string, body: unknown): Promise<RoutingOutcome> => {
     try {

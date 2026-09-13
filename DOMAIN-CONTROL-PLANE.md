@@ -271,9 +271,9 @@ a fact nobody has checked.
 | `CUSTOM_DOMAIN_CNAME_TARGET` | no | What tenants are told to CNAME to. Defaults to `sites.<root>`, **which must resolve** |
 | `CUSTOM_DOMAIN_APEX_IP` | for apex domains | The `A` record value offered for a bare domain |
 | `WEBXITE_SERVER_IP` | no | Read as a fallback for the line above |
-| `DOKPLOY_API_URL` | for routing | The edge's API |
+| `DOKPLOY_API_URL` | for routing | The Dokploy panel's origin, e.g. `https://dokploy.example.com`. A trailing `/api` is stripped, since every call already adds one |
 | `DOKPLOY_API_TOKEN` | for routing | Sent as `x-api-key`. **Never logged** |
-| `DOKPLOY_APPLICATION_ID` | for routing | Which application serves tenant sites |
+| `DOKPLOY_APPLICATION_ID` | for routing | Which application serves tenant sites. Dokploy's **internal application id**, not the `appName` slug shown under the service title in the panel — those are different values and the slug is refused |
 
 These two were documented as `DOMAIN_CNAME_TARGET` and `DOMAIN_APEX_IP`, which
 nothing has ever read. An operator following this table set a variable with no
