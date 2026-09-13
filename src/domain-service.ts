@@ -809,6 +809,35 @@ export async function disconnectDomain(
  */
 const SERVABLE_STATUSES = ["ACTIVE", "VERIFIED"] as const;
 
+/**
+ * Whether `hostname` is one of this tenant's own connected domains.
+ *
+ * Exists so the question is answered in one place. It was asked in two, with
+ * two different answers: `collegeIdForHost` decided whether to *serve* the
+ * site, and an inline check in the public site endpoint decided whether the
+ * tenant's own custom code may *run* on it — and the second one tested only
+ * `ACTIVE`.
+ *
+ * The consequence was a site that rendered on its own domain with its head and
+ * body code silently stripped: a tenant's analytics tag, chat widget or embed
+ * worked in the editor preview and vanished on the live address, with nothing
+ * anywhere saying why. Anything servable is by definition the tenant's own
+ * domain — ownership was proven by the TXT record before the domain could
+ * reach either status.
+ */
+export function isOwnDomain(
+  domains: { hostname?: string; status?: string }[] | null | undefined,
+  hostname: string,
+): boolean {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return false;
+  return (domains ?? []).some(
+    (domain) =>
+      domain?.hostname === host &&
+      SERVABLE_STATUSES.includes(domain?.status as (typeof SERVABLE_STATUSES)[number]),
+  );
+}
+
 export async function collegeIdForHost(rawHost: string): Promise<{
   collegeId: string;
   subdomain: string;

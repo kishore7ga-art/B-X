@@ -84,6 +84,7 @@ import {
 } from "@/subscription-service";
 import {
   addDomain,
+  isOwnDomain,
   adminListDomains,
   adminSetDomainEnabled,
   collegeIdForHost,
@@ -3130,13 +3131,16 @@ app.get(
            * benefit from getting it wrong.
            */
           settings: publicSettingsFor(college, {
-            onOwnDomain: (() => {
-              const host = typeof req.query.host === "string" ? req.query.host.toLowerCase() : "";
-              if (!host) return false;
-              return (college.domains ?? []).some(
-                (domain: any) => domain?.status === "ACTIVE" && domain?.hostname === host,
-              );
-            })(),
+            /*
+             * One predicate, shared with `collegeIdForHost`. This was an inline
+             * ACTIVE-only test, so a domain at VERIFIED served the site and had
+             * the tenant's own head and body code stripped from it — working in
+             * preview, gone on the live address, with nothing saying why.
+             */
+            onOwnDomain: isOwnDomain(
+              college.domains as { hostname?: string; status?: string }[] | undefined,
+              typeof req.query.host === "string" ? req.query.host : "",
+            ),
           }),
         });
         return;

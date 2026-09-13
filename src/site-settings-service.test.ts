@@ -17,16 +17,42 @@ describe("mayExecuteCustomCode — script only on a tenant's own domain", () => 
     assert.equal(mayExecuteCustomCode({}), false);
   });
 
-  // Adding a domain must not be enough. Until it is ACTIVE the tenant is still
-  // being served on a hostname inside the platform's cookie scope.
-  it("is false while a domain is only pending or verified", () => {
+  /**
+   * Adding a domain must not be enough. Unproven ownership means the tenant is
+   * only reachable on a `webxite.org` hostname — inside the platform's cookie
+   * scope — so script there could reach the session cookie.
+   */
+  it("is false while ownership is unproven, or the domain has failed", () => {
     assert.equal(mayExecuteCustomCode({ domains: [{ status: "PENDING_VERIFICATION" }] }), false);
-    assert.equal(mayExecuteCustomCode({ domains: [{ status: "VERIFIED" }] }), false);
     assert.equal(mayExecuteCustomCode({ domains: [{ status: "FAILED" }] }), false);
+    assert.equal(mayExecuteCustomCode({ domains: [{ status: "DISCONNECTED" }] }), false);
   });
 
-  it("is true once a domain is active", () => {
+  /**
+   * VERIFIED now qualifies, and this reverses an earlier deliberate decision —
+   * so the reason it changed is recorded here rather than inferred later.
+   *
+   * The original rule was ACTIVE-only, on the stated grounds that "until it is
+   * ACTIVE the tenant is still being served on a hostname inside the platform's
+   * cookie scope". That was true when it was written, because `collegeIdForHost`
+   * refused to serve a VERIFIED domain at all — the only address that rendered
+   * was `<sub>.webxite.org`.
+   *
+   * That premise is gone. A VERIFIED domain is now served, because a domain sits
+   * at VERIFIED whenever our edge check cannot pass and refusing to serve it
+   * showed visitors the platform's sign-in page on the tenant's own address.
+   *
+   * The cookie-scope protection did not move, it just lives entirely in the
+   * other half of the gate. The executing check is
+   * `onOwnDomain && mayExecuteCustomCode`, and `onOwnDomain` is decided per
+   * *request* from the host actually used — so script runs only on a request
+   * that arrived on the tenant's own registrable domain, which is outside the
+   * platform's cookie scope and CORS allowlist by construction. This function
+   * is the tenant-level companion to that, and PENDING still fails both.
+   */
+  it("is true once a domain is verified or active", () => {
     assert.equal(mayExecuteCustomCode({ domains: [{ status: "ACTIVE" }] }), true);
+    assert.equal(mayExecuteCustomCode({ domains: [{ status: "VERIFIED" }] }), true);
     assert.equal(
       mayExecuteCustomCode({ domains: [{ status: "PENDING_VERIFICATION" }, { status: "ACTIVE" }] }),
       true,

@@ -108,8 +108,16 @@ async function tenantForHostname(hostname: string): Promise<string | null> {
   if (!hostname) return null;
   const clean = hostname.trim().toLowerCase();
 
+  /*
+   * ACTIVE or VERIFIED, matching what is actually served. An ACTIVE-only lookup
+   * dropped every beacon from a verified custom domain — the site rendered, the
+   * visitor read it, and the dashboard stayed empty with nothing to explain the
+   * gap.
+   */
   const byCustom = (await College.findOne({
-    domains: { $elemMatch: { hostname: clean, status: "ACTIVE" } },
+    domains: {
+      $elemMatch: { hostname: clean, status: { $in: ["ACTIVE", "VERIFIED"] } },
+    },
   })
     .select("_id")
     .lean()) as { _id: unknown } | null;
@@ -261,7 +269,9 @@ async function hostnamesFor(collegeId: string): Promise<string[]> {
   const names = new Set<string>();
   if (college.subdomain) names.add(`${college.subdomain}.${root}`);
   for (const d of college.domains ?? []) {
-    if (d.status === "ACTIVE") names.add(d.hostname);
+    // VERIFIED too: it is an address the site is served on, so traffic arrives
+    // under it and the dashboard has to name it or the figures look orphaned.
+    if (d.status === "ACTIVE" || d.status === "VERIFIED") names.add(d.hostname);
   }
   return [...names];
 }

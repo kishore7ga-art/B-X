@@ -88,7 +88,22 @@ export const DEFAULT_SETTINGS: ISiteSettings = {
 export function mayExecuteCustomCode(college: {
   domains?: { status?: string }[] | null;
 }): boolean {
-  return (college.domains ?? []).some((domain) => domain?.status === "ACTIVE");
+  /*
+   * ACTIVE *or* VERIFIED, and the second one matters because this is the second
+   * of two gates — `onOwnDomain` above is the first, and both have to pass. So
+   * fixing only one left custom code stripped on a tenant's own live domain
+   * anyway.
+   *
+   * The reasoning in the comment above holds identically for VERIFIED: reaching
+   * it required the TXT record under a zone the tenant controls, and the
+   * hostname is a different registrable domain either way — outside the cookie
+   * scope, outside the CORS allowlist, and therefore only able to affect the
+   * site's own visitors. What is still outstanding at VERIFIED is our edge and
+   * our certificate, neither of which changes whose property this is.
+   */
+  return (college.domains ?? []).some(
+    (domain) => domain?.status === "ACTIVE" || domain?.status === "VERIFIED",
+  );
 }
 
 /**
@@ -476,7 +491,7 @@ function toView(college: ICollege): SettingsView {
     customCodeExecutes: executes,
     customCodeNotice: executes
       ? null
-      : "Scripts run once you connect your own domain. On a webxite.org address they are saved but not executed, because that address shares a domain with the platform.",
+      : "Scripts run once your own domain is verified. On a webxite.org address they are saved but not executed, because that address shares a domain with the platform.",
   };
 }
 
