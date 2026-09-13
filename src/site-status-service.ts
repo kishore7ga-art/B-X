@@ -122,11 +122,36 @@ export function liveUrlFor(college: {
     return { url: `https://${chosen.hostname}`, target: chosen.hostname };
   }
 
+  if (!college.subdomain) return { url: null, target: "platform" };
+
+  /**
+   * The platform address, in whichever form this deployment can actually serve.
+   *
+   * `<sub>.<root>` is the nicer address and the one the SEO canonical uses, and
+   * it requires a wildcard `*.<root>` record in the platform's own DNS plus a
+   * wildcard certificate. Neither can be checked from here, and both are absent
+   * more often than not — on this deployment `*.webxite.org` has never
+   * resolved, so every share link built that way was NXDOMAIN. A share button
+   * that hands somebody a dead link is worse than one that hands them an ugly
+   * working one.
+   *
+   * So the path form is the default, because `<app>/site/<sub>` works on any
+   * deployment that can serve the editor at all — no extra DNS, no extra
+   * certificate. Set `PLATFORM_WILDCARD_DNS=true` once the wildcard record and
+   * certificate are in place and this switches to the subdomain form.
+   *
+   * Deliberately defaulting to the one that works rather than the one that is
+   * prettier: the failure mode of the pretty one is silent and lands on the
+   * tenant's customer, not on us.
+   */
   const root = (process.env.ROOT_DOMAIN || "webxite.org").toLowerCase().trim();
-  if (college.subdomain) {
+
+  if (process.env.PLATFORM_WILDCARD_DNS === "true") {
     return { url: `https://${college.subdomain}.${root}`, target: "platform" };
   }
-  return { url: null, target: "platform" };
+
+  const appBase = (process.env.APP_URL || `https://app.${root}`).replace(/\/+$/, "");
+  return { url: `${appBase}/site/${college.subdomain}`, target: "platform" };
 }
 
 function pageCount(config: unknown): number {

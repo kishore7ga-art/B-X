@@ -126,19 +126,51 @@ describe("preconditionsFor — six answers, each from real state", () => {
 });
 
 describe("liveUrlFor — the address to hand somebody", () => {
-  const original = process.env.ROOT_DOMAIN;
+  const KEYS = ["ROOT_DOMAIN", "APP_URL", "PLATFORM_WILDCARD_DNS"];
+  const saved: Record<string, string | undefined> = {};
+
   beforeEach(() => {
+    for (const k of KEYS) saved[k] = process.env[k];
     process.env.ROOT_DOMAIN = "webxite.org";
+    process.env.APP_URL = "https://app.webxite.org";
+    delete process.env.PLATFORM_WILDCARD_DNS;
   });
   afterEach(() => {
-    if (original === undefined) delete process.env.ROOT_DOMAIN;
-    else process.env.ROOT_DOMAIN = original;
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
   });
 
-  it("falls back to the platform subdomain", () => {
+  /**
+   * The path form by default, and this is the fix.
+   *
+   * `<sub>.<root>` is prettier and needs a wildcard DNS record plus a wildcard
+   * certificate, neither checkable from here. On this deployment `*.webxite.org`
+   * has never resolved, so the share button was handing out NXDOMAIN links —
+   * a dead link being worse than an ugly working one.
+   */
+  it("falls back to a platform path that works without wildcard DNS", () => {
     const { url, target } = liveUrlFor({ subdomain: "greenfield", domains: [] });
-    assert.equal(url, "https://greenfield.webxite.org");
+    assert.equal(url, "https://app.webxite.org/site/greenfield");
     assert.equal(target, "platform");
+  });
+
+  it("uses the subdomain form once the wildcard is declared configured", () => {
+    process.env.PLATFORM_WILDCARD_DNS = "true";
+    const { url } = liveUrlFor({ subdomain: "greenfield", domains: [] });
+    assert.equal(url, "https://greenfield.webxite.org");
+  });
+
+  /** Only the exact string enables it — a stray "1" or "yes" must not. */
+  it("treats anything but the literal true as not configured", () => {
+    for (const value of ["1", "yes", "TRUE", ""]) {
+      process.env.PLATFORM_WILDCARD_DNS = value;
+      assert.equal(
+        liveUrlFor({ subdomain: "greenfield", domains: [] }).url,
+        "https://app.webxite.org/site/greenfield",
+      );
+    }
   });
 
   it("prefers a servable custom domain", () => {
@@ -168,6 +200,6 @@ describe("liveUrlFor — the address to hand somebody", () => {
       subdomain: "greenfield",
       domains: [{ hostname: "pending.test", status: "PENDING_VERIFICATION" }],
     });
-    assert.equal(url, "https://greenfield.webxite.org");
+    assert.equal(url, "https://app.webxite.org/site/greenfield");
   });
 });
