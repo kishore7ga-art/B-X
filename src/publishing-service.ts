@@ -1,4 +1,5 @@
 import { AuditLog, College } from "@/models";
+import { verifyDomain } from "@/domain-service";
 import type { ICollege, IWebsiteConfig } from "@/models/colleges.model";
 
 /**
@@ -170,6 +171,35 @@ export async function publishSite(
         actor: actorEmail,
       },
     }).catch(() => null);
+
+    /**
+     * Push every not-yet-live domain one step further, on the way out.
+     *
+     * The flow a tenant expects is "my DNS verified, so I press Publish and my
+     * site is at my own address". Publishing alone never made that true: it
+     * copies the draft over the published config and touches nothing about
+     * routing, so a domain sitting at VERIFIED stayed there until the monitor
+     * came round or somebody pressed Check again.
+     *
+     * So publishing now retries the outstanding checks for each domain. With an
+     * edge configured that is the moment the hostname starts being served —
+     * "press Publish, go live" becomes literally what happens. With no edge
+     * configured it changes nothing, which is correct: the button cannot
+     * conjure a reverse proxy, and claiming otherwise is the failure this
+     * whole subsystem was rebuilt to stop.
+     *
+     * Deliberately not awaited, and deliberately swallowing failures. Each
+     * domain check makes DNS lookups and an HTTPS request; three of them would
+     * add seconds to a button that should feel instant, and a slow gateway must
+     * never be the reason a publish appears to fail after it has already
+     * written. The monitor re-checks regardless.
+     */
+    const pending = (college.domains ?? []).filter(
+      (d) => d.status !== "ACTIVE" && d.status !== "DISCONNECTED",
+    );
+    for (const domain of pending) {
+      void verifyDomain(collegeId, domain.id, actorEmail).catch(() => null);
+    }
 
     return {
       publishedVersion: nextVersion,

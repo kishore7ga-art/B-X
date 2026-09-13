@@ -55,12 +55,32 @@ export interface DomainRouter {
 const unconfiguredRouter: DomainRouter = {
   name: "none",
   async ensure(hostname) {
+    /*
+     * Two audiences, one string, and it was written for the wrong one.
+     *
+     * This sentence is rendered in the tenant's own settings screen, where the
+     * reader is a college administrator who has just correctly added two DNS
+     * records. Telling them to "set DOKPLOY_API_URL and DOKPLOY_API_TOKEN"
+     * names a variable they cannot see, on a server they have no access to, in
+     * a product they are a customer of. It reads as a failure they caused and
+     * cannot fix.
+     *
+     * The tenant is now told what is true and actionable for them: their part
+     * is done and the remaining step is ours. The operator detail moved to the
+     * log line below, which is where somebody who can act on it is looking.
+     */
+    console.warn(
+      `[domains] ${hostname} verified but no edge is configured to serve it. ` +
+        "Add the host to the reverse proxy application, or set DOKPLOY_API_URL, " +
+        "DOKPLOY_API_TOKEN and DOKPLOY_APPLICATION_ID to automate it.",
+    );
+
     return {
       state: "NOT_CONFIGURED",
       detail:
-        `DNS for ${hostname} is correct, but no edge is configured to serve it. ` +
-        "Add the host to the reverse proxy, or set DOKPLOY_API_URL and " +
-        "DOKPLOY_API_TOKEN so this service can do it.",
+        "Your DNS is correct and nothing further is needed from you. " +
+        "We are finishing the setup for this address — it usually takes a few " +
+        "minutes, and your site will be live as soon as it completes.",
     };
   },
   async remove() {
