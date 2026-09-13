@@ -1,5 +1,6 @@
 import { SystemSecret, AuditLog } from "@/models";
 import { sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
+import { sanitizeTemplateCode } from "@/library-service";
 import { Conflict } from "@/errors";
 import {
   SECTION_CATEGORY_IDS,
@@ -15,6 +16,21 @@ export type DefaultWebsiteSection = {
   sectionType: string;
   code: string;
   sortOrder: number;
+  /**
+   * The library template this section was taken from, when it came from one.
+   *
+   * Distinct from `id`, which is this section's identity on this page and is
+   * deliberately prefixed so a later edit in Admin > Templates cannot appear to
+   * reach into a tenant's copy of the content.
+   *
+   * `templateId` is not content. It is the only way `restoreTemplateScripts`
+   * can put a section's JavaScript back after a tenant saves the page — that
+   * lookup is by template id, against published templates only. Without it an
+   * interactive section is interactive in the admin, interactive in the editor
+   * until the first autosave, and dead from then on, because the tenant write
+   * path strips `<script>` and nothing can identify what to restore.
+   */
+  templateId?: string | null;
 };
 
 export type DefaultWebsitePage = {
@@ -152,7 +168,9 @@ function orderPageSections(config: DefaultWebsiteConfig): DefaultWebsiteConfig {
  * return paths, because one of those paths is where the next one gets missed.
  */
 export async function getDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
-  return sanitizeWebsiteConfig(await loadDefaultWebsiteConfig());
+  // The admin policy, not the tenant one: this markup is authored by a Super
+  // Admin through an admin-only route. See `sanitizeWebsiteConfig`.
+  return sanitizeWebsiteConfig(await loadDefaultWebsiteConfig(), sanitizeTemplateCode);
 }
 
 async function loadDefaultWebsiteConfig(): Promise<DefaultWebsiteConfig> {
@@ -267,7 +285,7 @@ export async function updateDefaultWebsiteConfig(
   // has not customised their site, so it is the single highest-leverage place
   // in the platform to put section markup.
   const config: DefaultWebsiteConfig = {
-    ...sanitizeWebsiteConfig(rawConfig),
+    ...sanitizeWebsiteConfig(rawConfig, sanitizeTemplateCode),
     version: currentVersion + 1,
   };
   const expected = sectionTally(config);
@@ -395,7 +413,12 @@ export async function fillPagesWithEverySection(
 }
 
 /** A library template, reduced to what a section needs from it. */
-export type LibraryChoice = { name: string; code: string };
+export type LibraryChoice = {
+  /** The template's own id, kept so the section can carry `templateId`. */
+  id: string;
+  name: string;
+  code: string;
+};
 
 /**
  * One page, brought up to all twenty sections. The rule, with no I/O in it.
@@ -442,6 +465,9 @@ export function fillPageSections(
         sectionType: category,
         sortOrder: order,
         code: fromLibrary.code,
+        // Carried so the section's script can be restored after a tenant saves
+        // it — see `DefaultWebsiteSection.templateId`.
+        templateId: fromLibrary.id,
       };
     }
 

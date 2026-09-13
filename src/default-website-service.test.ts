@@ -100,8 +100,8 @@ describe("fillPageSections — nothing an admin arranged is discarded", () => {
 describe("fillPageSections — the library wins over the starter", () => {
   const library: Record<string, LibraryChoice[]> = {
     hero: [
-      { name: "Ivy Masthead", code: "<section>ivy</section>" },
-      { name: "Second Hero", code: "<section>second</section>" },
+      { id: "tpl-ivy", name: "Ivy Masthead", code: "<section>ivy</section>" },
+      { id: "tpl-second", name: "Second Hero", code: "<section>second</section>" },
     ],
   };
 
@@ -125,8 +125,24 @@ describe("fillPageSections — the library wins over the starter", () => {
     assert.equal(hero?.id, "def-home-hero");
   });
 
+  it("carries the template id, so the script can be restored after a save", () => {
+    // Separate from `id` on purpose, and the distinction is the whole fix:
+    // `id` must not be the template's, or an admin edit appears to reach into
+    // a tenant's page; `templateId` must be, or `restoreTemplateScripts` has
+    // nothing to look up and the section loses its JavaScript permanently the
+    // first time the tenant's editor autosaves.
+    const hero = fillPageSections(page(), library).sections.find((s) => s.sectionType === "hero");
+    assert.equal(hero?.templateId, "tpl-ivy");
+    assert.notEqual(hero?.id, "tpl-ivy");
+  });
+
+  it("leaves templateId unset on a starter, which came from no template", () => {
+    const about = fillPageSections(page(), library).sections.find((s) => s.sectionType === "about");
+    assert.ok(!about?.templateId);
+  });
+
   it("ignores a template whose code is blank", () => {
-    const filled = fillPageSections(page(), { hero: [{ name: "Empty", code: "   " }] });
+    const filled = fillPageSections(page(), { hero: [{ id: "tpl-empty", name: "Empty", code: "   " }] });
     assert.equal(
       filled.sections.find((s) => s.sectionType === "hero")?.code,
       SECTION_STARTERS.hero.code,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { sanitizeSectionHtml } from "@/lib/sections/sanitize-section-html";
+import { sanitizeSectionHtml, sanitizeWebsiteConfig } from "@/lib/sections/sanitize-section-html";
 import { sanitizeTemplateCode } from "@/library-service";
 
 /**
@@ -93,5 +93,31 @@ describe("the boundary between them", () => {
       assert.doesNotThrow(() => sanitizeSectionHtml(input as never));
       assert.doesNotThrow(() => sanitizeTemplateCode((input ?? "") as string));
     }
+  });
+});
+
+describe("which policy a website config is judged by", () => {
+  const config = { pages: [{ slug: "/home", sections: [{ id: "s1", code: CAROUSEL }] }] };
+  const codeOf = (c: typeof config) => c.pages[0]!.sections[0]!.code;
+
+  it("a tenant's config is judged by the tenant policy, script discarded", () => {
+    assert.ok(!/<script/i.test(codeOf(sanitizeWebsiteConfig(config))));
+  });
+
+  it("the platform default website keeps the admin's script", () => {
+    // The reported bug: the admin publishes an interactive section, it works in
+    // Admin, and it arrives in every tenant's editor with the script gone and
+    // its content never assembled — a dropdown painting as a solid block, an
+    // accordion showing every panel at once. The default website is authored by
+    // a Super Admin through an admin-only route, so it is admin content and the
+    // admin policy is the one that applies to it.
+    assert.match(codeOf(sanitizeWebsiteConfig(config, sanitizeTemplateCode)), /<script/i);
+  });
+
+  it("the admin policy still strips hostile markup — it is not a bypass", () => {
+    const hostile = { pages: [{ slug: "/home", sections: [{ id: "s1", code: HOSTILE }] }] };
+    const out = codeOf(sanitizeWebsiteConfig(hostile, sanitizeTemplateCode));
+    assert.ok(!/onclick|onerror|javascript:/i.test(out), out);
+    assert.ok(out.includes("safe"), out);
   });
 });

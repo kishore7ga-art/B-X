@@ -258,13 +258,13 @@ function plain(value: unknown): Record<string, unknown> | null {
     : (value as Record<string, unknown>);
 }
 
-function sanitizeSections(sections: unknown): unknown {
+function sanitizeSections(sections: unknown, sanitizeCode: (code: string) => string): unknown {
   if (!Array.isArray(sections)) return sections;
   return sections.map((section) => {
     const entry = plain(section);
     if (!entry) return section;
     if (typeof entry.code !== "string") return entry;
-    return { ...entry, code: sanitizeSectionHtml(entry.code) };
+    return { ...entry, code: sanitizeCode(entry.code) };
   });
 }
 
@@ -277,7 +277,29 @@ function sanitizeSections(sections: unknown): unknown {
  * browser). Sanitising only on write would have left every existing site
  * exploitable until its owner next pressed save.
  */
-export function sanitizeWebsiteConfig<T>(config: T): T {
+/*
+ * ── `sanitizeCode`, and why it is a parameter ──────────────────────────────
+ *
+ * The default is `sanitizeSectionHtml`, the tenant policy, and every tenant
+ * config keeps it by saying nothing.
+ *
+ * The platform's *default website* is not a tenant config. It is authored by a
+ * Super Admin through an admin-only route, it is the same class of content as
+ * a `Template` row, and running it through the tenant policy judged admin
+ * markup by the rule written for markup strangers submit — so every carousel,
+ * hamburger menu and accordion the admin published arrived in the editor with
+ * its script gone and its content never assembled. That is the same mistake
+ * `section-library-service` documents having made and fixed for the library;
+ * this parameter is how the default website stops making it too.
+ *
+ * Passing `sanitizeTemplateCode` here is a statement about *who wrote the
+ * markup*, never about who is reading it. Nothing a tenant submits reaches this
+ * function with anything but the default.
+ */
+export function sanitizeWebsiteConfig<T>(
+  config: T,
+  sanitizeCode: (code: string) => string = sanitizeSectionHtml,
+): T {
   if (!config || typeof config !== "object") return config;
 
   const source = plain(config);
@@ -288,7 +310,7 @@ export function sanitizeWebsiteConfig<T>(config: T): T {
     pages: source.pages.map((page) => {
       const entry = plain(page);
       if (!entry) return page;
-      return { ...entry, sections: sanitizeSections(entry.sections) };
+      return { ...entry, sections: sanitizeSections(entry.sections, sanitizeCode) };
     }),
   } as T;
 }
