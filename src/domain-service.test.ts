@@ -5,6 +5,14 @@ import { __testing } from "@/domain-service";
 
 const { normalizeHostname, assertNotPlatformHost, isApex, routingTarget } = __testing;
 
+/**
+ * Widened deliberately. `SERVABLE_STATUSES` is `as const`, so asking whether it
+ * includes "PENDING_VERIFICATION" is a *type* error — which is a useful signal
+ * in application code and useless here, because refusing that status is the
+ * exact property under test.
+ */
+const SERVABLE_STATUSES: readonly string[] = __testing.SERVABLE_STATUSES;
+
 const rejects = (input: unknown, because: string) => {
   assert.throws(() => normalizeHostname(input), /./, `expected "${String(input)}" to be rejected: ${because}`);
 };
@@ -122,6 +130,35 @@ describe("isApex — which DNS record the tenant is told to create", () => {
   // still use the A record path once CUSTOM_DOMAIN_APEX_IP is configured.
   it("misreads a multi-part public suffix as a subdomain (documented limitation)", () => {
     assert.equal(isApex("college.edu.in"), false);
+  });
+});
+
+describe("SERVABLE_STATUSES — which hostnames may be served a site", () => {
+  /**
+   * VERIFIED has to be here, and its absence was a deadlock with a miserable
+   * symptom: a domain sits at VERIFIED whenever the edge check cannot pass,
+   * the request then resolved to nothing, fell through to the platform app,
+   * and a visitor to a college's own domain was shown the WebXite sign-in page.
+   */
+  it("serves a verified domain, not only an active one", () => {
+    assert.ok(SERVABLE_STATUSES.includes("VERIFIED"));
+    assert.ok(SERVABLE_STATUSES.includes("ACTIVE"));
+  });
+
+  /**
+   * The security boundary, and the reason this is not simply "anything added".
+   * PENDING_VERIFICATION means the `_xite-verify` TXT record has not been seen,
+   * so nobody has proven they control the zone — and serving it would make
+   * adding a hostname enough to claim it.
+   */
+  it("refuses a hostname whose ownership is unproven", () => {
+    assert.equal(SERVABLE_STATUSES.includes("PENDING_VERIFICATION"), false);
+  });
+
+  /** Removed and disabled domains must never resolve, whatever the row says. */
+  it("refuses disconnected and failed domains", () => {
+    assert.equal(SERVABLE_STATUSES.includes("DISCONNECTED"), false);
+    assert.equal(SERVABLE_STATUSES.includes("FAILED"), false);
   });
 });
 

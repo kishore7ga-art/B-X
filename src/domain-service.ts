@@ -782,12 +782,33 @@ export async function disconnectDomain(
 }
 
 /**
- * The tenant a request's host belongs to, or null.
+ * Hostnames that may be served a tenant's published site.
  *
- * Only ACTIVE domains resolve. A domain that is merely added, or verified but
- * not yet serving, must not route traffic — otherwise adding a hostname would
- * be enough to claim it, and the DNS proof would be decorative.
+ * `ACTIVE` and `VERIFIED`, and the second one is the fix.
+ *
+ * Only `ACTIVE` resolved before, on the reasoning that a merely-added hostname
+ * must not route traffic or adding one would be enough to claim it. That is
+ * right, and `PENDING_VERIFICATION` is still excluded for exactly that reason —
+ * but `VERIFIED` is not "merely added". Reaching it requires the `_xite-verify`
+ * TXT record under a zone the tenant controls **and** records pointing here.
+ * Ownership is proven. What is still outstanding at `VERIFIED` is the edge and
+ * the certificate, and both of those are ours, not theirs.
+ *
+ * Excluding it produced a deadlock with a miserable symptom. A domain sits at
+ * `VERIFIED` whenever the edge check cannot pass — which is every deployment
+ * with no `DOKPLOY_*` configured. So the request arrives, resolves to nothing,
+ * falls through to the platform app, and the visitor to a college's own domain
+ * is shown **the WebXite sign-in page**. Not their site, not an error: our
+ * login screen, on their address.
+ *
+ * And the check being deferred to is one the request itself has already
+ * disproven. If a browser reached us with `Host: g7a.in`, then the edge *is*
+ * routing that hostname — the arrival is stronger evidence than any probe we
+ * could run. Refusing to serve it on the grounds that the edge might not be
+ * configured is refusing on the basis of a stale answer.
  */
+const SERVABLE_STATUSES = ["ACTIVE", "VERIFIED"] as const;
+
 export async function collegeIdForHost(rawHost: string): Promise<{
   collegeId: string;
   subdomain: string;
@@ -800,7 +821,7 @@ export async function collegeIdForHost(rawHost: string): Promise<{
   }
 
   const college = (await College.findOne({
-    domains: { $elemMatch: { hostname, status: "ACTIVE" } },
+    domains: { $elemMatch: { hostname, status: { $in: SERVABLE_STATUSES } } },
   })
     .select("_id subdomain")
     .lean()) as { _id: unknown; subdomain: string } | null;
@@ -932,6 +953,7 @@ export async function adminSetDomainEnabled(
 }
 
 export const __testing = {
+  SERVABLE_STATUSES,
   normalizeHostname,
   stageFromStatus,
   assertNotPlatformHost,
