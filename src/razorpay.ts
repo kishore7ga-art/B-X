@@ -189,6 +189,35 @@ export function createSubscription(input: {
   });
 }
 
+export type RazorpayPayment = {
+  id: string;
+  /** "card", "upi", "netbanking", "wallet", "emandate", … */
+  method?: string | null;
+  card?: {
+    last4?: string | null;
+    network?: string | null;
+    type?: string | null;
+    issuer?: string | null;
+  } | null;
+  /** UPI handle, when the mandate is a UPI one. */
+  vpa?: string | null;
+  bank?: string | null;
+  wallet?: string | null;
+};
+
+/**
+ * One payment, for the instrument behind it.
+ *
+ * This is the only way this platform learns what a tenant paid with, and it
+ * learns it from Razorpay after the fact rather than by asking anybody to type
+ * a card number here. What comes back is display metadata — a network name and
+ * four digits — which is what a person needs to tell two of their own cards
+ * apart and is not card data.
+ */
+export function fetchPayment(id: string): Promise<RazorpayPayment> {
+  return call<RazorpayPayment>(`/payments/${encodeURIComponent(id)}`);
+}
+
 export function fetchSubscription(id: string): Promise<RazorpaySubscription> {
   return call<RazorpaySubscription>(`/subscriptions/${encodeURIComponent(id)}`);
 }

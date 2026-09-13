@@ -1,25 +1,40 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { MIN_PASSWORD_LENGTH, paymentProvider, __testing } from "@/account-service";
 
 const { formatAmount } = __testing;
 
 describe("paymentProvider — nothing is claimed that is not integrated", () => {
-  const original = process.env.PAYMENT_PROVIDER;
-  afterEach(() => {
-    if (original === undefined) delete process.env.PAYMENT_PROVIDER;
-    else process.env.PAYMENT_PROVIDER = original;
+  const KEYS = [
+    "PAYMENT_PROVIDER",
+    "RAZORPAY_KEY_ID",
+    "RAZORPAY_KEY_SECRET",
+    "RAZORPAY_PLAN_ID",
+  ];
+  const original: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of KEYS) {
+      original[key] = process.env[key];
+      delete process.env[key];
+    }
   });
 
-  it("is null when nothing is configured, which is the current state", () => {
-    delete process.env.PAYMENT_PROVIDER;
+  afterEach(() => {
+    for (const key of KEYS) {
+      if (original[key] === undefined) delete process.env[key];
+      else process.env[key] = original[key];
+    }
+  });
+
+  it("is null when nothing is configured", () => {
     assert.equal(paymentProvider(), null);
   });
 
   /**
    * A provider named in the environment but not implemented here would let the
-   * settings screen open a card flow this service cannot finish. Unknown names
+   * settings screen open a flow this service cannot finish. Unknown names
    * therefore read as "none" rather than as themselves.
    */
   it("is null for a provider this service cannot actually talk to", () => {
@@ -27,11 +42,31 @@ describe("paymentProvider — nothing is claimed that is not integrated", () => 
     assert.equal(paymentProvider(), null);
   });
 
-  it("reports a known provider once one is configured", () => {
+  it("reports razorpay once its keys and plan are set", () => {
+    process.env.RAZORPAY_KEY_ID = "rzp_test_abc";
+    process.env.RAZORPAY_KEY_SECRET = "secret";
+    process.env.RAZORPAY_PLAN_ID = "plan_abc";
+    assert.equal(paymentProvider(), "razorpay");
+  });
+
+  /**
+   * The reason this is derived from Razorpay's own configuration rather than
+   * from PAYMENT_PROVIDER. Naming a gateway is not wiring one up, and a screen
+   * that believes the name would offer a purchase that cannot complete.
+   */
+  it("does not believe PAYMENT_PROVIDER=razorpay without the keys", () => {
+    process.env.PAYMENT_PROVIDER = "razorpay";
+    assert.equal(paymentProvider(), null);
+
+    // Two of the three is still not a working gateway.
+    process.env.RAZORPAY_KEY_ID = "rzp_test_abc";
+    process.env.RAZORPAY_KEY_SECRET = "secret";
+    assert.equal(paymentProvider(), null);
+  });
+
+  it("still reports stripe from PAYMENT_PROVIDER", () => {
     process.env.PAYMENT_PROVIDER = "stripe";
     assert.equal(paymentProvider(), "stripe");
-    process.env.PAYMENT_PROVIDER = "RAZORPAY";
-    assert.equal(paymentProvider(), "razorpay");
   });
 });
 

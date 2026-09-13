@@ -1074,7 +1074,13 @@ export const openApiDocument = {
           "fails degrades to `plan: null` rather than failing the request, because a " +
           "subscriber does not stop being subscribed when a price label cannot be " +
           "fetched. `isSubscribed` is the single question every guarded feature asks. " +
-          "`configured` is false when the server has no Razorpay key, plan or secret.",
+          "`configured` is false when the server has no Razorpay key, plan or secret. " +
+          "`paymentInstrument` is what the mandate is drawn on, read from Razorpay each " +
+          "time rather than stored — a tenant can change the card on a mandate without " +
+          "this platform being involved, and a stored copy would show the old one " +
+          "indefinitely. It is display metadata only: a method, a network, four digits, " +
+          "a masked UPI handle. No card number, expiry or CVC exists anywhere in this " +
+          "platform to return.",
         responses: {
           200: json(
             {
@@ -1085,6 +1091,7 @@ export const openApiDocument = {
                 webhooksConfigured: bool,
                 plan: { type: ["object", "null"] },
                 subscription: { type: ["object", "null"] },
+                paymentInstrument: { type: ["object", "null"] },
                 isSubscribed: bool,
               },
               required: ["configured", "isSubscribed"],

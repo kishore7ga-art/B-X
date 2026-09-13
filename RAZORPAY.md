@@ -109,6 +109,48 @@ gets a 2xx, including after a delivery that succeeded but timed out. A
 `findOne`-then-insert lets two concurrent retries both through. The event id is
 inserted first and the duplicate-key error *is* the dedupe.
 
+## Payment methods, and the form that is gone
+
+There is no card form anywhere in this product, and there must not be one.
+
+The settings screen used to have one, and it was three problems stacked up: it
+took a card number, an expiry and a **CVC** into React state — the two things
+`billing.model.ts` says in as many words must never be here, because a PAN puts
+this platform in PCI-DSS scope and storing a CVC after authorisation is
+prohibited outright. It then fabricated `tok_<provider>_<timestamp>` and sent it
+as a provider reference to a card no provider held. And when the backend
+correctly refused, it caught the error, invented a payment-method object in
+component state and showed "Card attached successfully" — for something that was
+never stored. Reloading made the card vanish.
+
+Razorpay Subscriptions have no use for it. The mandate is set up inside
+Razorpay Checkout: the customer enters their card on Razorpay's page, Razorpay
+holds it, and this platform is never given it. So the Payment method tab now
+reads what Razorpay reports — method, network, last four digits, a masked UPI
+handle — and says where the details are actually changed.
+
+That instrument is read from Razorpay on each request rather than stored. A
+tenant can change the card on a mandate without this platform being involved,
+and the only thing worse than showing no payment method is showing a
+confidently wrong one.
+
+`POST /api/v1/billing/payment-methods` is kept for a provider whose flow
+genuinely is "tokenise elsewhere, then register the token here". It still
+refuses anything resembling a PAN.
+
+## Which gateway is connected
+
+`paymentProvider()` answers "razorpay" when Razorpay has a key, a secret and a
+plan — derived from those, not from the `PAYMENT_PROVIDER` variable that used to
+be the switch.
+
+Keeping that variable as the switch would mean a deployment could set
+`PAYMENT_PROVIDER=razorpay` with no keys and have the product report a gateway
+that cannot take money, or configure Razorpay properly and report none because a
+second variable was missed. Both failures are silent and both surface on a
+different screen from the cause. `PAYMENT_PROVIDER` is still read for `stripe`,
+which this service does not implement and therefore still reports as null.
+
 ## Duplicate protection
 
 `startSubscription` returns the existing subscription instead of creating a

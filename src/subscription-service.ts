@@ -9,6 +9,7 @@ import { BadRequest, NotFound } from "@/errors";
 import {
   cancelSubscription as cancelAtRazorpay,
   createSubscription as createAtRazorpay,
+  fetchPayment,
   fetchPlan,
   fetchSubscription,
   isTestMode,
@@ -109,6 +110,36 @@ export type SubscriptionView = {
   createdAt: Date;
 };
 
+/**
+ * What the tenant is paying with, as Razorpay reports it.
+ *
+ * Display metadata and nothing else: a method, a network name, four digits, a
+ * masked UPI handle. This platform has no card number, no expiry and no CVC to
+ * show, because it never receives any — the mandate is set up inside Razorpay
+ * Checkout and the instrument stays there.
+ *
+ * That is the whole reason this type exists. The settings screen used to hold a
+ * card form: a PAN, an expiry and a CVC in React state, a fabricated
+ * `tok_<provider>_<timestamp>` sent as if it were a real token, and — when the
+ * backend rightly refused it — a locally invented card object and the message
+ * "Card attached successfully". Nothing was stored anywhere. This replaces a
+ * form that could not work with a read of something that is true.
+ */
+export type PaymentInstrumentView = {
+  /** "card", "upi", "netbanking", "wallet", "emandate", … */
+  method: string;
+  /** "Visa", "MasterCard", "RuPay" — null for anything that is not a card. */
+  network: string | null;
+  last4: string | null;
+  /** "credit" / "debit", when Razorpay says. */
+  type: string | null;
+  issuer: string | null;
+  /** Masked to the handle's domain: enough to recognise, not enough to reuse. */
+  upiHandle: string | null;
+  bank: string | null;
+  wallet: string | null;
+};
+
 export type BillingState = {
   /** Whether this deployment can sell anything at all. */
   configured: boolean;
@@ -117,6 +148,8 @@ export type BillingState = {
   webhooksConfigured: boolean;
   plan: PlanView | null;
   subscription: SubscriptionView | null;
+  /** What the mandate is drawn on. Null until a payment has been made. */
+  paymentInstrument: PaymentInstrumentView | null;
   /** The single question every guarded feature actually asks. */
   isSubscribed: boolean;
 };
@@ -169,6 +202,48 @@ async function currentPlan(): Promise<PlanView | null> {
 }
 
 /**
+ * A UPI handle, masked.
+ *
+ * `kishore@okhdfcbank` becomes `k••••@okhdfcbank`. The bank half is what makes
+ * it recognisable to its owner; the name half is personal data that a settings
+ * screen does not need to display in full to do its job.
+ */
+function maskVpa(vpa: string | null | undefined): string | null {
+  if (!vpa) return null;
+  const [name, handle] = vpa.split("@");
+  if (!name || !handle) return null;
+  return `${name.slice(0, 1)}${"\u2022".repeat(Math.max(name.length - 1, 1))}@${handle}`;
+}
+
+/**
+ * The instrument behind a subscription's last payment.
+ *
+ * Read from Razorpay each time rather than stored. A tenant can change the card
+ * on a mandate without this platform being involved, so a copy taken at signup
+ * would show the old one indefinitely — and the only thing worse than no
+ * payment method on a billing screen is a confidently wrong one.
+ */
+async function paymentInstrument(
+  lastPaymentId: string | null | undefined,
+): Promise<PaymentInstrumentView | null> {
+  if (!lastPaymentId || !razorpayConfigured()) return null;
+
+  const payment = await fetchPayment(lastPaymentId).catch(() => null);
+  if (!payment) return null;
+
+  return {
+    method: payment.method ?? "unknown",
+    network: payment.card?.network ?? null,
+    last4: payment.card?.last4 ?? null,
+    type: payment.card?.type ?? null,
+    issuer: payment.card?.issuer ?? null,
+    upiHandle: maskVpa(payment.vpa),
+    bank: payment.bank ?? null,
+    wallet: payment.wallet ?? null,
+  };
+}
+
+/**
  * Everything the billing screen needs, in one call.
  *
  * The plan lookup is allowed to fail without taking the whole response down. A
@@ -178,7 +253,18 @@ async function currentPlan(): Promise<PlanView | null> {
  */
 export async function billingState(collegeId: string): Promise<BillingState> {
   const row = await occupyingRow(collegeId);
-  const plan = await currentPlan().catch(() => null);
+
+  /*
+   * Both lookups reach Razorpay and both are allowed to fail. A subscriber does
+   * not stop being subscribed because a price label or a card's last four
+   * digits could not be fetched, and answering 502 here would black out a
+   * settings page over a decoration. Run together rather than in sequence so
+   * the screen waits for one round trip, not two.
+   */
+  const [plan, instrument] = await Promise.all([
+    currentPlan().catch(() => null),
+    paymentInstrument(row?.lastPaymentId).catch(() => null),
+  ]);
 
   return {
     configured: razorpayConfigured(),
@@ -186,6 +272,7 @@ export async function billingState(collegeId: string): Promise<BillingState> {
     webhooksConfigured: webhookConfigured(),
     plan,
     subscription: row ? view(row) : null,
+    paymentInstrument: instrument,
     isSubscribed: Boolean(row && ENTITLED_STATUSES.includes(row.status)),
   };
 }
@@ -608,4 +695,4 @@ export async function listAllSubscriptions(limit = 200): Promise<AdminSubscripti
   }));
 }
 
-export const __testing = { asStatus, at, totalCount };
+export const __testing = { asStatus, at, maskVpa, totalCount };

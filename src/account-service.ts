@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 
 import { AuditLog, College, Invoice, PaymentMethod } from "@/models";
 import type { ICollege } from "@/models/colleges.model";
+import { razorpayConfigured } from "@/razorpay";
 
 /**
  * Account settings: password, billing history, payment methods.
@@ -18,18 +19,33 @@ export const MIN_PASSWORD_LENGTH = 10;
 /**
  * Which payment provider is wired up, if any.
  *
- * There is none. No provider SDK is a dependency of this service, no key is
- * read from the environment, and nothing here can charge a card or tokenise
- * one. This function exists so every caller has one place to ask, and so the
- * settings screen can say "no payment provider is connected" instead of
- * rendering a card form that goes nowhere.
+ * Razorpay, when it is configured — and that is decided by asking Razorpay's own
+ * module whether it has a key, a secret and a plan, not by reading a second
+ * environment variable that says so.
+ *
+ * `PAYMENT_PROVIDER` used to be that second variable, and it was the whole
+ * answer back when no provider existed at all. Keeping it as the switch now
+ * would mean a deployment could set `PAYMENT_PROVIDER=razorpay` with no keys and
+ * have this report a gateway that cannot take money, or configure Razorpay
+ * properly and have this report none because a second variable was missed. Both
+ * failures are silent and both show up on a different screen from the cause.
+ *
+ * It is still honoured for a provider this service does not implement, so that
+ * naming one keeps reporting null rather than becoming a claim.
  */
 export function paymentProvider(): string | null {
+  if (razorpayConfigured()) return "razorpay";
+
   const configured = process.env.PAYMENT_PROVIDER?.trim().toLowerCase();
   if (!configured) return null;
-  // Named but unimplemented is worse than absent: it would let a UI enable a
-  // flow that this service cannot complete.
-  return ["stripe", "razorpay"].includes(configured) ? configured : null;
+
+  /*
+   * Named but unimplemented is worse than absent: it would let a UI open a flow
+   * this service cannot finish. Razorpay is excluded here deliberately — if it
+   * were genuinely configured the check above would already have returned, so
+   * reaching this line with "razorpay" means the keys are missing.
+   */
+  return configured === "stripe" ? configured : null;
 }
 
 /**
@@ -180,8 +196,14 @@ export async function listPaymentMethods(collegeId: string): Promise<PaymentMeth
  * looks like a PAN is refused rather than trimmed, because silently accepting
  * it and storing "the safe parts" is how a PAN ends up in a log line.
  *
- * With no provider configured this cannot be called at all, which is the
- * correct behaviour for a platform that has not integrated one.
+ * **Razorpay subscriptions do not use this.** The mandate is set up inside
+ * Razorpay Checkout, against the subscription, and the instrument is held
+ * there — this platform never handles it and has nothing to attach. The
+ * settings screen accordingly shows what Razorpay holds rather than offering a
+ * form; see `paymentInstrument` in subscription-service.ts.
+ *
+ * It is kept for a provider whose flow genuinely is "tokenise elsewhere, then
+ * register the token here", and it still refuses a PAN under any provider.
  */
 export async function attachPaymentMethod(
   collegeId: string,

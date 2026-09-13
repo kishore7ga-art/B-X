@@ -4,7 +4,7 @@ import { afterEach, describe, it } from "node:test";
 import { ENTITLED_STATUSES, OCCUPYING_STATUSES } from "@/models/billing.model";
 import { __testing } from "@/subscription-service";
 
-const { asStatus, at, totalCount } = __testing;
+const { asStatus, at, maskVpa, totalCount } = __testing;
 
 /**
  * The pure decisions in the subscription flow.
@@ -104,6 +104,23 @@ describe("at — Razorpay sends seconds, Mongo stores dates", () => {
     assert.equal(at(undefined), null);
     assert.equal(at(null), null);
     assert.equal(at(0), null);
+  });
+});
+
+describe("maskVpa — recognisable to its owner, not reusable by anybody else", () => {
+  it("keeps the bank handle and masks the name", () => {
+    assert.equal(maskVpa("kishore@okhdfcbank"), "k••••••@okhdfcbank");
+  });
+
+  it("masks a single-character name without producing a bare @", () => {
+    assert.equal(maskVpa("k@okaxis"), "k•@okaxis");
+  });
+
+  /** Razorpay omits `vpa` for every method that is not UPI. */
+  it("is null for absent or malformed handles", () => {
+    for (const value of [null, undefined, "", "notaupi", "@nobank", "noname@"]) {
+      assert.equal(maskVpa(value), null);
+    }
   });
 });
 
