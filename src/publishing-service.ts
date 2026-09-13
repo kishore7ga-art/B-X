@@ -23,9 +23,29 @@ export type PublishResult = {
   publishedAt: Date;
   pages: number;
   sections: number;
+  /**
+   * True when the publish succeeded and visitors still will not see it.
+   *
+   * The one case where "published successfully" is a true sentence and a
+   * misleading answer, so the caller is told at the moment it matters rather
+   * than left to discover it from a browser.
+   */
+  maintenanceEnabled: boolean;
 };
 
 export type PublishStatus = {
+  /**
+   * Whether visitors are being shown the maintenance page instead of the site.
+   *
+   * Reported here, beside the publish state, because this is the screen a
+   * tenant looks at to answer "is my site live". Publishing and maintenance
+   * mode are set in two different tabs, and with maintenance on, everything
+   * this object reports is *true and irrelevant*: the site is published, the
+   * version is current, the domain is verified — and every visitor gets "We'll
+   * be back shortly". There was nothing anywhere connecting the two, so the
+   * only way to find out was to open the site in a browser and guess.
+   */
+  maintenanceEnabled: boolean;
   hasDraft: boolean;
   hasPublished: boolean;
   publishedVersion: number;
@@ -201,11 +221,20 @@ export async function publishSite(
       void verifyDomain(collegeId, domain.id, actorEmail).catch(() => null);
     }
 
+    const maintenanceEnabled = Boolean(college.settings?.maintenance?.enabled);
+    if (maintenanceEnabled) {
+      console.warn(
+        `[publish] college=${collegeId} published v${nextVersion} while maintenance ` +
+          "mode is on — visitors will see the maintenance page, not the site.",
+      );
+    }
+
     return {
       publishedVersion: nextVersion,
       publishedAt,
       pages: draft?.pages?.length ?? 0,
       sections: countSections(draft),
+      maintenanceEnabled,
     };
   }
 
@@ -227,6 +256,7 @@ export async function publishStatus(collegeId: string): Promise<PublishStatus> {
   const publishedVersion = college.publishedVersion ?? 0;
 
   return {
+    maintenanceEnabled: Boolean(college.settings?.maintenance?.enabled),
     hasDraft: !isEmptyConfig(draft),
     hasPublished: publishedVersion > 0 && !isEmptyConfig(published),
     publishedVersion,

@@ -714,7 +714,11 @@ export const openApiDocument = {
           "Reports whether a site has ever been published, which version is live, when, " +
           "by whom, and whether the draft has diverged from it. `hasUnpublishedChanges` " +
           "compares only what renders — page slugs and each section's id and code — so a " +
-          "timestamp moving is not presented to a tenant as a pending change.",
+          "timestamp moving is not presented to a tenant as a pending change. " +
+          "`maintenanceEnabled` is reported here because it is the one setting that makes " +
+          "every other field true and irrelevant: the site is published, the version is " +
+          "current, the domain is verified, and every visitor still sees the maintenance " +
+          "page. It is set in a different tab, and nothing connected the two.",
         responses: {
           200: json(
             {
