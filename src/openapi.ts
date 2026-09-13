@@ -1064,6 +1064,85 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/telemetry": {
+      post: {
+        tags: ["Analytics"],
+        summary: "One beacon from a visitor's browser",
+        description:
+          "Unauthenticated by necessity: the tracking script runs on a tenant's site in " +
+          "a visitor's browser, where there is no session to present. Nothing the beacon " +
+          "says about *who it is* is believed — the tenant is resolved from the hostname " +
+          "against domains this platform already knows, so a beacon cannot report traffic " +
+          "into another tenant's dashboard by naming their id. " +
+          "Always answers 2xx: a tracking script must never learn which hostnames this " +
+          "platform serves, and must never retry into a loop because a site was " +
+          "disconnected, so an unknown host is accepted and dropped rather than refused. " +
+          "Rate limited per address. Bots are identified and discarded. No IP address is " +
+          "stored — only a per-day salted hash — and the path is stripped of its query " +
+          "string, which is where tokens and email addresses end up.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  h: { ...str, description: "Hostname the visit was to." },
+                  p: { ...str, description: "Path. Query string is discarded." },
+                  s: { ...nullableStr, description: "Session id from a previous beacon." },
+                  d: { ...int, description: "Max scroll depth reached, 0-100." },
+                  t: { ...int, description: "Seconds the page was visible." },
+                },
+                required: ["h"],
+              },
+            },
+          },
+        },
+        responses: {
+          200: json(
+            { type: "object", properties: { ok: bool, s: nullableStr } },
+            "Accepted. `s` is the session id to send with the next beacon.",
+          ),
+          202: { description: "Malformed, and acknowledged rather than retried." },
+          429: { description: "Rate limited." },
+        },
+      },
+    },
+
+    "/api/v1/analytics/overview": {
+      get: {
+        tags: ["Analytics"],
+        summary: "Live telemetry for the signed-in tenant",
+        description:
+          "Scoped to the caller's own college, taken from the session and never from a " +
+          "parameter. Every figure is computed from rows that exist: where nothing has " +
+          "been measured the answer is `null`, not a plausible default — a dashboard " +
+          "showing 87% uptime for a site nobody has ever pinged is worse than one showing " +
+          "nothing. `empty` is true when no telemetry exists at all, so the UI can explain " +
+          "rather than render zeros. The scroll funnel is cumulative: somebody who reached " +
+          "the footer also reached the header.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                kpis: { type: "object" },
+                traffic: { type: "array" },
+                scrollFunnel: { type: "array" },
+                topPaths: { type: "array" },
+                hostnames: { type: "array" },
+                firstSeenAt: nullableStr,
+                empty: bool,
+              },
+              required: ["kpis", "empty"],
+            },
+            "Telemetry overview.",
+          ),
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
     "/api/v1/billing/order": {
       get: {
         tags: ["Billing"],

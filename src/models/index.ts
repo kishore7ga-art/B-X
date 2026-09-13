@@ -7,3 +7,4 @@ export * from "./system_secrets.model";
 export * from "./audit_logs.model";
 export * from "./billing.model";
 export * from "./device_catalogue.model";
+export * from "./analytics.model";

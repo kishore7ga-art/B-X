@@ -4,6 +4,7 @@ import { promises as dns } from "node:dns";
 import { AuditLog, College } from "@/models";
 import { resolvesToPublicAddress } from "@/lib/net/public-address";
 import { domainRouter } from "@/domain-router";
+import { recordUptime } from "@/analytics-service";
 import type {
   ICollege,
   ICustomDomain,
@@ -466,7 +467,23 @@ async function checkRouting(hostname: string): Promise<VerificationOutcome> {
  * the TLS handshake and lands in the catch, which is exactly the outcome the
  * tenant needs to see. Nothing here can make a certificate exist.
  */
-async function checkSsl(hostname: string): Promise<{ status: SslStatus; error: string | null }> {
+/**
+ * What one HTTPS check observed, beyond the certificate verdict.
+ *
+ * `checkSsl` already opens the only socket this service opens to a tenant's
+ * host, so it already measures everything an uptime log needs — latency, the
+ * status code, whether TLS completed. Returning that costs nothing and means
+ * uptime is recorded from the check that was happening anyway, rather than
+ * from a second worker pinging every domain a second time.
+ */
+export type SslObservation = {
+  status: SslStatus;
+  error: string | null;
+  latencyMs: number | null;
+  httpStatus: number | null;
+};
+
+async function checkSsl(hostname: string): Promise<SslObservation> {
   /**
    * Where this name resolves, before anything connects to it.
    *
@@ -488,8 +505,10 @@ async function checkSsl(hostname: string): Promise<{ status: SslStatus; error: s
    */
   const address = await resolvesToPublicAddress(hostname, DNS_TIMEOUT_MS);
   if (!address.allowed) {
-    return { status: "ERROR", error: address.reason };
+    return { status: "ERROR", error: address.reason, latencyMs: null, httpStatus: null };
   }
+
+  const startedAt = Date.now();
 
   try {
     const response = await withTimeout(
@@ -502,18 +521,28 @@ async function checkSsl(hostname: string): Promise<{ status: SslStatus; error: s
       "HTTPS check",
     );
 
+    const latencyMs = Date.now() - startedAt;
+
     // Any answer at all means the handshake completed, which is the question.
     // The status code belongs to routing, not to the certificate.
-    return response.status >= 100 ? { status: "ACTIVE", error: null } : { status: "ERROR", error: null };
+    return response.status >= 100
+      ? { status: "ACTIVE", error: null, latencyMs, httpStatus: response.status }
+      : { status: "ERROR", error: null, latencyMs, httpStatus: response.status };
   } catch (error) {
+    const latencyMs = Date.now() - startedAt;
     const message = (error as Error)?.message ?? "";
     const cause = (error as { cause?: { code?: string } })?.cause?.code ?? "";
 
     if (/certificate|CERT_|ERR_TLS|SELF_SIGNED|ALT_NAME/i.test(`${message} ${cause}`)) {
-      return { status: "ERROR", error: "The certificate for this domain is not valid yet." };
+      return {
+        status: "ERROR",
+        error: "The certificate for this domain is not valid yet.",
+        latencyMs,
+        httpStatus: null,
+      };
     }
     // Not yet issued is the ordinary case while Traefik is still working.
-    return { status: "PENDING", error: null };
+    return { status: "PENDING", error: null, latencyMs, httpStatus: null };
   }
 }
 
@@ -592,6 +621,21 @@ export async function verifyDomain(
       } else {
         const ssl = await checkSsl(domain.hostname);
         sslStatus = ssl.status;
+
+        /*
+         * One row per check, from the check that was already happening. Failing
+         * to write it must not fail the verification the tenant is waiting on —
+         * an analytics row is worth less than the answer to "is my domain
+         * working", and the monitor will produce another within the hour.
+         */
+        await recordUptime({
+          tenantId: collegeId,
+          hostname: domain.hostname,
+          latencyMs: ssl.latencyMs,
+          httpStatus: ssl.httpStatus,
+          sslValid: ssl.status === "ACTIVE",
+          error: ssl.error,
+        }).catch(() => null);
 
         if (routed.state === "NOT_CONFIGURED") {
           /**

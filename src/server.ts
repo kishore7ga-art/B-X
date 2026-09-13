@@ -68,6 +68,12 @@ import {
 import { getSettings, publicSettingsFor, updateSettings } from "@/site-settings-service";
 import { orderState, startOrder, verifyOrder } from "@/order-service";
 import {
+  assertBeaconShape,
+  ingest,
+  overview as analyticsOverview,
+} from "@/analytics-service";
+import { trackingScript } from "@/analytics-script";
+import {
   billingState,
   cancelForTenant,
   handleWebhook,
@@ -992,6 +998,18 @@ const LIMITS = {
    * times in a quarter hour.
    */
   adminLogin: { max: 5, windowMs: 15 * 60 * 1000 },
+  /**
+   * Telemetry beacons, which are the only writes on this API anybody on the
+   * internet can make without a session.
+   *
+   * Generous, because the budget is per address and a school computer lab, an
+   * office or a mobile carrier all present as one. A real reader produces at
+   * most five beacons per page — four scroll milestones and one on leaving —
+   * so 300 in five minutes is roughly sixty page views from a single address,
+   * which is well past anything a person does and well short of blocking a
+   * classroom.
+   */
+  telemetry: { max: 300, windowMs: 5 * 60 * 1000 },
   /**
    * Requesting access. Public, unauthenticated, and the only write of its kind.
    *
@@ -2698,6 +2716,93 @@ app.delete(
     }
   },
 );
+
+/* ── Telemetry ─────────────────────────────────────────────────────────────── */
+
+/**
+ * The tracking script, served to tenant sites.
+ *
+ * Public and cacheable. It contains no secret — the API base it posts to is the
+ * address of this service, which every visitor's browser already knows.
+ */
+app.get("/analytics.js", (req, res) => {
+  const base =
+    process.env.PUBLIC_API_ORIGIN?.trim().replace(/\/+$/, "") ||
+    `${req.header("x-forwarded-proto") ?? "https"}://${req.header("x-forwarded-host") ?? req.get("host") ?? ""}`;
+
+  res.type("application/javascript");
+  // A day. The script changes rarely, and a stale copy costs at most a day of
+  // slightly older field names, never a broken page.
+  res.set("Cache-Control", "public, max-age=86400");
+  res.send(trackingScript(base));
+});
+
+/**
+ * One beacon from a visitor's browser.
+ *
+ * Unauthenticated by necessity: it runs on a tenant's site in a visitor's
+ * browser, where there is no session to present. Nothing it says about *who it
+ * is* is believed — the tenant is resolved from the hostname against domains
+ * this platform already knows, so a beacon cannot report traffic into somebody
+ * else's dashboard by naming their id.
+ *
+ * Always answers 2xx. A tracking script must never learn which hostnames this
+ * platform serves, and must never retry into a loop because a site was
+ * disconnected — so an unknown host is accepted and dropped, not refused.
+ */
+app.post(["/api/v1/telemetry", "/api/telemetry"], async (req, res) => {
+  try {
+    /*
+     * Rate limited per address. This is the one endpoint on the API that anyone
+     * on the internet can call without a session, and it writes on every call.
+     */
+    if (rateLimit("telemetry", req)) {
+      res.status(429).json({ error: "Too many requests." });
+      return;
+    }
+
+    assertBeaconShape(req.body);
+
+    const result = await ingest({
+      body: req.body,
+      ip: String(req.ip ?? ""),
+      userAgent: req.header("user-agent") ?? "",
+      // Set by Cloudflare and most CDNs. Absent is normal and means "unknown",
+      // never a guess derived from the address.
+      countryCode: req.header("cf-ipcountry") ?? null,
+    });
+
+    res.json({ ok: true, s: result.sessionId });
+  } catch (error) {
+    // A malformed beacon is the client's bug and not worth a 4xx storm from a
+    // script nobody can redeploy quickly. Recorded, then acknowledged.
+    if (error instanceof BadRequest) {
+      res.status(202).json({ ok: false });
+      return;
+    }
+    fail(res, error);
+  }
+});
+
+/**
+ * Everything the tenant's analytics dashboard shows.
+ *
+ * Authenticated and scoped to the caller's own college, taken from the session
+ * and never from a parameter. Every figure is computed from rows that exist;
+ * where there are none the answer is null rather than a plausible default.
+ */
+app.get(["/api/v1/analytics/overview", "/api/analytics/overview"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view analytics." });
+      return;
+    }
+    res.json(await analyticsOverview(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
 /* ── One-time payments ─────────────────────────────────────────────────────── */
 
