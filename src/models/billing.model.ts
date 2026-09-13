@@ -34,6 +34,18 @@ export interface IInvoice extends Document {
   paidAt?: Date | null;
   /** Where the tenant can fetch a PDF, when a provider supplies one. */
   documentUrl?: string | null;
+  /**
+   * The payment provider's order id, when this invoice is one somebody can pay.
+   *
+   * Added rather than giving one-time payments a collection of their own. An
+   * invoice already is "an amount a tenant owes, and whether it is paid" — which
+   * is exactly what a Razorpay order is a request to settle. A parallel Order
+   * collection would duplicate every field here and leave two answers to "has
+   * this been paid", which is the question the whole record exists for.
+   */
+  providerOrderId?: string | null;
+  /** The payment that settled it. A support reference, never card data. */
+  providerPaymentId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -55,6 +67,8 @@ const InvoiceSchema = new Schema<IInvoice>(
     dueAt: { type: Date, default: null },
     paidAt: { type: Date, default: null },
     documentUrl: { type: String, default: null },
+    providerOrderId: { type: String, default: null, trim: true },
+    providerPaymentId: { type: String, default: null, trim: true },
   },
   {
     timestamps: true,
@@ -72,6 +86,15 @@ const InvoiceSchema = new Schema<IInvoice>(
 
 /** Newest first, per tenant — the only way this is ever listed. */
 InvoiceSchema.index({ tenantId: 1, issuedAt: -1 });
+
+/**
+ * One Razorpay order settles one invoice, and a partial index so the null on
+ * every hand-written invoice does not collide with every other null.
+ */
+InvoiceSchema.index(
+  { providerOrderId: 1 },
+  { unique: true, partialFilterExpression: { providerOrderId: { $type: "string" } } },
+);
 
 /**
  * A card, as far as this platform is ever allowed to know it.

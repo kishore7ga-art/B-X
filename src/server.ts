@@ -66,6 +66,7 @@ import {
   paymentProvider,
 } from "@/account-service";
 import { getSettings, publicSettingsFor, updateSettings } from "@/site-settings-service";
+import { orderState, startOrder, verifyOrder } from "@/order-service";
 import {
   billingState,
   cancelForTenant,
@@ -2692,6 +2693,73 @@ app.delete(
       const actor = await actorEmailFor(session.collegeId, session.userId);
       await detachPaymentMethod(session.collegeId, String(req.params.id), actor);
       res.status(204).end();
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+/* ── One-time payments ─────────────────────────────────────────────────────── */
+
+/**
+ * What the checkout screen needs before anybody clicks.
+ *
+ * `configured` is false when the server has no key, no secret, or no amount —
+ * and an unset amount counts, because a default amount is a sum of money
+ * nobody chose being charged to somebody's card.
+ */
+app.get(["/api/v1/billing/order", "/api/billing/order"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view payments." });
+      return;
+    }
+    res.json(await orderState(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Creates a Razorpay order, or returns one already awaiting payment.
+ *
+ * Answers with the order id and the publishable key id, which is everything
+ * Checkout needs. The key secret is not part of this or any other response.
+ */
+app.post(["/api/v1/billing/order", "/api/billing/order"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to pay." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.json(await startOrder(session.collegeId, actor));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Verifies the payload Checkout handed the browser.
+ *
+ * HMAC-SHA256 of `order_id|payment_id` under the key secret — the reverse of
+ * the subscription recipe. A mismatch answers 400 and writes nothing at all:
+ * a failed verification must leave no trace of progress, or a retry loop walks
+ * a record towards paid one attempt at a time.
+ */
+app.post(
+  ["/api/v1/billing/order/verify", "/api/billing/order/verify"],
+  async (req, res) => {
+    try {
+      const session = await getSession(req.headers.cookie).catch(() => null);
+      if (!session) {
+        res.status(401).json({ error: "Sign in to complete your payment." });
+        return;
+      }
+      const actor = await actorEmailFor(session.collegeId, session.userId);
+      res.json(await verifyOrder(session.collegeId, req.body, actor));
     } catch (error) {
       fail(res, error);
     }

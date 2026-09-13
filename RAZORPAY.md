@@ -57,7 +57,16 @@ RAZORPAY_KEY_SECRET=...               # server-only, signs and verifies
 RAZORPAY_PLAN_ID=plan_...             # the single plan, created in the Dashboard
 RAZORPAY_WEBHOOK_SECRET=...           # server-only, a DIFFERENT value from the key secret
 RAZORPAY_TOTAL_COUNT=12               # optional; billing cycles per subscription
+RAZORPAY_AMOUNT_MINOR=50000           # one-time price in paise. NO DEFAULT.
+RAZORPAY_CURRENCY=INR                 # optional; defaults to INR
 ```
+
+`RAZORPAY_AMOUNT_MINOR` deliberately has no fallback. Every other configurable
+here can default to something sensible; an amount cannot, because the fallback
+is a sum of money nobody chose being charged to a card. Unset, the one-time
+endpoint reports itself unconfigured exactly as a missing key does. Razorpay's
+own minimum is 100 paise and anything below it is refused before the API is
+called.
 
 `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` are two different values set
 in two different places in the Dashboard. Verifying a webhook with the key
@@ -150,6 +159,35 @@ that cannot take money, or configure Razorpay properly and report none because a
 second variable was missed. Both failures are silent and both surface on a
 different screen from the cause. `PAYMENT_PROVIDER` is still read for `stripe`,
 which this service does not implement and therefore still reports as null.
+
+## Two flows: orders and subscriptions
+
+Both exist, because they are different Razorpay products and the choice is
+forced by configuration rather than by preference.
+
+| | Orders (one-time) | Subscriptions (recurring) |
+|---|---|---|
+| Needs a Plan | no | **yes** — `RAZORPAY_PLAN_ID` |
+| Amount from | `RAZORPAY_AMOUNT_MINOR` | the Plan, in the Dashboard |
+| Signature | `order_id\|payment_id` | `payment_id\|subscription_id` |
+| Renews | no | yes |
+| Recorded as | an `Invoice` row | a `Subscription` row |
+| Endpoints | `/api/v1/billing/order` | `/api/v1/billing/subscription` |
+
+**The subscription tab picks automatically.** With `RAZORPAY_PLAN_ID` set it
+shows the recurring plan; without it, the one-time card. A Plan encodes a price,
+which is a commercial decision and the one piece of setup that cannot be
+automated — so a deployment with keys but no Plan can still take a payment
+instead of showing a dead end.
+
+### The signature difference is the trap
+
+The two recipes are one transposition apart and live one function apart in
+`razorpay.ts`. Passed the same two positional values they compute the *same*
+digest — they differ in which semantic id lands in the first slot. So the
+realistic mistake is not swapping arguments; it is wiring a subscription payload
+into the order verifier, or the reverse. Both directions are pinned in
+`razorpay.test.ts` against payloads shaped the way Razorpay actually sends them.
 
 ## Duplicate protection
 

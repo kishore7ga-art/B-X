@@ -1064,6 +1064,108 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/billing/order": {
+      get: {
+        tags: ["Billing"],
+        summary: "One-time payment state for this tenant",
+        description:
+          "`configured` is false when the server has no key, no secret, or no amount. " +
+          "An unset amount counts: this service has no default price, because a default " +
+          "is a sum of money nobody chose being charged to a card. `latest` is the most " +
+          "recent order, as an invoice row.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                configured: bool,
+                testMode: bool,
+                amountMinor: { type: ["integer", "null"] },
+                currency: str,
+                latest: { type: ["object", "null"] },
+              },
+              required: ["configured", "currency"],
+            },
+            "Payment state.",
+          ),
+          401: { description: "Not authenticated." },
+        },
+      },
+      post: {
+        tags: ["Billing"],
+        summary: "Create a Razorpay order, or return one awaiting payment",
+        description:
+          "Returns the order id and the publishable key id — everything Checkout needs. " +
+          "The key secret is not part of this or any other response. Never raises a " +
+          "second order while one is unpaid: two clicks on a slow button would otherwise " +
+          "create two, and Razorpay will collect on both. The amount comes from " +
+          "RAZORPAY_AMOUNT_MINOR and is refused below 100 paise, which is Razorpay's own " +
+          "minimum.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                order: { type: "object" },
+                keyId: str,
+                testMode: bool,
+              },
+              required: ["order", "keyId"],
+            },
+            "The order to open Checkout on.",
+          ),
+          401: { description: "Not authenticated." },
+          503: { description: "Payments are not configured on this server." },
+        },
+      },
+    },
+
+    "/api/v1/billing/order/verify": {
+      post: {
+        tags: ["Billing"],
+        summary: "Verify a one-time payment",
+        description:
+          "The signature is an HMAC-SHA256 of `order_id|payment_id` under the key " +
+          "secret — the **reverse** of the subscription recipe, which signs " +
+          "`payment_id|subscription_id`. Using either in the other's flow rejects every " +
+          "genuine payment. A valid signature proves the payload is authentic; the order " +
+          "is then re-read from Razorpay, because only Razorpay can say the money " +
+          "arrived. A mismatch answers 400 and writes nothing at all — a failed " +
+          "verification must leave no trace of progress. Verifying an already-paid order " +
+          "again is a re-click, not an error, and does not move `paidAt`.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  razorpay_order_id: str,
+                  razorpay_payment_id: str,
+                  razorpay_signature: str,
+                },
+                required: [
+                  "razorpay_order_id",
+                  "razorpay_payment_id",
+                  "razorpay_signature",
+                ],
+              },
+            },
+          },
+        },
+        responses: {
+          200: json({ type: "object" }, "Verified. The invoice is marked paid."),
+          400: {
+            description:
+              "Fields missing, the signature did not verify, or Razorpay has not " +
+              "confirmed the payment.",
+          },
+          401: { description: "Not authenticated." },
+          404: { description: "No such order for this account." },
+        },
+      },
+    },
+
     "/api/v1/billing/subscription": {
       get: {
         tags: ["Billing"],

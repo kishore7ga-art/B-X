@@ -34,6 +34,10 @@ const REQUIRED = [
   // Razorpay subscriptions. The webhook is listed because it is the one route
   // here with no session behind it, so a silent rename is a silent outage that
   // only shows up as unrenewed subscriptions days later.
+  // One-time payments, on Razorpay Orders.
+  ["get", "/api/v1/billing/order"],
+  ["post", "/api/v1/billing/order"],
+  ["post", "/api/v1/billing/order/verify"],
   ["get", "/api/v1/billing/subscription"],
   ["post", "/api/v1/billing/subscription"],
   ["post", "/api/v1/billing/subscription/verify"],

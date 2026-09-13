@@ -218,6 +218,61 @@ export function fetchPayment(id: string): Promise<RazorpayPayment> {
   return call<RazorpayPayment>(`/payments/${encodeURIComponent(id)}`);
 }
 
+export type RazorpayOrder = {
+  id: string;
+  amount: number;
+  amount_paid?: number;
+  amount_due?: number;
+  currency: string;
+  receipt?: string | null;
+  status: string;
+  notes?: Record<string, string> | null;
+};
+
+/** Razorpay refuses anything smaller, so it is rejected here rather than there. */
+export const MIN_AMOUNT_MINOR = 100;
+
+/**
+ * Creates a one-time order.
+ *
+ * Separate from `createSubscription` because the two are genuinely different
+ * products at Razorpay, not two spellings of one: an order is charged once and
+ * has an amount, a subscription is charged repeatedly and takes its amount from
+ * a Plan. They are also verified with different signatures — see
+ * `orderPaymentSignatureValid` below, which is the part that bites.
+ *
+ * `amountMinor` is in paise and is never defaulted anywhere in this codebase. A
+ * fallback amount is a charge nobody chose.
+ */
+export function createOrder(input: {
+  amountMinor: number;
+  currency: string;
+  receipt: string;
+  tenantId: string;
+}): Promise<RazorpayOrder> {
+  if (!Number.isInteger(input.amountMinor) || input.amountMinor < MIN_AMOUNT_MINOR) {
+    throw new RazorpayError(
+      `The amount must be a whole number of at least ${MIN_AMOUNT_MINOR} paise.`,
+      400,
+    );
+  }
+
+  return call<RazorpayOrder>("/orders", {
+    method: "POST",
+    body: {
+      amount: input.amountMinor,
+      currency: input.currency,
+      // Razorpay caps this at 40 characters and rejects anything longer.
+      receipt: input.receipt.slice(0, 40),
+      notes: { tenantId: input.tenantId },
+    },
+  });
+}
+
+export function fetchOrder(id: string): Promise<RazorpayOrder> {
+  return call<RazorpayOrder>(`/orders/${encodeURIComponent(id)}`);
+}
+
 export function fetchSubscription(id: string): Promise<RazorpaySubscription> {
   return call<RazorpaySubscription>(`/subscriptions/${encodeURIComponent(id)}`);
 }
@@ -270,6 +325,35 @@ export function subscriptionPaymentSignatureValid(input: {
 
   const expected = createHmac("sha256", secret)
     .update(`${input.paymentId}|${input.subscriptionId}`)
+    .digest("hex");
+
+  return digestsMatch(expected, input.signature);
+}
+
+/**
+ * Whether Checkout's handler payload for a one-time **order** is authentic.
+ *
+ * The signed string is `order_id|payment_id`. That is the **reverse** of the
+ * subscription recipe directly above, which signs `payment_id|subscription_id`.
+ *
+ * The two live next to each other deliberately. They are one line apart and one
+ * transposition apart, and using either one in the other's flow produces a
+ * verifier that rejects every genuine payment — or, if it is only ever tested
+ * against its own output, one that looks perfect and has never verified
+ * anything real. Both directions are pinned in razorpay.test.ts.
+ *
+ * Signed with the **key secret**, not the webhook secret.
+ */
+export function orderPaymentSignatureValid(input: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+}): boolean {
+  const secret = keySecret();
+  if (!secret) return false;
+
+  const expected = createHmac("sha256", secret)
+    .update(`${input.orderId}|${input.paymentId}`)
     .digest("hex");
 
   return digestsMatch(expected, input.signature);

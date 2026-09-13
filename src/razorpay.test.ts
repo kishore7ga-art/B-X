@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   isTestMode,
+  orderPaymentSignatureValid,
   razorpayConfigured,
   subscriptionPaymentSignatureValid,
   webhookConfigured,
@@ -126,6 +127,112 @@ describe("subscriptionPaymentSignatureValid", () => {
     delete process.env.RAZORPAY_KEY_SECRET;
     assert.equal(
       subscriptionPaymentSignatureValid({ paymentId, subscriptionId, signature }),
+      false,
+    );
+  });
+});
+
+describe("orderPaymentSignatureValid", () => {
+  const orderId = "order_LxRnT1example";
+  const paymentId = "pay_LxRnT1example";
+
+  const sign = (message: string, secret = KEY_SECRET) =>
+    createHmac("sha256", secret).update(message).digest("hex");
+
+  it("accepts a signature Razorpay would have produced", () => {
+    assert.equal(
+      orderPaymentSignatureValid({
+        orderId,
+        paymentId,
+        signature: sign(`${orderId}|${paymentId}`),
+      }),
+      true,
+    );
+  });
+
+  it("rejects the subscription flow's operand order", () => {
+    assert.equal(
+      orderPaymentSignatureValid({
+        orderId,
+        paymentId,
+        signature: sign(`${paymentId}|${orderId}`),
+      }),
+      false,
+    );
+  });
+
+  it("rejects a signature made with a different secret", () => {
+    assert.equal(
+      orderPaymentSignatureValid({
+        orderId,
+        paymentId,
+        signature: sign(`${orderId}|${paymentId}`, "some-other-secret"),
+      }),
+      false,
+    );
+  });
+
+  it("rejects short, empty and overlong signatures without throwing", () => {
+    for (const signature of ["", "00", "f".repeat(1000)]) {
+      assert.equal(orderPaymentSignatureValid({ orderId, paymentId, signature }), false);
+    }
+  });
+});
+
+/**
+ * The two recipes are one transposition apart and live one function apart in
+ * razorpay.ts, so the realistic mistake is not "swap the arguments" — passed the
+ * same two positional values, both functions compute the same digest. It is
+ * *mapping the wrong field into the first slot* when wiring up a flow.
+ *
+ * These two cases are that mistake, with payloads shaped the way Razorpay
+ * actually sends them.
+ */
+describe("the order and subscription recipes are not interchangeable", () => {
+  const sign = (message: string) =>
+    createHmac("sha256", KEY_SECRET).update(message).digest("hex");
+
+  const orderId = "order_Real1";
+  const paymentId = "pay_Real1";
+  const subscriptionId = "sub_Real1";
+
+  /**
+   * A genuine subscription checkout. Razorpay signed `payment|subscription`.
+   * Treating the subscription id as though it were an order id — the obvious
+   * way to reuse an order verifier for subscriptions — signs
+   * `subscription|payment` and must fail.
+   */
+  it("the order verifier rejects a genuine subscription payload", () => {
+    const signature = sign(`${paymentId}|${subscriptionId}`);
+
+    assert.equal(
+      subscriptionPaymentSignatureValid({ paymentId, subscriptionId, signature }),
+      true,
+    );
+    assert.equal(
+      orderPaymentSignatureValid({ orderId: subscriptionId, paymentId, signature }),
+      false,
+    );
+  });
+
+  /**
+   * And the reverse. A genuine order was signed `order|payment`; feeding it to
+   * the subscription verifier with the order id in the subscription slot signs
+   * `payment|order`.
+   */
+  it("the subscription verifier rejects a genuine order payload", () => {
+    const signature = sign(`${orderId}|${paymentId}`);
+
+    assert.equal(
+      orderPaymentSignatureValid({ orderId, paymentId, signature }),
+      true,
+    );
+    assert.equal(
+      subscriptionPaymentSignatureValid({
+        paymentId,
+        subscriptionId: orderId,
+        signature,
+      }),
       false,
     );
   });

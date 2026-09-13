@@ -119,6 +119,19 @@ try {
     check(`${method} ${path} → 401 without a session`, response.status === 401, `got ${response.status}`);
   }
 
+  for (const [method, path] of [
+    ["GET", "/api/v1/billing/order"],
+    ["POST", "/api/v1/billing/order"],
+    ["POST", "/api/v1/billing/order/verify"],
+  ]) {
+    const response = await fetch(`${BASE}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: method === "POST" ? "{}" : undefined,
+    });
+    check(`${method} ${path} -> 401 without a session`, response.status === 401, `got ${response.status}`);
+  }
+
   const adminResponse = await fetch(`${BASE}/api/v1/admin/subscriptions`);
   check(
     "GET /api/v1/admin/subscriptions → 401 without an admin session",
@@ -243,6 +256,17 @@ try {
       body: other,
     });
     check("an event we do not handle is still acknowledged → 200", response.status === 200, `got ${response.status}`);
+  }
+
+  console.log("\nOrders are mounted and documented");
+  {
+    const response = await fetch(`${BASE}/openapi.json`);
+    const text = await response.text();
+    check("the order endpoints are documented", text.includes("/api/v1/billing/order"));
+    check(
+      "the order verify endpoint is documented",
+      text.includes("/api/v1/billing/order/verify"),
+    );
   }
 
   console.log("\nSecrets never leave the server");
