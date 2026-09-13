@@ -73,6 +73,7 @@ import {
   overview as analyticsOverview,
 } from "@/analytics-service";
 import { trackingScript } from "@/analytics-script";
+import { siteStatus } from "@/site-status-service";
 import {
   billingState,
   cancelForTenant,
@@ -2717,6 +2718,38 @@ app.delete(
     }
   },
 );
+
+/* ── Site status ───────────────────────────────────────────────────────────── */
+
+/**
+ * Whether this site is actually live, and if not, which condition is failing.
+ *
+ * The one place that answers it. It was answered in four, with four rules: the
+ * publish tab read `publishedVersion`, the domain tab read each domain's
+ * `stage`, the renderer read `maintenance.enabled`, and nothing read all three
+ * — so a tenant could see "Published", four green ticks and a verified domain
+ * while every visitor got a maintenance page, with no screen being wrong.
+ *
+ * `status` is computed on every read and never stored. A stored LIVE column has
+ * to be kept in step with five other facts by every path that touches any of
+ * them, and the first one that forgets leaves a row claiming LIVE for a site
+ * nobody can reach — which is the failure this endpoint exists to prevent.
+ *
+ * Scoped to the caller's own college, and the ownership precondition is checked
+ * against the session's user id rather than assumed.
+ */
+app.get(["/api/v1/site-status", "/api/site-status"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view your site status." });
+      return;
+    }
+    res.json(await siteStatus(session.collegeId, session.userId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
 
 /* ── Telemetry ─────────────────────────────────────────────────────────────── */
 

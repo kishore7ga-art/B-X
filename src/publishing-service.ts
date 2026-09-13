@@ -1,5 +1,6 @@
 import { AuditLog, College } from "@/models";
 import { verifyDomain } from "@/domain-service";
+import { recordDeployment, recordFailure } from "@/site-status-service";
 import type { ICollege, IWebsiteConfig } from "@/models/colleges.model";
 
 /**
@@ -221,6 +222,33 @@ export async function publishSite(
       void verifyDomain(collegeId, domain.id, actorEmail).catch(() => null);
     }
 
+    /*
+     * History, written after the site has already changed.
+     *
+     * Deliberately after the guarded update rather than before: a row claiming
+     * version N exists while the tenant document still serves N-1 is exactly
+     * the inconsistency `siteStatus`'s `linkage` precondition exists to catch,
+     * and writing the row first would manufacture it on every publish.
+     *
+     * Failures are recorded and swallowed. A publish that succeeded must not be
+     * reported as failed because the history row could not be written — the
+     * site has changed either way, and telling a tenant otherwise would send
+     * them to press the button again.
+     */
+    await recordDeployment({
+      tenantId: collegeId,
+      userId: null,
+      actorEmail,
+      version: nextVersion,
+      config: draft,
+      college,
+    }).catch((error: unknown) => {
+      console.error(
+        `[publish] college=${collegeId} v${nextVersion} published, but the history row failed`,
+        error,
+      );
+    });
+
     const maintenanceEnabled = Boolean(college.settings?.maintenance?.enabled);
     if (maintenanceEnabled) {
       console.warn(
@@ -237,6 +265,20 @@ export async function publishSite(
       maintenanceEnabled,
     };
   }
+
+  /*
+   * Two attempts both lost the version race. Recorded rather than only thrown:
+   * a tenant who pressed Publish and saw an error has a right to find that
+   * attempt in their history, and its absence is what makes "I definitely
+   * published it" unanswerable.
+   */
+  await recordFailure({
+    tenantId: collegeId,
+    userId: null,
+    actorEmail,
+    version: 0,
+    error: "Another publish was in progress, so this one was not applied.",
+  });
 
   throw Object.assign(
     new Error("Another publish is in progress for this site. Try again in a moment."),

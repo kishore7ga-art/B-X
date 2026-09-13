@@ -1068,6 +1068,52 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/site-status": {
+      get: {
+        tags: ["Publishing"],
+        summary: "Whether this site is actually live, and what is blocking it",
+        description:
+          "The single answer to \"is my site live\". It was answered in four places with " +
+          "four rules — the publish tab from `publishedVersion`, the domain tab from each " +
+          "domain's `stage`, the renderer from `maintenance.enabled`, and nowhere from all " +
+          "three — so a tenant could see Published, four green ticks and a verified domain " +
+          "while every visitor got a maintenance page, with no screen being wrong. " +
+          "`status` is one of DRAFT, LIVE, PAUSED, FAILED and is **computed on every read, " +
+          "never stored**: a stored LIVE column must be kept in step with five other facts " +
+          "by every path that touches any of them, and the first one that forgets leaves a " +
+          "row claiming LIVE for a site nobody can reach. There is deliberately no " +
+          "BUILDING or DEPLOYING — this platform has no build step, so no site is ever in " +
+          "one, and a status nobody observes is the same mistake as a false one. " +
+          "`preconditions` returns all six publish conditions individually so a screen can " +
+          "say which is outstanding; \"not live\" with no reason is what sends somebody to " +
+          "re-check DNS they already got right. `liveUrl` is null unless the site really is " +
+          "being served — a link labelled \"your site\" that opens a maintenance page is " +
+          "the same lie in a smaller font.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                status: str,
+                isLive: bool,
+                liveUrl: nullableStr,
+                publishedVersion: int,
+                publishedAt: nullableStr,
+                hasUnpublishedChanges: bool,
+                preconditions: { type: "array" },
+                deployment: { type: ["object", "null"] },
+                history: { type: "array" },
+              },
+              required: ["status", "isLive", "preconditions"],
+            },
+            "Site status, with every precondition answered.",
+          ),
+          401: { description: "Not authenticated." },
+          404: { description: "No such college." },
+        },
+      },
+    },
+
     "/api/v1/telemetry": {
       post: {
         tags: ["Analytics"],

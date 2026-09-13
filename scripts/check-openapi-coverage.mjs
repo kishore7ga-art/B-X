@@ -37,6 +37,8 @@ const REQUIRED = [
   // Telemetry. The ingest endpoint is listed because it is the one write on
   // this API that anybody on the internet can make without a session, so a
   // silent rename is a silent outage in every tenant's dashboard.
+  // The single answer to "is my site live".
+  ["get", "/api/v1/site-status"],
   ["post", "/api/v1/telemetry"],
   ["get", "/api/v1/analytics/overview"],
   // One-time payments, on Razorpay Orders.
