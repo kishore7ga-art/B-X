@@ -31,6 +31,16 @@ const REQUIRED = [
   ["get", "/api/v1/billing/payment-methods"],
   ["post", "/api/v1/billing/payment-methods"],
   ["delete", "/api/v1/billing/payment-methods/{id}"],
+  // Razorpay subscriptions. The webhook is listed because it is the one route
+  // here with no session behind it, so a silent rename is a silent outage that
+  // only shows up as unrenewed subscriptions days later.
+  ["get", "/api/v1/billing/subscription"],
+  ["post", "/api/v1/billing/subscription"],
+  ["post", "/api/v1/billing/subscription/verify"],
+  ["post", "/api/v1/billing/subscription/refresh"],
+  ["post", "/api/v1/billing/subscription/cancel"],
+  ["post", "/api/v1/billing/razorpay/webhook"],
+  ["get", "/api/v1/admin/subscriptions"],
   // Editor builder rebuild: per-page writes, reordering, the tenant-facing
   // section library, and the theme id.
   ["put", "/api/v1/my-website/pages/{slug}"],

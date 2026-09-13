@@ -67,6 +67,15 @@ import {
 } from "@/account-service";
 import { getSettings, publicSettingsFor, updateSettings } from "@/site-settings-service";
 import {
+  billingState,
+  cancelForTenant,
+  handleWebhook,
+  listAllSubscriptions,
+  refreshSubscription,
+  startSubscription,
+  verifyCheckout,
+} from "@/subscription-service";
+import {
   addDomain,
   adminListDomains,
   adminSetDomainEnabled,
@@ -146,9 +155,34 @@ const PORT = Number(process.env.PORT ?? 4000);
 const UPLOAD_DIR =
   process.env.UPLOAD_DIR ?? path.join(process.cwd(), "public", "uploads");
 
+/** Where Razorpay posts subscription lifecycle events. See subscription-service.ts. */
+const RAZORPAY_WEBHOOK_PATH = "/api/v1/billing/razorpay/webhook";
+
 const app = express();
 app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
+/**
+ * The raw request bytes, kept only for the Razorpay webhook.
+ *
+ * Its signature is an HMAC over the body exactly as sent, so
+ * `JSON.stringify(req.body)` cannot be used to check it: re-serialising changes
+ * key order, unicode escaping and number formatting, and any one of those
+ * changes the digest and rejects a genuine event.
+ *
+ * Captured in `verify` rather than by mounting `express.raw()` on the route,
+ * because this parser is global and already installed — a second parser would
+ * have to be registered above it and the ordering silently decides which one
+ * wins. Scoped to the one path so every other request is not buffered twice.
+ */
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req, _res, buf) => {
+      if ((req as express.Request).url?.startsWith(RAZORPAY_WEBHOOK_PATH)) {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      }
+    },
+  }),
+);
 
 /**
  * Global Security Headers (Clickjacking, CSP, HSTS, MIME sniffing, Permissions, Referrer)
@@ -2345,6 +2379,24 @@ app.get(["/api/v1/device-presets", "/api/device-presets"], async (req, res) => {
 });
 
 /** Replaces the catalogue whole. Super Admin only. */
+/**
+ * Every tenant's subscription, for the admin panel.
+ *
+ * Identifiers and status only. `sub_...`, `plan_...` and `pay_...` are the
+ * references an operator needs to find a payment in the Razorpay Dashboard when
+ * somebody writes in, and they are useless to anybody who cannot already sign in
+ * there. No card data reaches this platform at any point, and no key or secret
+ * is reachable from any admin surface — including this one.
+ */
+app.get(["/api/v1/admin/subscriptions", "/api/admin/subscriptions"], async (req, res) => {
+  try {
+    await requireAdmin(req);
+    res.json({ subscriptions: await listAllSubscriptions() });
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 app.put(["/api/v1/admin/device-presets", "/api/admin/device-presets"], async (req, res) => {
   try {
     const session = await requireAdmin(req);
@@ -2645,6 +2697,147 @@ app.delete(
     }
   },
 );
+
+/* ── Subscriptions ─────────────────────────────────────────────────────────── */
+
+/**
+ * The tenant's own billing state: the plan on offer, and where they stand.
+ *
+ * Safe to call on every render of the billing screen. It reads the local mirror
+ * for status and Razorpay only for the plan's price, and a plan lookup that
+ * fails degrades to `plan: null` rather than failing the request — a subscriber
+ * does not stop being subscribed because a price label could not be fetched.
+ */
+app.get(["/api/v1/billing/subscription", "/api/billing/subscription"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to view your subscription." });
+      return;
+    }
+    res.json(await billingState(session.collegeId));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Starts a subscription, or returns the one already in flight.
+ *
+ * Answers 200 with `reused: true` rather than 409 when a subscription already
+ * occupies the tenant's slot. A second click on a slow button is not an error
+ * worth showing anybody, and the client needs the same payload either way to
+ * reopen Checkout on it.
+ */
+app.post(["/api/v1/billing/subscription", "/api/billing/subscription"], async (req, res) => {
+  try {
+    const session = await getSession(req.headers.cookie).catch(() => null);
+    if (!session) {
+      res.status(401).json({ error: "Sign in to subscribe." });
+      return;
+    }
+    const actor = await actorEmailFor(session.collegeId, session.userId);
+    res.json(await startSubscription(session.collegeId, actor));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+/**
+ * Verifies what Checkout handed the browser.
+ *
+ * The signature is checked against the key secret, and the subscription is then
+ * re-read from Razorpay — the browser supplies identifiers, never status. A
+ * failed check answers 400 and changes nothing.
+ */
+app.post(
+  ["/api/v1/billing/subscription/verify", "/api/billing/subscription/verify"],
+  async (req, res) => {
+    try {
+      const session = await getSession(req.headers.cookie).catch(() => null);
+      if (!session) {
+        res.status(401).json({ error: "Sign in to complete your subscription." });
+        return;
+      }
+      const actor = await actorEmailFor(session.collegeId, session.userId);
+      res.json(await verifyCheckout(session.collegeId, req.body, actor));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+/** Re-reads the subscription from Razorpay, for when a webhook was missed. */
+app.post(
+  ["/api/v1/billing/subscription/refresh", "/api/billing/subscription/refresh"],
+  async (req, res) => {
+    try {
+      const session = await getSession(req.headers.cookie).catch(() => null);
+      if (!session) {
+        res.status(401).json({ error: "Sign in to refresh your subscription." });
+        return;
+      }
+      res.json(await refreshSubscription(session.collegeId));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+/** Cancels at the end of the paid period, or immediately with `immediately: true`. */
+app.post(
+  ["/api/v1/billing/subscription/cancel", "/api/billing/subscription/cancel"],
+  async (req, res) => {
+    try {
+      const session = await getSession(req.headers.cookie).catch(() => null);
+      if (!session) {
+        res.status(401).json({ error: "Sign in to cancel your subscription." });
+        return;
+      }
+      const actor = await actorEmailFor(session.collegeId, session.userId);
+      res.json(await cancelForTenant(session.collegeId, req.body, actor));
+    } catch (error) {
+      fail(res, error);
+    }
+  },
+);
+
+/**
+ * Razorpay's subscription lifecycle events.
+ *
+ * Unauthenticated by necessity — Razorpay has no session — and therefore the
+ * one endpoint here whose only proof of origin is a signature. It is checked
+ * over the raw bytes captured by the JSON parser's `verify` hook above; a body
+ * that fails is never parsed.
+ *
+ * Answers 200 to anything authentic, including events it does not act on and
+ * retries of events already handled. Razorpay retries any non-2xx, so returning
+ * an error for a delivery that was in fact processed is how one event becomes a
+ * thousand.
+ */
+app.post(RAZORPAY_WEBHOOK_PATH, async (req, res) => {
+  try {
+    const outcome = await handleWebhook({
+      rawBody: (req as express.Request & { rawBody?: Buffer }).rawBody,
+      signature: req.header("x-razorpay-signature") ?? undefined,
+      eventId: req.header("x-razorpay-event-id") ?? undefined,
+    });
+
+    if (!outcome.handled) {
+      // 400, not 401: this is a malformed or forged delivery, and Razorpay
+      // should not retry it. A genuine event never lands here.
+      res.status(400).json({ error: "Invalid webhook signature." });
+      return;
+    }
+
+    res.json({ received: true, duplicate: outcome.duplicate });
+  } catch (error) {
+    // 500 so Razorpay retries: an error here is ours — a database that was
+    // briefly unreachable — and the event is worth redelivering.
+    console.error("[billing] webhook processing failed", error);
+    res.status(500).json({ error: "Webhook processing failed." });
+  }
+});
 
 /**
  * Which tenant a hostname belongs to.

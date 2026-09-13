@@ -23,6 +23,7 @@
     "test:unit": "tsx --test \"src/**/*.test.ts\"",
     "check:openapi": "node scripts/check-openapi-coverage.mjs",
     "test:api": "node scripts/test-api-e2e.mjs",
+    "test:subscription": "node scripts/test-subscription-e2e.mjs",
     "test:flow": "node scripts/test-canonical-flow.mjs"
   },
   "dependencies": {

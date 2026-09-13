@@ -132,8 +132,172 @@ const PaymentMethodSchema = new Schema<IPaymentMethod>(
 /** One provider reference cannot be attached twice. */
 PaymentMethodSchema.index({ provider: 1, providerRef: 1 }, { unique: true });
 
+/**
+ * A tenant's subscription, mirroring the one Razorpay holds.
+ *
+ * Deliberately a mirror and not a second opinion. Razorpay owns the lifecycle —
+ * it decides when a subscription becomes active, when a renewal is charged and
+ * when a failed payment halts it — and this collection is a local read model
+ * kept in step by webhooks. Nothing here ever *decides* that a tenant has paid;
+ * it records that Razorpay said so, over a signed channel.
+ *
+ * `status` uses Razorpay's own vocabulary verbatim rather than a mapped set of
+ * our own. A mapping layer here would be a second place for the lifecycle to be
+ * described, and the two descriptions would drift the first time Razorpay added
+ * a state.
+ *
+ * The plan is not stored beyond its id. Amount and interval belong to the Plan
+ * in the Dashboard, and a copy taken at signup would quietly become wrong the
+ * day the price changed.
+ */
+export type SubscriptionStatus =
+  | "created"
+  | "authenticated"
+  | "active"
+  | "pending"
+  | "halted"
+  | "cancelled"
+  | "completed"
+  | "expired";
+
+/** The states in which a tenant is entitled to what they paid for. */
+export const ENTITLED_STATUSES: readonly SubscriptionStatus[] = ["active", "authenticated"];
+
+/**
+ * The states that mean "a subscription already exists, do not start another".
+ *
+ * Wider than ENTITLED_STATUSES on purpose. `created` is a subscription that has
+ * been opened at Razorpay but not yet paid — starting a second one because the
+ * first has not completed is exactly the duplicate this guards against. `pending`
+ * and `halted` are live subscriptions whose last charge failed; the fix for
+ * those is retrying the existing mandate, not selling a new one.
+ */
+export const OCCUPYING_STATUSES: readonly SubscriptionStatus[] = [
+  "created",
+  "authenticated",
+  "active",
+  "pending",
+  "halted",
+];
+
+export interface ISubscription extends Document {
+  id: string;
+  /** The college this belongs to. Every query is filtered on it. */
+  tenantId: string;
+  /** Razorpay's id for the subscription. The join key for every webhook. */
+  razorpaySubscriptionId: string;
+  razorpayPlanId: string;
+  razorpayCustomerId?: string | null;
+  status: SubscriptionStatus;
+  /** The hosted checkout link Razorpay returns. Useful when the dialog is lost. */
+  shortUrl?: string | null;
+  currentStart?: Date | null;
+  currentEnd?: Date | null;
+  endedAt?: Date | null;
+  cancelledAt?: Date | null;
+  /** Set when a cancellation is scheduled but the paid period has not run out. */
+  cancelAtCycleEnd: boolean;
+  paidCount: number;
+  totalCount: number;
+  /** The last payment Razorpay attributed to this subscription, for support. */
+  lastPaymentId?: string | null;
+  /** When a webhook last moved this row. Null while only checkout has touched it. */
+  lastSyncedAt?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const SubscriptionSchema = new Schema<ISubscription>(
+  {
+    tenantId: { type: String, required: true, index: true },
+    razorpaySubscriptionId: { type: String, required: true, unique: true, trim: true },
+    razorpayPlanId: { type: String, required: true, trim: true },
+    razorpayCustomerId: { type: String, default: null, trim: true },
+    status: {
+      type: String,
+      enum: [
+        "created",
+        "authenticated",
+        "active",
+        "pending",
+        "halted",
+        "cancelled",
+        "completed",
+        "expired",
+      ],
+      default: "created",
+      index: true,
+    },
+    shortUrl: { type: String, default: null },
+    currentStart: { type: Date, default: null },
+    currentEnd: { type: Date, default: null },
+    endedAt: { type: Date, default: null },
+    cancelledAt: { type: Date, default: null },
+    cancelAtCycleEnd: { type: Boolean, default: false },
+    paidCount: { type: Number, default: 0, min: 0 },
+    totalCount: { type: Number, default: 0, min: 0 },
+    lastPaymentId: { type: String, default: null, trim: true },
+    lastSyncedAt: { type: Date, default: null },
+  },
+  {
+    timestamps: true,
+    toJSON: {
+      virtuals: true,
+      transform: (_doc, ret: Record<string, any>) => {
+        ret.id = ret._id ? ret._id.toString() : ret.id;
+        delete ret._id;
+        delete ret.__v;
+        return ret;
+      },
+    },
+  }
+);
+
+/** The only listing there is: this tenant's subscriptions, newest first. */
+SubscriptionSchema.index({ tenantId: 1, createdAt: -1 });
+
+/**
+ * A Razorpay webhook that has already been handled.
+ *
+ * Razorpay retries a webhook until it is answered with a 2xx, and will redeliver
+ * after a timeout even when the first attempt actually succeeded. Without this,
+ * a renewal charged once could be recorded twice, and a cancellation racing a
+ * renewal could be applied in either order depending on which retry landed last.
+ *
+ * Idempotency is the unique index, not a read-then-write: two deliveries
+ * arriving concurrently both pass a `findOne` check and both proceed. Inserting
+ * first and letting the duplicate-key error stop the second is the only version
+ * of this that is safe under concurrency.
+ *
+ * Rows expire after 30 days. Razorpay stops retrying long before that, and
+ * keeping every event forever turns a dedupe table into a log nobody reads.
+ */
+export interface IWebhookEvent extends Document {
+  id: string;
+  /** Razorpay's `x-razorpay-event-id` header. Unique per event, stable per retry. */
+  eventId: string;
+  event: string;
+  subscriptionId?: string | null;
+  receivedAt: Date;
+}
+
+const WebhookEventSchema = new Schema<IWebhookEvent>({
+  eventId: { type: String, required: true, unique: true, trim: true },
+  event: { type: String, required: true, trim: true },
+  subscriptionId: { type: String, default: null, trim: true },
+  receivedAt: { type: Date, required: true, default: Date.now },
+});
+
+WebhookEventSchema.index({ receivedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
+
 export const Invoice =
   mongoose.models.Invoice || mongoose.model<IInvoice>("Invoice", InvoiceSchema);
+export const Subscription =
+  mongoose.models.Subscription ||
+  mongoose.model<ISubscription>("Subscription", SubscriptionSchema);
+export const WebhookEvent =
+  mongoose.models.WebhookEvent ||
+  mongoose.model<IWebhookEvent>("WebhookEvent", WebhookEventSchema);
 export const PaymentMethod =
   mongoose.models.PaymentMethod ||
   mongoose.model<IPaymentMethod>("PaymentMethod", PaymentMethodSchema);

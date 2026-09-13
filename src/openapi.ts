@@ -1064,6 +1064,202 @@ export const openApiDocument = {
       },
     },
 
+    "/api/v1/billing/subscription": {
+      get: {
+        tags: ["Billing"],
+        summary: "This tenant's subscription, and the plan on offer",
+        description:
+          "`plan` is read from Razorpay, which is where the price lives — this platform " +
+          "holds no second opinion about what a subscription costs. A plan lookup that " +
+          "fails degrades to `plan: null` rather than failing the request, because a " +
+          "subscriber does not stop being subscribed when a price label cannot be " +
+          "fetched. `isSubscribed` is the single question every guarded feature asks. " +
+          "`configured` is false when the server has no Razorpay key, plan or secret.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                configured: bool,
+                testMode: bool,
+                webhooksConfigured: bool,
+                plan: { type: ["object", "null"] },
+                subscription: { type: ["object", "null"] },
+                isSubscribed: bool,
+              },
+              required: ["configured", "isSubscribed"],
+            },
+            "Billing state.",
+          ),
+          401: { description: "Not authenticated." },
+        },
+      },
+      post: {
+        tags: ["Billing"],
+        summary: "Start a subscription, or return the one already in flight",
+        description:
+          "Creates a subscription at Razorpay against the configured plan and returns the " +
+          "id Checkout needs, along with the public key id. Never creates a second one: a " +
+          "tenant who already has a subscription in `created`, `authenticated`, `active`, " +
+          "`pending` or `halted` gets that one back with `reused: true`, which is what a " +
+          "double-clicked button and a reopened billing page both need. The key secret is " +
+          "not part of this or any other response.",
+        responses: {
+          200: json(
+            {
+              type: "object",
+              properties: {
+                subscription: { type: "object" },
+                plan: { type: ["object", "null"] },
+                keyId: str,
+                reused: bool,
+              },
+              required: ["subscription", "keyId", "reused"],
+            },
+            "The subscription to open Checkout on.",
+          ),
+          401: { description: "Not authenticated." },
+          503: { description: "Razorpay is not configured on this server." },
+        },
+      },
+    },
+
+    "/api/v1/billing/subscription/verify": {
+      post: {
+        tags: ["Billing"],
+        summary: "Verify the payload Checkout handed the browser",
+        description:
+          "The signature is an HMAC-SHA256 of `payment_id|subscription_id` under the key " +
+          "secret — note the order, which is the reverse of the one-time order flow. " +
+          "A valid signature proves the payload is authentic; the subscription's status " +
+          "is then re-read from Razorpay rather than taken from the browser, so a replayed " +
+          "payload cannot reactivate a cancelled subscription. The record is looked up " +
+          "scoped to the caller's own tenant. Nothing is activated when verification fails.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  razorpay_payment_id: str,
+                  razorpay_subscription_id: str,
+                  razorpay_signature: str,
+                },
+                required: [
+                  "razorpay_payment_id",
+                  "razorpay_subscription_id",
+                  "razorpay_signature",
+                ],
+              },
+            },
+          },
+        },
+        responses: {
+          200: json({ type: "object" }, "Verified. The new billing state."),
+          400: { description: "Fields missing, or the signature did not verify." },
+          401: { description: "Not authenticated." },
+          404: { description: "No such subscription for this account." },
+        },
+      },
+    },
+
+    "/api/v1/billing/subscription/refresh": {
+      post: {
+        tags: ["Billing"],
+        summary: "Re-read the subscription from Razorpay",
+        description:
+          "The fallback for what webhooks exist to cover and occasionally miss — a " +
+          "delivery that failed every retry, or a deployment where the webhook secret was " +
+          "never set. A deliberate user action rather than something the billing page does " +
+          "on every render, which is what keeps Razorpay out of the path of ordinary requests.",
+        responses: {
+          200: json({ type: "object" }, "The refreshed billing state."),
+          401: { description: "Not authenticated." },
+        },
+      },
+    },
+
+    "/api/v1/billing/subscription/cancel": {
+      post: {
+        tags: ["Billing"],
+        summary: "Cancel the subscription",
+        description:
+          "Cancels at the end of the paid period by default — the tenant has paid for it " +
+          "and keeps it. `immediately: true` ends it at once. Cancelled at Razorpay first " +
+          "and recorded second, never the reverse: a local row marked cancelled while the " +
+          "mandate is still live is a tenant who keeps being charged for something the " +
+          "product told them they had cancelled.",
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: { type: "object", properties: { immediately: bool } },
+            },
+          },
+        },
+        responses: {
+          200: json({ type: "object" }, "Cancelled. The new billing state."),
+          401: { description: "Not authenticated." },
+          404: { description: "There is no subscription to cancel." },
+        },
+      },
+    },
+
+    "/api/v1/billing/razorpay/webhook": {
+      post: {
+        tags: ["Billing"],
+        summary: "Razorpay subscription lifecycle events",
+        description:
+          "Called by Razorpay, never by a browser. Unauthenticated by necessity — " +
+          "Razorpay has no session — so its only proof of origin is an HMAC-SHA256 over " +
+          "the **raw request bytes** under the webhook secret, which is a different value " +
+          "from the key secret. A body that fails the check is never parsed. " +
+          "Idempotent on the `x-razorpay-event-id` header, which is stable across retries: " +
+          "the id is inserted before the work and a duplicate-key error is the dedupe, " +
+          "because a read-then-write check lets two concurrent retries both through. " +
+          "Answers 200 to anything authentic, including events it does not act on and " +
+          "retries of events already handled — Razorpay retries every non-2xx, so an error " +
+          "on a delivery that was in fact processed is how one event becomes a thousand.",
+        parameters: [
+          { name: "x-razorpay-signature", in: "header", required: true, schema: str },
+          { name: "x-razorpay-event-id", in: "header", required: false, schema: str },
+        ],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { type: "object" } } },
+        },
+        responses: {
+          200: json(
+            { type: "object", properties: { received: bool, duplicate: bool } },
+            "Accepted. `duplicate` means this event id had already been handled.",
+          ),
+          400: { description: "Missing or invalid signature. Not retried." },
+          500: { description: "Processing failed on our side. Razorpay should retry." },
+        },
+      },
+    },
+
+    "/api/v1/admin/subscriptions": {
+      get: {
+        tags: ["Admin"],
+        summary: "Every tenant's subscription",
+        description:
+          "Identifiers and status only — `sub_...`, `plan_...`, `pay_...`. Those are the " +
+          "references an operator needs to find a payment in the Razorpay Dashboard, and " +
+          "they are useless to anybody who cannot already sign in there. No card data " +
+          "reaches this platform at any point, and no key or secret is reachable from any " +
+          "admin surface, including this one.",
+        responses: {
+          200: json(
+            { type: "object", properties: { subscriptions: { type: "array" } } },
+            "Subscriptions, newest first.",
+          ),
+          401: { description: "Admin authentication required." },
+        },
+      },
+    },
+
     "/api/v1/admin/default-website": {
       get: {
         tags: ["Admin"],
