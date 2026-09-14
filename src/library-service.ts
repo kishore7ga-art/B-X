@@ -9,6 +9,7 @@ import { TEMPLATES_INITIALIZED_MARKER } from "@/admin-bootstrap";
 import { AuthError } from "@/auth-service";
 import { Template, College, SystemSecret } from "@/models";
 import { BadRequest, NotFound } from "@/errors";
+import { getUniqueSectionName } from "@/lib/sections/unique-name";
 // applyTemplateToDefaultWebsite import removed — Default Website and Normal Templates
 // are now fully independent. No automatic cross-writes between the two systems.
 
@@ -427,37 +428,12 @@ export async function createTemplate(input: unknown, actor: AdminSession) {
     }
   }
 
-  const existing = await Template.findOne({ name: data.name });
-
-  if (existing) {
-    existing.code = sanitizedCode ?? existing.code;
-    if (cat) existing.category = cat;
-    if (data.description) existing.description = data.description;
-    existing.isPublished = data.isPublished;
-    await existing.save();
-
-    recordAudit({
-      actor,
-      action: "template.update",
-      targetType: "template",
-      targetId: existing.id,
-      summary: `Updated template "${existing.name}"`,
-      metadata: { name: existing.name },
-    });
-
-    if (existing.code && cat) {
-      // NOTE: applyTemplateToDefaultWebsite() intentionally REMOVED.
-      // Normal Templates and Default Website Config are now fully independent:
-      // - Normal Templates  → MongoDB "templates" collection (Templates page)
-      // - Default Website   → MongoDB "systemsecrets" collection (Default Website page)
-      // Admins manage each separately. No automatic cross-writes.
-    }
-
-    return getTemplateForAdmin(existing.id);
-  }
+  const allExistingTemplates = await Template.find({}).select("name");
+  const existingNames = allExistingTemplates.map((t) => t.name);
+  const uniqueName = getUniqueSectionName(data.name, existingNames);
 
   const created = await Template.create({
-    name: data.name,
+    name: uniqueName,
     category: cat || null,
     description: data.description ?? null,
     thumbnailUrl: data.thumbnailUrl ?? null,
