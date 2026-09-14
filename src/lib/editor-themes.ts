@@ -12,6 +12,9 @@
  */
 
 export const EDITOR_THEME_IDS = [
+  "ocean-navy",
+  "forest-emerald",
+  "warm-terracotta",
   "academic-blue",
   "emerald-gold",
   "crimson-slate",
