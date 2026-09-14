@@ -18,6 +18,8 @@ export const EDITOR_THEME_IDS = [
   "midnight-purple",
   "black-and-white",
   "white-and-black",
+  "black-white",
+  "white-black",
   "custom",
 ] as const;
 
