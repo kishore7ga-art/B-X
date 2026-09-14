@@ -303,7 +303,9 @@ export async function updateTemplateDetails(
   }
 
   if (!template) {
-    const templateName = patch.name || id;
+    const allExistingTemplates = await Template.find({}).select("name");
+    const existingNames = allExistingTemplates.map((t) => t.name);
+    const templateName = getUniqueSectionName(patch.name || id, existingNames);
     template = await Template.create({
       name: templateName,
       description: patch.description ?? `Template section ${templateName}`,
@@ -325,7 +327,11 @@ export async function updateTemplateDetails(
     return getTemplateForAdmin(template.id);
   }
 
-  if (patch.name !== undefined) template.name = patch.name;
+  if (patch.name !== undefined) {
+    const allOtherTemplates = await Template.find({ _id: { $ne: template._id } }).select("name");
+    const existingNames = allOtherTemplates.map((t) => t.name);
+    template.name = getUniqueSectionName(patch.name, existingNames);
+  }
   if (patch.description !== undefined) template.description = patch.description ?? null;
   if (patch.thumbnailUrl !== undefined) template.thumbnailUrl = patch.thumbnailUrl ?? null;
   if (patch.code !== undefined) template.code = patch.code ?? null;
