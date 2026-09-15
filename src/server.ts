@@ -90,7 +90,9 @@ import {
   adminSetDomainEnabled,
   collegeIdForHost,
   disconnectDomain,
+  isServableDomain,
   listDomains,
+  populateServableDomains,
   setPrimaryDomain,
   verifyDomain,
 } from "@/domain-service";
@@ -447,6 +449,9 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     if (!root) continue;
     if (hostname === root || hostname.endsWith(`.${root}`)) return true;
   }
+
+  // Connected, verified tenant custom domains
+  if (isServableDomain(hostname)) return true;
 
   // Loopback belongs to development, where there is a dev server to talk to and
   // no production session worth stealing. Exact hostnames only.
@@ -3636,6 +3641,7 @@ app.listen(PORT, async () => {
   try {
     await connectDB();
     await bootstrapAdmin();
+    await populateServableDomains().catch(() => null);
     /**
      * Domains re-check themselves from here on.
      *

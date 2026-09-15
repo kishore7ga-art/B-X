@@ -116,9 +116,28 @@ function routingTarget(): { cname: string; apexIp: string | null } {
   return { cname, apexIp };
 }
 
-/** Whether this hostname is an apex (`college.edu`) rather than a subdomain. */
+/** Known multi-part public suffixes that form an apex with 3 labels (e.g., college.edu.in, college.ac.uk) */
+const MULTI_PART_SUFFIXES = new Set([
+  "co.in", "edu.in", "ac.in", "org.in", "net.in", "gov.in", "res.in",
+  "co.uk", "ac.uk", "gov.uk", "org.uk", "ltd.uk", "me.uk", "net.uk",
+  "com.au", "edu.au", "gov.au", "org.au", "net.au",
+  "co.nz", "ac.nz", "org.nz", "net.nz",
+  "co.za", "ac.za", "org.za",
+  "com.sg", "edu.sg",
+  "com.my", "edu.my",
+  "com.br", "org.br",
+  "co.jp", "ac.jp", "ne.jp",
+]);
+
+/** Whether this hostname is an apex (`college.edu` or `college.edu.in`) rather than a subdomain. */
 function isApex(hostname: string): boolean {
-  return hostname.split(".").filter(Boolean).length <= 2;
+  const parts = hostname.split(".").filter(Boolean);
+  if (parts.length <= 2) return true;
+  if (parts.length === 3) {
+    const suffix = `${parts[1]}.${parts[2]}`;
+    if (MULTI_PART_SUFFIXES.has(suffix)) return true;
+  }
+  return false;
 }
 
 /**
@@ -809,31 +828,59 @@ export async function disconnectDomain(
  */
 const SERVABLE_STATUSES = ["ACTIVE", "VERIFIED"] as const;
 
-/**
- * Whether `hostname` is one of this tenant's own connected domains.
- *
- * Exists so the question is answered in one place. It was asked in two, with
- * two different answers: `collegeIdForHost` decided whether to *serve* the
- * site, and an inline check in the public site endpoint decided whether the
- * tenant's own custom code may *run* on it — and the second one tested only
- * `ACTIVE`.
- *
- * The consequence was a site that rendered on its own domain with its head and
- * body code silently stripped: a tenant's analytics tag, chat widget or embed
- * worked in the editor preview and vanished on the live address, with nothing
- * anywhere saying why. Anything servable is by definition the tenant's own
- * domain — ownership was proven by the TXT record before the domain could
- * reach either status.
- */
+const servableDomainsCache = new Set<string>();
+
+export function recordServableDomain(hostname: string): void {
+  const clean = hostname.trim().toLowerCase();
+  if (!clean) return;
+  servableDomainsCache.add(clean);
+  if (clean.startsWith("www.")) {
+    servableDomainsCache.add(clean.slice(4));
+  } else {
+    servableDomainsCache.add(`www.${clean}`);
+  }
+}
+
+export function isServableDomain(hostname: string): boolean {
+  return servableDomainsCache.has(hostname.trim().toLowerCase());
+}
+
+export async function populateServableDomains(): Promise<void> {
+  try {
+    const colleges = (await College.find({
+      "domains.status": { $in: SERVABLE_STATUSES },
+    })
+      .select("domains")
+      .lean()) as unknown as { domains?: { hostname?: string; status?: string }[] }[];
+
+    for (const c of colleges) {
+      for (const d of c.domains ?? []) {
+        if (d.hostname && SERVABLE_STATUSES.includes(d.status as (typeof SERVABLE_STATUSES)[number])) {
+          recordServableDomain(d.hostname);
+        }
+      }
+    }
+  } catch (err) {
+    // Non-blocking on startup
+  }
+}
+
 export function isOwnDomain(
   domains: { hostname?: string; status?: string }[] | null | undefined,
   hostname: string,
 ): boolean {
   const host = hostname.trim().toLowerCase();
   if (!host) return false;
+  const candidates = [host];
+  if (host.startsWith("www.")) {
+    candidates.push(host.slice(4));
+  } else {
+    candidates.push(`www.${host}`);
+  }
   return (domains ?? []).some(
     (domain) =>
-      domain?.hostname === host &&
+      domain?.hostname &&
+      candidates.includes(domain.hostname.toLowerCase()) &&
       SERVABLE_STATUSES.includes(domain?.status as (typeof SERVABLE_STATUSES)[number]),
   );
 }
@@ -849,13 +896,22 @@ export async function collegeIdForHost(rawHost: string): Promise<{
     return null;
   }
 
+  const candidates = [hostname];
+  if (hostname.startsWith("www.")) {
+    candidates.push(hostname.slice(4));
+  } else {
+    candidates.push(`www.${hostname}`);
+  }
+
   const college = (await College.findOne({
-    domains: { $elemMatch: { hostname, status: { $in: SERVABLE_STATUSES } } },
+    domains: { $elemMatch: { hostname: { $in: candidates }, status: { $in: SERVABLE_STATUSES } } },
   })
     .select("_id subdomain")
     .lean()) as { _id: unknown; subdomain: string } | null;
 
   if (!college) return null;
+
+  recordServableDomain(hostname);
   return { collegeId: String(college._id), subdomain: college.subdomain };
 }
 

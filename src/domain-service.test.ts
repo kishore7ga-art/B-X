@@ -123,13 +123,9 @@ describe("isApex — which DNS record the tenant is told to create", () => {
     assert.equal(isApex("sites.www.college.edu"), false);
   });
 
-  // A three-label public suffix reads as a subdomain here. That is a known
-  // limitation: without a public-suffix list, `college.edu.in` cannot be told
-  // apart from `www.college.edu`. The consequence is that such a tenant is
-  // offered a CNAME, which their provider may refuse at the apex — they can
-  // still use the A record path once CUSTOM_DOMAIN_APEX_IP is configured.
-  it("misreads a multi-part public suffix as a subdomain (documented limitation)", () => {
-    assert.equal(isApex("college.edu.in"), false);
+  it("correctly identifies a multi-part public suffix as an apex", () => {
+    assert.equal(isApex("college.edu.in"), true);
+    assert.equal(isApex("oxford.ac.uk"), true);
   });
 });
 
