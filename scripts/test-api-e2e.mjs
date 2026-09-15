@@ -123,6 +123,7 @@ const server = spawn(
       // Otherwise five requests into the suite the admin login starts 429ing,
       // which tests the limiter rather than the endpoints.
       ENABLE_RATE_LIMIT: "false",
+      AUTH_DISABLED: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
